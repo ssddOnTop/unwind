@@ -36,6 +36,9 @@ final class SignedInAcceptanceTests: XCTestCase {
             capture("bank-\(index + 1)-expanded-private", app: app)
             app.swipeUp()
             capture("bank-\(index + 1)-accounts-private", app: app)
+            XCTAssertEqual(app.switches.count, 0)
+            XCTAssertFalse(app.buttons["Select"].exists)
+            XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Manage accounts: ")).count > 0)
             for _ in 0..<8 { if row.isHittable { break }; app.swipeDown() }
             XCTAssertTrue(row.isHittable); row.tap()
         }
@@ -50,6 +53,33 @@ final class AuthorizedSingleBankSyncTests: XCTestCase {
     @MainActor private func capture(_ name: String, app: XCUIApplication) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+    }
+
+    @MainActor func testExplicitlyAuthorizedAllBankSync() throws {
+        guard ProcessInfo.processInfo.environment["COMPANION_AUTHORIZE_ALL_LINKED_SYNC"] == "YES" else {
+            throw XCTSkip("Requires fresh authorization to refresh all currently provider-shared accounts")
+        }
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.activate()
+        XCTAssertTrue(app.tabBars.buttons["Today"].waitForExistence(timeout: 20))
+        app.tabBars.buttons["Settings"].tap()
+        let back = app.navigationBars.buttons["Settings"]
+        if back.exists && back.isHittable { back.tap() }
+        let banks = app.buttons["settings.bankAccounts"]
+        for _ in 0..<6 { if banks.isHittable { break }; app.swipeDown() }
+        XCTAssertTrue(banks.isHittable); banks.tap()
+        let update = app.buttons["banking.updateAll"]
+        XCTAssertTrue(update.waitForExistence(timeout: 15))
+        XCTAssertTrue(update.isHittable && update.isEnabled)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label ENDSWITH %@", "Connected")).count, 2)
+        capture("before-all-linked-sync-private", app: app)
+        update.tap() // One overall mutation only; never retry automatically.
+        let result = app.descendants(matching: .any)["banking.action.result"]
+        XCTAssertTrue(result.waitForExistence(timeout: 40), "Stop if pending/unavailable; do not repeat sync")
+        capture("all-linked-sync-result-private", app: app)
+        app.tabBars.buttons["Today"].tap()
+        app.swipeDown()
+        capture("all-linked-sync-home-private", app: app)
     }
 
     @MainActor func testExplicitlyAuthorizedSingleSync() throws {
