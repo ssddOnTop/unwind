@@ -14,17 +14,33 @@ final class RuntimeSmokeTests: XCTestCase {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
     }
-    @MainActor private func state(after revision: Int? = nil, differentEpoch: String? = nil) async throws -> [String: Any] {
-        for _ in 0..<75 {
-            let (data, response) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:8000/state")!)
+    @MainActor private func state(after revision: Int? = nil, differentEpoch: String? = nil, synthesisCompleted: Bool = false) async throws -> [String: Any] {
+        for _ in 0..<175 {
+            let request = URLRequest(url: URL(string: "http://127.0.0.1:8000/state")!, cachePolicy: .reloadIgnoringLocalCacheData)
+            let (data, response) = try await URLSession.shared.data(for: request)
             XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
             let result = try JSONSerialization.jsonObject(with: data) as! [String: Any]
             let revisionReady = revision == nil || (result["revision"] as! Int) > revision!
             let epochReady = differentEpoch == nil || (result["data_epoch"] as! String) != differentEpoch!
-            if revisionReady && epochReady { return result }
+            let complete = !synthesisCompleted || ((result["process"] as! [String: Any])["synthesis"] as! [String: Any])["status"] as? String == "completed"
+            if revisionReady && epochReady && complete { return result }
             try await Task.sleep(for: .milliseconds(200))
         }
         throw NSError(domain: "RuntimeSmoke", code: 1, userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for committed mutation"])
+    }
+    @MainActor private func pristineState() async throws -> [String: Any] {
+        let snapshot = try await state()
+        XCTAssertEqual((snapshot["observations"] as! [Any]).count, 0, "Requires an empty isolated synthetic database")
+        XCTAssertEqual((snapshot["feedback"] as! [Any]).count, 0)
+        let preferences = snapshot["preferences"] as! [String: Any]
+        XCTAssertEqual(preferences["notes"] as? String, "")
+        XCTAssertEqual(preferences["cloud_consent"] as? Bool, false)
+        XCTAssertEqual(preferences["enabled_source_ids"] as? [String], ["demo"])
+        for source in snapshot["sources"] as! [[String: Any]] where source["id"] as? String != "demo" {
+            XCTAssertEqual(source["enabled"] as? Bool, false)
+            XCTAssertNotEqual(source["consent"] as? String, "granted")
+        }
+        return snapshot
     }
     @MainActor private func settled(_ app: XCUIApplication) {
         let spinner = app.progressIndicators.firstMatch
@@ -32,11 +48,10 @@ final class RuntimeSmokeTests: XCTestCase {
     }
     @MainActor func testSyntheticUserJourney() async throws {
         continueAfterFailure = false
+        let before = try await pristineState()
         let app = XCUIApplication(); app.launch()
         XCTAssertTrue(app.staticTexts["Local backend snapshot"].waitForExistence(timeout: 15), "Actual app must retrieve state over iOS URLSession")
         capture("01-connected-empty", app: app)
-        let before = try await state()
-        XCTAssertEqual((before["observations"] as! [Any]).count, 0, "Use only the dedicated empty synthetic database")
         tap("Load representative synthetic demo", app: app)
         XCTAssertTrue(app.buttons["Load synthetic demo"].waitForExistence(timeout: 5))
         app.buttons["Load synthetic demo"].tap(); settled(app)
@@ -69,7 +84,7 @@ final class RuntimeSmokeTests: XCTestCase {
         XCTAssertEqual(app.switches["No kitchen access"].value as? String, "0")
         app.buttons["Cancel"].tap()
         app.tabBars.buttons["Today"].tap(); tap("Run scripted demo synthesis", app: app); settled(app)
-        let processed = try await state(after: changed["revision"] as? Int)
+        let processed = try await state(after: changed["revision"] as? Int, synthesisCompleted: true)
         let synthesis = (processed["process"] as! [String: Any])["synthesis"] as! [String: Any]
         XCTAssertEqual(synthesis["mode"] as? String, "scripted")
         XCTAssertEqual(synthesis["status"] as? String, "completed")
@@ -94,9 +109,43 @@ final class RuntimeSmokeTests: XCTestCase {
         // Leave a healthy, explicitly seeded synthetic demo for the user's preview.
         app.terminate(); app.launch()
         XCTAssertTrue(app.staticTexts["Local backend snapshot"].waitForExistence(timeout: 15))
-        tap("Load representative synthetic demo", app: app); app.buttons["Load synthetic demo"].tap(); settled(app)
+        tap("Load representative synthetic demo", app: app); app.buttons["Load synthetic demo"].tap()
+        _ = try await state(after: deleted["revision"] as? Int)
         app.terminate(); app.launch()
         XCTAssertTrue(app.staticTexts["Contains synthetic fixtures—not personal history"].waitForExistence(timeout: 15))
         capture("07-preview", app: app)
     }
+    @MainActor func testSuppressionDeletionAndPreview() async throws {
+        continueAfterFailure = false
+        let pristine = try await pristineState()
+        let app = XCUIApplication(); app.launch()
+        XCTAssertTrue(app.staticTexts["Local backend snapshot"].waitForExistence(timeout: 15))
+        tap("Load representative synthetic demo", app: app)
+        XCTAssertTrue(app.buttons["Load synthetic demo"].waitForExistence(timeout: 5))
+        app.buttons["Load synthetic demo"].tap()
+        let initial = try await state(after: pristine["revision"] as? Int)
+        XCTAssertEqual((initial["observations"] as! [Any]).count, 6)
+        capture("01-independent-synthetic-seed", app: app)
+        app.tabBars.buttons["Ledger"].tap()
+        app.buttons.containing(.staticText, identifier: "Recorded restaurant purchases").firstMatch.tap()
+        tap("Stop this scenario", app: app)
+        let stopped = try await state(after: initial["revision"] as? Int)
+        XCTAssertTrue(((stopped["preferences"] as! [String: Any])["suppressed_scenario_ids"] as! [String]).contains("purchase_recurrence"))
+        capture("05-suppressed", app: app)
+        app.tabBars.buttons["Settings"].tap(); tap("Delete all application data", app: app)
+        let deletion = app.sheets.buttons["Delete all application data"]
+        XCTAssertTrue(deletion.waitForExistence(timeout: 5)); deletion.tap()
+        let deleted = try await state(differentEpoch: initial["data_epoch"] as? String)
+        XCTAssertEqual((deleted["observations"] as! [Any]).count, 0)
+        XCTAssertEqual((deleted["feedback"] as! [Any]).count, 0)
+        capture("06-deleted", app: app)
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.staticTexts["Local backend snapshot"].waitForExistence(timeout: 15))
+        tap("Load representative synthetic demo", app: app); app.buttons["Load synthetic demo"].tap()
+        _ = try await state(after: deleted["revision"] as? Int)
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.staticTexts["Contains synthetic fixtures—not personal history"].waitForExistence(timeout: 15))
+        capture("07-preview", app: app)
+    }
+
 }

@@ -1,53 +1,73 @@
 # Local Companion — native iOS 17+
 
-Native SwiftUI Today / Ledger / Settings app, plus a dependency-free Foundation Swift package. All frontend changes are under `fe/`; the plan, research, contracts and backend were read-only to this implementation.
+Native SwiftUI Today / Ledger / Settings app with a dependency-free Foundation Swift package. Frontend source is under `fe/`; contracts and backend implementation remain separate and read-only to this frontend work.
 
-## Verification status (November 14, 2026)
+## Current verification
 
-- **32 real Swift Testing tests passed on macOS** using the installed Xcode compiler/frameworks. These are not iOS runtime tests.
-- **14 actual Swift-encoded payload cases passed the frozen JSON Schema**, with format validation. Explicit nulls are preserved for nullable contract properties.
-- Real sibling-backend **ASGI interoperability** exercised Swift-generated synthetic request templates: explicit demo seed, duplicate ingestion, four feedback variants, complete preferences, deterministic processing, exact deletion retry and old-epoch rejection. This is not URLSession networking or iOS UI execution.
-- Complete app + local package: **arm64 iOS 17 device and arm64 iOS 17 simulator typecheck, object compilation and direct Apple linker invocation passed**. Mach-O platform commands are captured separately for both binaries.
-- Self-contained `.xcodeproj`, shared app scheme, explicit app source list, Info.plist, HealthKit entitlement, and local Swift package are included. No XcodeGen or network packages are needed. Property lists/project syntax pass `plutil -lint`.
-- **Full xcodebuild remains blocked** before building: CoreDevice expects `_XPCTypeBool` from Mercury. No system libraries, global tool selection, license state or signing settings were altered to work around it.
-- **No simulator launch, UI automation, real-device run, HealthKit access, OS notification delivery or on-device data-protection test was performed.** Prior research observed an unaccepted-license warning; license state after Xcode's temporary disappearance/reappearance was not revalidated and no boot/install was attempted.
+**The complete `RuntimeSmokeTests.testSyntheticUserJourney` passed: 1 actual XCTest UI test, 0 failures, 0 skipped**, on iOS 18.3.1. This is the full journey, not the shorter continuation. It passed on the first attempt of the final verification pass; no fix/rerun cycle was needed. Result: `fe/evidence/ui/FullJourney-01.xcresult`; summary: `fe/evidence/ui/full-runtime-summary.json`. The seeded app was left running for preview. Runtime identifiers and process IDs stay in ignored evidence, not source.
 
-The app is implemented and directly compiles/links, but is **not claimed launch-verified**. Simulator executable is linker-ad-hoc-signed; its Info.plist/resources are not sealed. Device executable is unsigned. The captured `.app` folders/zips are unvalidated build artifacts, not signed distributable apps or validated HealthKit-entitled installations. Use the Xcode project for a properly configured simulator/device build after the environment is repaired by its owner.
+- Full Xcode app build, simulator installation and actual app launch succeed. The original CoreDevice/Mercury loader failure was resolved by the owner restoring the original Xcode resources and completing setup; it is **not a current build blocker**. No agent accepted licenses or changed system frameworks.
+- Actual iOS URLSession requests reach the isolated loopback backend. The UI tests exercise explicit synthetic seed consent, ledger detail, correctness feedback, preferences, relaunch persistence, scripted processing, suppression, deletion/epoch rotation and explicit reseeding.
+- The exact latest UI test result, screenshots and test destination are recorded under ignored `fe/evidence/ui`. Earlier failed attempts remain available; compile success and partial journeys are not counted as full UI passes.
+- **32 real Swift Testing core tests pass on macOS.** These are separate from the iOS XCTest UI journey. Contract checks validated 14 Swift-encoded payload cases; ASGI interoperability and Swift decoding provide additional non-UI coverage.
+- Complete device/simulator direct typecheck, object compilation and linking also passed. Direct-link ZIP artifacts are historical, unvalidated bundles; use the Xcode project for the installed app.
 
-During this run `/Applications/Xcode.app` disappeared at approximately 09:00 UTC and reappeared around 09:10 UTC. No partial `.appdownload` contents were used. Diagnostic fallback attempts with the existing Command Line Tools are retained as failures; they do not supersede the successful final Xcode Swift Testing run.
+## Clean-checkout prerequisites
 
-## Run steps
+A complete Xcode installation with owner-completed setup and an installed compatible simulator runtime is required. iOS 18.3.1 was used for runtime verification; the deployment target remains iOS 17. Python 3 is needed for tooling only. No network Swift packages or XcodeGen are required: the project and generated Codable models are committed.
+
+Start the backend using its documented setup and a **separate empty synthetic test database** at `http://127.0.0.1:8000`. For destructive UI tests, reserve a dedicated simulator with no personal app cache. Never point these tests at real data. The frontend scripts neither install runtimes nor accept licenses.
+
+The UI runner chooses Xcode from explicit `DEVELOPER_DIR`, then a selected full Xcode installation, then the standard Xcode application location. An explicit invalid selection fails rather than silently switching. Build/core scripts also honor `DEVELOPER_DIR`. Set it to an Xcode `.app` or its `Contents/Developer` directory when using a nonstandard installation. No global `xcode-select` change is required.
+
+## Build and core tests
 
 From the workspace root:
 
 ```sh
-# Actual Foundation Swift Testing tests, isolated caches and logs under fe/evidence.
 ./fe/scripts/test-core.sh
-
-# Typecheck, emit objects, and directly link the COMPLETE app for both iOS SDKs.
-# Also assembles unvalidated .app bundles and ZIP artifacts under fe/evidence.
 ./fe/scripts/typecheck-ios.sh
-
-# Full Xcode project build probe. Currently exits 255 before the project builds.
 python3 fe/scripts/toolchain.py xcode
 ```
 
-The scripts use `/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin`, explicit SDKROOT/SDK paths, process-local DEVELOPER_DIR, and caches/HOME/TMPDIR under `fe/evidence`. They strip inherited `DYLD_*` values before supplying the research-documented real framework/library paths for macOS Swift Testing. They do not accept licenses, install anything, inject shims, modify system frameworks, boot simulators, or push Git. Python 3 is needed only for build/test tooling, not by the app.
+The scripts create their output/cache directories under `fe/evidence`, use explicit SDK paths and strip inherited `DYLD_*`. Core tests supply only the installed platform testing-framework paths; the obsolete Mercury override has been removed. Python can be selected with `PYTHON` for the shell launchers. These build commands do not boot simulators, modify system libraries, stage, commit or push files.
 
-Once a properly licensed working Xcode environment is available:
+## Full simulator UI journey
 
-1. Start the sibling backend using its documented local startup command; ensure it binds **127.0.0.1:8000**, not a public interface. Backend/provider configuration is not managed by this app.
-2. Open `fe/LocalCompanion.xcodeproj` in Xcode. Select the shared **LocalCompanion** scheme and an available iOS simulator. Build/run normally. The app scheme is a build/run scheme; its empty UI TestAction is not a test suite. Run core tests with the script above or open the local Core package.
-3. The app begins empty. Choose **Refresh / retry saved requests**. Only after explicit confirmation, **Load representative synthetic demo**. It never substitutes fixtures on network failure.
-4. Inspect Today and Ledger. The representative demo shows 13,800 recorded steps on three dates, synthetic labels, unknown/partial coverage, evidence revisions, and movement-restriction filtering. These fixture assertions are not clinical validation.
-5. In a card, submit correctness separately from usefulness. Event feedback can specify an exact purchase evidence revision and self/shared/other/unknown attribution. **Stop this scenario** immediately pauses local suggestions/reminders and persists suppression on the backend after sync.
-6. Settings → **Refresh and edit preferences** persists a full replacement. Old forms are rejected after a revision/epoch change; they are never silently assigned a new request ID and replayed.
-7. Optional HealthKit: Settings → **Enable sync and request HealthKit access** is separate explicit consent to normalized local-backend sync and Apple's read permission flow. Then use **Read and sync daily steps now**. No permission or collection is requested at launch.
-8. Optional reminders: enable the preference/time and separately request iOS notification permission. Only the backend's eligible, future intents are reconciled. No medical/payment information is placed in notification content.
-9. To test offline behavior, stop your test backend, submit feedback, and relaunch the app. The original request ID/body/epoch persist. Retry after bringing the test service back. Do not run deletion/reset experiments against data you intend to retain.
-10. **Delete all application data** requires confirmation and remains visibly pending while offline. Successful deletion/reset or a newly observed epoch clears old local cache/outbox and notification requests; deletion never silently reseeds or alters Apple's Health store.
+Inspect the authorized isolated backend before resetting it: every observation must be `mode=fixture`, `source_id=demo`; all non-demo sources must be disabled and not consented, with no private notes or cloud consent. Only then use the contract's confirmed `DELETE /data` request with the current epoch to obtain a pristine test instance. The UI runner intentionally **does not reset any backend automatically**.
 
-The URL is deliberately fixed to `http://127.0.0.1:8000`, no auth headers. The client rejects alternative hosts/ports and refuses redirects. On a physical iPhone, 127.0.0.1 is the phone, not the Mac: device networking requires a separately approved design. No LAN/public override or credential-entry UI is provided. ATS is local-network-only; actual iOS HTTP access remains a launch-test gate.
+The runner checks the backend is empty and has no non-demo source consent, notes or cloud consent before launching XCTest. The tests repeat these checks **before launching the app or taking their first screenshot**. They never request HealthKit or notification permissions. XCTest artifacts and screenshots may still contain test data, so all result bundles remain ignored.
+
+Provide the dedicated simulator explicitly; no ignored device-ID file is required on a clean checkout:
+
+```sh
+export DEVICE_ID="YOUR_DEDICATED_SIMULATOR_UDID"
+python3 fe/scripts/run-ui-smoke.py FullJourney --device "$DEVICE_ID"
+
+# Equivalent: DEVICE_ID supplies the destination without --device.
+python3 fe/scripts/run-ui-smoke.py AnotherFullJourney
+```
+
+Use a unique result name each time; previous failures are never overwritten. The default selected test is **RuntimeSmokeTests.testSyntheticUserJourney**, not the shorter continuation. The runner derives `ARCHS` from the host (arm64 or x86_64), uses its own DerivedData and disables parallel UI testing. The optional second positional argument preserves targeted invocation:
+
+```sh
+python3 fe/scripts/run-ui-smoke.py IndependentSuppression testSuppressionDeletionAndPreview --device "$DEVICE_ID"
+```
+
+Both tests require pristine input and seed their own fixtures; the shorter test no longer assumes preferences or synthesis left by another run. Reset the authorized synthetic database again before another destructive test. A legacy `fe/evidence/ui/device-id.txt` is accepted only as a last-resort fallback for existing local workflows. Explicit `--device` takes priority over `DEVICE_ID`, which takes priority over that file.
+
+The full journey waits on committed revisions, process completion and epoch changes rather than assuming disappearance of a spinner means a network mutation has finished. It leaves explicitly seeded fixtures after verifying deletion and relaunch. To preview afterwards, launch `org.localcompanion.prototype` on the same dedicated simulator. The normal app never seeds automatically.
+
+## Manual app flow
+
+1. Open `fe/LocalCompanion.xcodeproj`, select **LocalCompanion**, and run on a simulator connected to the local backend.
+2. Refresh, then explicitly consent to **Load representative synthetic demo**. The demo shows recorded values and fixture labels, not personal history or clinical conclusions.
+3. Inspect ledger evidence revisions, coverage, uncertainty and limitations. Correctness and usefulness are separate feedback types; suppression persists until explicitly cleared.
+4. Settings → **Refresh and edit preferences** saves a complete replacement. Stale forms are rejected; pending mutations retain their original request identities.
+5. Optional HealthKit uses a separate explicit app-sync consent and Apple read-permission action. No live collection occurs at launch. Optional generic reminders likewise require a separate preference and OS authorization.
+6. Delete all data only after confirmation. Offline deletion remains pending rather than being described as complete; deletion never modifies Apple's Health store.
+
+The endpoint is fixed to `http://127.0.0.1:8000`, with no authentication or provider-key UI. Other hosts/ports and redirects are rejected. Actual simulator loopback access is verified. On a physical phone, loopback refers to the phone, not the Mac; physical-device backend networking needs a separately approved boundary.
 
 ## Contract and retry behavior
 
@@ -83,9 +103,10 @@ Device comparison against Health UI, multi-source reconciliation, limited author
 
 ## Additional reproducible checks
 
-After core tests generate their synthetic encoder output, the already-existing backend virtual environment can validate and exercise it without any installs or writes to backend/contracts. ASGI tests use a temporary database under frontend evidence, no listening port, and synthetic records only:
+On a clean checkout, **run the core tests first**: they create `fe/evidence/encoded-contracts.json` and the required evidence/cache directories. Validation depends on that generated file. ASGI interoperability then creates `backend-state-responses.json`, which the Swift decoder check consumes. The backend virtual environment must already be set up according to backend instructions, including jsonschema/FastAPI test dependencies; these frontend checks install nothing. ASGI tests use a temporary database under frontend evidence, no listening port, and synthetic records only:
 
 ```sh
+./fe/scripts/test-core.sh
 PYTHONDONTWRITEBYTECODE=1 be/.venv/bin/python fe/scripts/validate-encoded-contracts.py
 PYTHONDONTWRITEBYTECODE=1 HOME="$PWD/fe/evidence/home" XDG_CACHE_HOME="$PWD/fe/evidence/cache" TMPDIR="$PWD/fe/evidence/tmp" \
   be/.venv/bin/python fe/scripts/check-backend-interop.py
@@ -104,7 +125,8 @@ All generated files/logs are under `fe/evidence`, including:
 - `backend-interop.json`, `backend-state-responses.json`, `backend-decoder-run.json`: synthetic real-backend interoperability and Swift decoding results.
 - `device-{core,typecheck,objects,link,platform}.json` and corresponding `simulator-*`: exact compiler/linker results and platform inspection.
 - `device/LocalCompanion-unvalidated.zip`, `simulator/LocalCompanion-unvalidated.zip`: separately linked unvalidated app bundles; not installed/launched.
-- `xcodebuild.json`: full-project loader failure. Diagnostic CLT fallback failures remain labeled separately.
+- `xcodebuild.json`: full-project build result. Earlier loader/CLT failures are historical, not current launch blockers.
+- `ui/*.xcresult`, `ui/*-command.json`, screenshots and runtime summaries: actual simulator journeys, with failed and successful attempts kept separately.
 - `verification-summary.json`: concise final gate results.
 
-Remaining acceptance work: repair the Xcode loader using the owner's supported setup process, resolve/verify license status without agent acceptance, build/run through the real project, verify iOS loopback/ATS access, UI flows and accessibility on simulator, and test signing/HealthKit entitlement, actual queries, protection/backup behavior and notification delivery on an explicitly consenting device. No claim of runtime or clinical validation is made.
+Remaining acceptance work: consult the current runtime summary for tested simulator flows; broader accessibility, real-device signing/HealthKit entitlement, actual queries, protection/backup behavior and notification delivery still require explicit device validation. Simulator runtime evidence is not clinical validation.

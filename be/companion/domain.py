@@ -57,7 +57,7 @@ def defaults(now):
                     "input_state_revision": 0, "ledger_status": "idle", "synthesis": synthesis()}
     s["evaluation_date"] = now.astimezone(zone(p["timezone"])).date().isoformat()
     s["limitations"] = ["No diagnoses, obesity predictions, intake estimates, or clinical thresholds.",
-                         "HealthKit real-device access and the iOS build are not verified."]
+                         "Physical-device HealthKit access and OS notification delivery are not verified."]
     return s
 
 

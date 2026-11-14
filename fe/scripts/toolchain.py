@@ -3,7 +3,9 @@
 import json, os, pathlib, subprocess, sys
 root = pathlib.Path(__file__).resolve().parents[1]
 evidence = root/'evidence'
-dev = pathlib.Path('/Applications/Xcode.app/Contents/Developer')
+dev = pathlib.Path(os.environ.get('DEVELOPER_DIR', '/Applications/Xcode.app/Contents/Developer'))
+if dev.suffix == '.app':
+    dev = dev / 'Contents/Developer'
 bin = dev/'Toolchains/XcodeDefault.xctoolchain/usr/bin'
 env = {k:v for k,v in os.environ.items() if not k.startswith('DYLD_')}
 for key, rel in [('HOME','home'),('CFFIXED_USER_HOME','home'),('TMPDIR','tmp'),('CLANG_MODULE_CACHE_PATH','modules'),('SWIFT_MODULECACHE_PATH','modules'),('XDG_CACHE_HOME','cache')]:
