@@ -34,7 +34,8 @@ class ScenariosExtension:
         purchase, steps, pref = cards
         start = today - timedelta(days=RULES["purchase_recurrence"]["window_days_including_today"] - 1)
         purchase["window"].update(start_date=start.isoformat(), end_date=today.isoformat())
-        rows = [o for o in usable if o["source_id"] == "demo" and o["kind"] == "purchase" and o["lifecycle"] == "posted"
+        purchase_source = "plaid" if payload.get("purchase_source_id") == "plaid" and sources["plaid"]["enabled"] and sources["plaid"]["consent"] == "granted" else "demo"
+        rows = [o for o in usable if o["source_id"] == purchase_source and o["kind"] == "purchase" and o["lifecycle"] == "posted"
                 and not o["purchase"]["is_refund"] and o["purchase"]["category"] == RULES["purchase_recurrence"]["category"]
                 and start.isoformat() <= o["local_date"] <= today.isoformat()]
         dates = sorted({o["local_date"] for o in rows})
@@ -43,9 +44,11 @@ class ScenariosExtension:
             return len(ds) >= RULES["purchase_recurrence"]["minimum_distinct_dates"] and (date.fromisoformat(max(ds)) - date.fromisoformat(min(ds))).days >= RULES["purchase_recurrence"]["minimum_span_days"]
         if rows:
             purchase.update(status="observed", coverage="partial",
-                observed=f"Between {start} and {today}, synthetic connected records show {len(rows)} purchases at merchants categorized as restaurant, on {len(dates)} dates. This describes purchases, not meals or what you ate. Other purchases may be missing.")
+                observed=f"Between {start} and {today}, {'synthetic Plaid Sandbox' if purchase_source == 'plaid' else 'synthetic connected'} records show {len(rows)} purchases at merchants categorized as restaurant, on {len(dates)} dates. This describes purchases, not meals or what you ate. Other purchases may be missing.")
         else:
             purchase["observed"] = RULES["purchase_recurrence"]["insufficient_text"]
+        if purchase_source == "plaid":
+            purchase["limitations"].append("Synthetic Plaid Sandbox transactions only; bank categories are not consumption evidence.")
         if recurrent(dates):
             purchase["inferred"] = "These records meet the product recurrence rule; they do not establish a dietary habit."
         eligible_dates = []

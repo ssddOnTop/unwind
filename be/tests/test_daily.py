@@ -280,7 +280,7 @@ async def test_scripted_skips_any_live_input_even_if_revoked(mixed):
 async def test_real_synthesis_gates_and_scripted_no_network(tmp_path, monkeypatch, mode, configured, cloud, reason):
     if configured:
         monkeypatch.setenv("COMPANION_LLM_PROVIDER", "openrouter")
-        monkeypatch.setenv("COMPANION_LLM_MODEL", "synthetic-test-model")
+        monkeypatch.setenv("COMPANION_LLM_MODEL", "openrouter/free")
         monkeypatch.setenv("OPENROUTER_API_KEY", "synthetic-never-a-credential")
     service = build_service(tmp_path, clock=lambda: NOW)
     await service.start()

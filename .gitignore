@@ -55,6 +55,13 @@
 !/contracts/observation-batch.example.json
 !/contracts/scenarios.json
 !/contracts/v1.md
+!/contracts/plaid.md
+!/contracts/plaid.schema.json
+!/contracts/auth.md
+!/contracts/experience.md
+!/contracts/experience.schema.json
+!/contracts/banking.md
+!/contracts/banking.schema.json
 !/scripts/
 !/scripts/*.py
 !/scripts/*.sh
