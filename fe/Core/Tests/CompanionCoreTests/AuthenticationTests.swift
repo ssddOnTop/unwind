@@ -280,6 +280,53 @@ private func request(_ path: String = "/feedback", body: Data? = nil) -> URLRequ
     #expect(!String(decoding: data, as: UTF8.self).contains("unit-initial-token"))
 }
 
+@Test @MainActor func configuredHTTPSOriginPinsAdmissionAndEveryAPIRequest() async throws {
+    let configured = try APIOrigin.url("https://api.example.com:8443/")
+    let tokens = Tokens(), network = Network(), fence = AuthSessionFence()
+    let transport = try AuthenticatedTransport(base: network, provider: tokens, fence: fence,
+        lease: fence.activate(tokens.currentIdentity!), origin: configured)
+    try await transport.admit()
+    let state = try fixture()
+    network.hook = { _ in HTTPResult(status: 200, body: try Wire.encode(state)) }
+    let storage = temporaryStorage(); defer { try? FileManager.default.removeItem(at: storage.directory) }
+    let client = try CompanionClient(storage: storage, transport: transport, baseURL: configured, sessionValidator: { try transport.validate() })
+    try await client.refresh()
+    // Exercise the same client route builder for projections; this state-only double
+    // intentionally fails projection decoding after recording the outbound URL.
+    _ = try? await client.refreshExperience()
+    _ = try? await client.refreshBanking()
+    let paths = Set(network.requests.compactMap { $0.url?.path })
+    #expect(paths.isSuperset(of: ["/auth/v1/session", "/state", "/experience/v1", "/banking/v1"]))
+    #expect(network.requests.allSatisfy { $0.url?.host == "api.example.com" && $0.url?.scheme == "https" && $0.url?.port == 8443 })
+    #expect(network.requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer unit-initial-token" })
+    let count = network.requests.count, tokenCount = tokens.normal
+    for destination in ["https://other.example/state", issuer + "/state", "https://api.example.com/state", "http://api.example.com:8443/state"] {
+        await #expect(throws: AuthenticationFailure.invalidDestination) {
+            try await transport.send(URLRequest(url: URL(string: destination)!))
+        }
+    }
+    #expect(network.requests.count == count)
+    #expect(tokens.normal == tokenCount)
+}
+
+@Test @MainActor func clerkCannotBeConfiguredAsBearerAPIDestination() throws {
+    let tokens = Tokens(), network = Network(), fence = AuthSessionFence()
+    #expect(throws: AuthenticationFailure.invalidDestination) {
+        try AuthenticatedTransport(base: network, provider: tokens, fence: fence,
+            lease: fence.activate(tokens.currentIdentity!), origin: URL(string: issuer)!)
+    }
+    #expect(tokens.normal == 0 && network.requests.isEmpty)
+}
+
+@Test @MainActor func httpsAdmissionRedirectNeverAdmitsOrFetchesData() async throws {
+    let tokens = Tokens(), network = Network(), fence = AuthSessionFence()
+    network.hook = { _ in HTTPResult(status: 302, body: Data()) }
+    let transport = try AuthenticatedTransport(base: network, provider: tokens, fence: fence,
+        lease: fence.activate(tokens.currentIdentity!), origin: try APIOrigin.url("https://api.example.com"))
+    await #expect(throws: AuthenticationFailure.profileMismatch) { try await transport.admit() }
+    #expect(!transport.isAdmitted && network.requests.count == 1)
+}
+
 @Test @MainActor func verifier503LeavesOriginalOutboxRetryableWithoutRefresh() async throws {
     let storage = temporaryStorage(); defer { try? FileManager.default.removeItem(at: storage.directory) }
     let tokens = Tokens(), network = Network(), fence = AuthSessionFence()

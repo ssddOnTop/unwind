@@ -43,9 +43,13 @@ The sections below retain earlier auth/experience verification history. Their si
 
 This supersedes account-free onboarding and client-side Home/visit rules. Missing auth configuration shows a setup screen, never anonymous access. A loaded SDK and active session are necessary but not sufficient: the app also requires a fresh, exact `/auth/v1/session` admission for the configured endpoint, issuer and SDK subject before opening account storage or fetching any data. A legacy backend returning anonymous `/state` cannot unlock the app.
 
-The authenticated API endpoint is deliberately **disabled by default (port 0)** until an operator designates an authenticated deployment. The parent has now designated authenticated port **8769**; the current ignored local configuration and builds use that endpoint. Neither the earlier port 8000 service nor the anonymous Sandbox on 8768 is selected or probed. Old `--service-port` and anonymous-preview launch arguments no longer configure the actual app. The Core package retains base-contract compatibility for existing tests, but the authenticated transport forbids `/demo` and there is no seed/reset button or new demo route in the UI.
+The authenticated API uses **one editable setting**, `APIConfiguration.baseURL` in `fe/Core/Sources/CompanionCore/APIConfiguration.swift`, currently `http://127.0.0.1:8769`. To connect a future deployment, replace that string with its complete origin, e.g. `https://api.example.com`, then rebuild using the concrete-simulator command below (or the normal device/archive workflow when authorized). No project regeneration or auth-config regeneration is needed for an address-only change. No preference, launch argument, environment port or legacy `Local.xcconfig` API-port value overrides it.
 
-Only `fe/` is owned by this implementation. Backend, contract and research files are read-only. No model/provider keys are collected by the app. No iCloud container or writes are used. No user team ID is fabricated.
+Only root origins are supported: HTTPS remotely, HTTP only for `127.0.0.1` or `localhost`; optional valid port and trailing slash are accepted. Paths/prefixes, credentials, queries, fragments and malformed addresses are rejected with a setup message, never silently replaced with localhost. Admission, State, experience and banking share the same captured origin. Redirects remain disabled and Bearer requests are pinned to that origin; the Clerk issuer cannot serve as the API destination. Cache namespaces include the API origin so a deployment change cannot reuse another server's private cache/outbox. Keychain and app identity are unchanged. No endpoint discovery or anonymous fallback is performed.
+
+**One-time server setup is separate:** set container `PUBLIC_API_URL=https://api.example.com` alongside its existing Clerk, Plaid and `DATABASE_URL` configuration. The TLS proxy must preserve that Host and Authorization; forwarded headers are not trusted. The server allows exactly that hostname plus loopback health hosts, never `*`. This does not provision hosting/TLS, change Plaid's `PLAID_WEBHOOK_URL` or register/update existing Item webhooks; those remain explicit deployment work. Changing the frontend address alone cannot configure a server or provider. No deployment or runtime verification is claimed here.
+
+The API-origin slice also updates backend host-boundary configuration; banking business logic and contracts are unchanged. No model/provider keys are collected by the app. No iCloud container or writes are used. No user team ID is fabricated.
 
 ## Public Clerk configuration
 
@@ -58,13 +62,7 @@ python3 fe/scripts/configure-auth.py
 python3 fe/scripts/generate-project.py
 ```
 
-The first command writes the ignored, mode-0600 local xcconfig with API port 0. It is a clean-checkout example, not an instruction to overwrite the current parent-managed port 8769. Once an operator designates an **authenticated** loopback service, configure only that approved port and rebuild:
-
-```sh
-python3 fe/scripts/configure-auth.py --api-port "$APPROVED_AUTH_PORT"
-```
-
-Do not point this at the old anonymous service. Admission failures never trigger endpoint discovery, anonymous fallback or a `/state` probe. The port becomes build configuration, not a user-editable host/tenant selector. All native API calls are restricted to that loopback origin for this development deployment. A deployed HTTPS origin needs explicit deployment configuration; do not weaken TLS or redirect handling to connect a device.
+The first command writes only the two public Clerk settings to ignored, mode-0600 `Local.xcconfig`. It does not set an API port/address, and `--api-port` is no longer accepted. Existing public Clerk configuration can be retained unchanged when editing `APIConfiguration.baseURL`. Do not point the API address at an anonymous service or at Clerk; admission failures keep records locked.
 
 For a physical device, choose your actual signing team and HealthKit capability in Xcode. Clerk Native API and the selected sign-in methods must be enabled/configured in the instance dashboard; any production OAuth/native associated-domain configuration remains operator work. The current app successfully displays the real native SDK sign-in form, including its development-mode badge, but that does not establish successful email/OTP or OAuth completion.
 

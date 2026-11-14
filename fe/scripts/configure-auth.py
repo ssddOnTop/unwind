@@ -5,10 +5,7 @@ import argparse, base64, re, shlex
 from urllib.parse import urlsplit
 root = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--api-port', type=int, default=0, help='Only after the authenticated loopback server is designated; 0 leaves app API disabled')
-args = parser.parse_args()
-if args.api_port != 0 and not 1 <= args.api_port <= 65535:
-    raise SystemExit('Invalid authenticated API port')
+parser.parse_args()
 wanted = {'CLERK_PUBLISHABLE_KEY', 'CLERK_ISSUER'}
 values = {}
 with (root/'.env').open() as stream:
@@ -35,7 +32,6 @@ encoded = base64.b64encode(issuer.encode()).decode()
 config = root/'fe/Config/Local.xcconfig'
 config.parent.mkdir(parents=True, exist_ok=True)
 config.write_text('// Generated public configuration. Ignored; no secret settings are read or copied.\n'
-                  + 'CLERK_PUBLISHABLE_KEY = '+key+'\nCLERK_ISSUER_BASE64 = '+encoded+'\n'
-                  + 'COMPANION_AUTH_API_PORT = '+str(args.api_port)+'\n')
+                  + 'CLERK_PUBLISHABLE_KEY = '+key+'\nCLERK_ISSUER_BASE64 = '+encoded+'\n')
 config.chmod(0o600)
-print('Generated ignored public Clerk configuration; API '+('disabled pending authenticated endpoint' if args.api_port == 0 else 'explicitly configured'))
+print('Generated ignored public Clerk configuration. API address is separately set in APIConfiguration.baseURL.')

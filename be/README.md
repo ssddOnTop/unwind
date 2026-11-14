@@ -240,12 +240,21 @@ locked project dependencies include pytest; packaging does not rewrite that lock
 
 Container binding is `0.0.0.0:8000`, published only as `127.0.0.1:8000` on the host.
 `curl --fail http://127.0.0.1:8000/health` is a pure liveness check returning only
-`{"status":"ok"}`, not a database/provider readiness probe. Existing localhost
-Host validation is unchanged: a future operator-managed TLS reverse proxy must
-send `Host: 127.0.0.1:8000` upstream, preserve Authorization and signed webhook
-bodies, and terminate public HTTPS itself. Forwarded headers remain untrusted.
-The local Compose demo alone cannot receive public Plaid webhooks. No native
-endpoint settings, public server, cloud resource or deployment is changed here.
+`{"status":"ok"}`, not a database/provider readiness probe.
+Host validation defaults to loopback. For future hosting set the single server
+setting `PUBLIC_API_URL=https://api.example.com` (HTTPS root origin only, optional
+port/trailing slash; no credentials, path prefix, query, fragment or wildcard).
+Both authenticated gateway and per-account HTTP boundary then allow that exact
+hostname plus localhost/127.0.0.1 for health checks. Invalid configuration fails
+startup; no request Host or forwarded header can widen the allowlist. The TLS
+reverse proxy must preserve the configured Host, Authorization and signed webhook
+body; `proxy_headers=False` remains in effect. No CORS/ATS wildcard is introduced.
+Set the frontend's `APIConfiguration.baseURL` to this same origin and rebuild.
+Clerk settings remain independent. `PLAID_WEBHOOK_URL` and any required existing
+Item webhook updates are separate operator/provider configuration, not inferred
+from the frontend setting. Fixed CA mounts, private data directory, database and
+banking semantics are unchanged. This does not provision TLS, hosting or webhooks;
+no public deployment is tested by these offline configuration checks.
 
 ## Explicit multi-bank management profile
 

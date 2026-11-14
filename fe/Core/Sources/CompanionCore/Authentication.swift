@@ -97,10 +97,9 @@ public struct AuthAdmission: Equatable, Sendable {
     public var onAdmissionRestored: (() -> Void)?
     public var isAdmitted: Bool { admittedGeneration == admissionGeneration && admittedGeneration != nil && (try? validateContext()) != nil }
     public init(base: any HTTPTransport, provider: any SessionTokenProvider, fence: AuthSessionFence, lease: AuthLease, origin: URL) throws {
-        guard origin.scheme == "https" || (origin.scheme == "http" && origin.host == "127.0.0.1"),
-              origin.user == nil, origin.password == nil, origin.query == nil, origin.fragment == nil,
-              origin.path.isEmpty || origin.path == "/" else { throw AuthenticationFailure.invalidDestination }
-        self.base = base; self.provider = provider; self.fence = fence; self.lease = lease; self.origin = origin
+        guard let validated = try? APIOrigin.url(origin.absoluteString),
+              validated.host != URL(string: lease.identity.issuer)?.host?.lowercased() else { throw AuthenticationFailure.invalidDestination }
+        self.base = base; self.provider = provider; self.fence = fence; self.lease = lease; self.origin = validated
     }
     private func validateContext() throws {
         try Task.checkCancellation(); try fence.validate(lease)
