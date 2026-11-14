@@ -134,7 +134,7 @@ class PostgresPersistenceExtension:
     async def _ownership(self, doc):
         account=await (await self.conn.execute('SELECT generation FROM companion_private.accounts WHERE account_id=%s FOR NO KEY UPDATE',(self.account_id,))).fetchone()
         if account is None:raise PostgresUnavailable()
-        previous=await (await self.conn.execute('SELECT body FROM companion_private.snapshots WHERE account_id=%s',(self.account_id,))).fetchone()
+        previous=await (await self.conn.execute('SELECT body FROM companion_private.snapshots WHERE account_id=%s FOR UPDATE',(self.account_id,))).fetchone()
         old=previous[0] if previous else {}
         before,after=self.contexts(old),self.contexts(doc)
         epoch=doc['state']['data_epoch'];epoch_changed=bool(old) and old['state']['data_epoch']!=epoch
@@ -161,6 +161,11 @@ class PostgresPersistenceExtension:
             await self.conn.execute("""UPDATE companion_private.webhook_jobs SET account_id=%s,epoch=%s,owner_generation=%s
                 WHERE environment='sandbox' AND item_id=%s AND account_id IS NULL AND expires_at>now()""",(self.account_id,epoch,generation,identifier))
         if epoch_changed:
+            notifications=await (await self.conn.execute("SELECT to_regclass('companion_private.report_notification_scopes') IS NOT NULL")).fetchone()
+            if notifications[0]:
+                for table in ('report_notification_outbox','report_notification_events','report_notification_registrations','report_notification_scopes'):
+                    await self.conn.execute('DELETE FROM companion_private.'+table+' WHERE account_id=%s',(self.account_id,))
+                await self.conn.execute('DELETE FROM companion_private.report_notification_sessions WHERE account_id=%s AND NOT revoked',(self.account_id,))
             jobs=await (await self.conn.execute("SELECT to_regclass('companion_private.pattern_jobs') IS NOT NULL")).fetchone()
             if jobs[0]:await self.conn.execute('DELETE FROM companion_private.pattern_jobs WHERE account_id=%s',(self.account_id,))
             await self.conn.execute("DELETE FROM companion_private.receipts WHERE account_id=%s",(self.account_id,))

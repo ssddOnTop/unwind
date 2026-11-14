@@ -45,8 +45,8 @@ class PostgresAccountManager(AccountManager):
             _private_dir(directory)
             service=None
             try:
-                service=self._factory(directory)
-                if inspect.isawaitable(service): service=await service
+                candidate=self._factory(directory)
+                service=await candidate if inspect.isawaitable(candidate) else candidate
                 if any(h.service is service for h in self._handles.values()):
                     service=None
                     raise AccountError()
@@ -89,8 +89,8 @@ class PostgresAccountManager(AccountManager):
                 directory=self.root/'users'/account_id;_private_dir(directory)
                 service=None
                 try:
-                    service=self._factory(directory)
-                    if inspect.isawaitable(service):service=await service
+                    candidate=self._factory(directory)
+                    service=await candidate if inspect.isawaitable(candidate) else candidate
                     await service.start();_secure_tree(directory)
                     handle=UserServiceHandle(account_id,directory,service)
                     self._handles[account_id]=handle

@@ -1,0 +1,351 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "NotificationInstallation": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "token_version": {
+          "title": "Token Version",
+          "type": "integer"
+        },
+        "consent_revision": {
+          "title": "Consent Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "enabled",
+        "token_version",
+        "consent_revision"
+      ],
+      "title": "NotificationInstallation",
+      "type": "object"
+    },
+    "NotificationStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1",
+          "default": "1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "data_epoch": {
+          "title": "Data Epoch",
+          "type": "string"
+        },
+        "scope_revision": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Scope Revision"
+        },
+        "session_binding": {
+          "title": "Session Binding",
+          "type": "string"
+        },
+        "session_revoked": {
+          "title": "Session Revoked",
+          "type": "boolean"
+        },
+        "selected_installation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Selected Installation Id"
+        },
+        "eligible": {
+          "title": "Eligible",
+          "type": "boolean"
+        },
+        "delivery_status": {
+          "enum": [
+            "disabled",
+            "unavailable",
+            "ready"
+          ],
+          "title": "Delivery Status",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "enable_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Enable Label"
+        },
+        "revoke_label": {
+          "title": "Revoke Label",
+          "type": "string"
+        },
+        "installations": {
+          "items": {
+            "$ref": "#/$defs/NotificationInstallation"
+          },
+          "title": "Installations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "data_epoch",
+        "scope_revision",
+        "session_binding",
+        "session_revoked",
+        "selected_installation_id",
+        "eligible",
+        "delivery_status",
+        "title",
+        "message",
+        "enable_label",
+        "revoke_label",
+        "installations"
+      ],
+      "title": "NotificationStatus",
+      "type": "object"
+    },
+    "NotificationRegister": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "data_epoch": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
+          "title": "Data Epoch",
+          "type": "string"
+        },
+        "scope_revision": {
+          "exclusiveMinimum": 0,
+          "title": "Scope Revision",
+          "type": "integer"
+        },
+        "token": {
+          "maxLength": 4096,
+          "minLength": 2,
+          "pattern": "^(?:[0-9a-fA-F]{2})+$",
+          "title": "Token",
+          "type": "string"
+        },
+        "installation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Installation Id"
+        },
+        "expected_token_version": {
+          "minimum": 0,
+          "title": "Expected Token Version",
+          "type": "integer"
+        },
+        "expected_consent_revision": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expected Consent Revision"
+        },
+        "opt_in": {
+          "title": "Opt In",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "scope_revision",
+        "token",
+        "installation_id",
+        "expected_token_version",
+        "expected_consent_revision",
+        "opt_in"
+      ],
+      "title": "NotificationRegister",
+      "type": "object"
+    },
+    "NotificationRegistration": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1",
+          "default": "1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "installation_id": {
+          "title": "Installation Id",
+          "type": "string"
+        },
+        "token_version": {
+          "title": "Token Version",
+          "type": "integer"
+        },
+        "consent_revision": {
+          "title": "Consent Revision",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/NotificationStatus"
+        }
+      },
+      "required": [
+        "installation_id",
+        "token_version",
+        "consent_revision",
+        "status"
+      ],
+      "title": "NotificationRegistration",
+      "type": "object"
+    },
+    "NotificationRevoke": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "installation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Installation Id"
+        },
+        "registration_request_id": {
+          "title": "Registration Request Id",
+          "type": "string"
+        },
+        "expected_consent_revision": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expected Consent Revision"
+        }
+      },
+      "required": [
+        "schema_version",
+        "installation_id",
+        "registration_request_id",
+        "expected_consent_revision"
+      ],
+      "title": "NotificationRevoke",
+      "type": "object"
+    },
+    "NotificationLogout": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id"
+      ],
+      "title": "NotificationLogout",
+      "type": "object"
+    },
+    "NotificationLogoutResult": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1",
+          "default": "1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "revoked": {
+          "title": "Revoked",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "revoked"
+      ],
+      "title": "NotificationLogoutResult",
+      "type": "object"
+    },
+    "NotificationStatusRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "registration_request_id": {
+          "title": "Registration Request Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "registration_request_id"
+      ],
+      "title": "NotificationStatusRequest",
+      "type": "object"
+    }
+  }
+}

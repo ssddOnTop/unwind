@@ -44,6 +44,22 @@ struct SettingsView: View {
                 if let page = model.workflowPage("settings") {
                     Section(page.title) { ForEach(page.paragraphs, id: \.self) { Text(verbatim: $0).font(.caption) } }
                 }
+                if let notification = model.reportNotifications.status {
+                    Section(notification.title) {
+                        Text(verbatim: notification.message).font(.caption)
+                        if let issue = model.reportNotifications.issue { Text(verbatim: issue).font(.caption).foregroundStyle(.secondary) }
+                        if model.reportNotifications.enabled {
+                            Button(notification.revoke_label) { Task { await model.reportNotifications.disable() } }
+                                .disabled(model.reportNotifications.busy)
+                        } else if let label = notification.enable_label {
+                            Button(label) { Task { await model.reportNotifications.enable() } }
+                                .disabled(!model.reportNotifications.capable || model.reportNotifications.busy || model.hasPending)
+                        }
+                        if model.reportNotifications.busy { ProgressView() }
+                    }
+                } else if let issue = model.reportNotifications.issue {
+                    Section("Report-ready notifications") { Text(verbatim: issue).font(.caption) }
+                }
                 CloudConsentSection(isEnabled: model.state?.preferences.cloud_consent ?? false, isBusy: model.busy || model.hasPending || model.state == nil,
                     label: model.workflowOverview?.consent_label ?? "Cloud review", notice: model.workflowOverview?.consent_notice ?? "Refresh to read the server’s cloud review policy.",
                     onChange: { value in if value { cloudConsent = true } else { Task { await model.setCloudConsent(false) } } })

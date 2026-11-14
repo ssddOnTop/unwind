@@ -31,6 +31,7 @@
 !/fe/App/**/*.swift
 !/fe/App/Info.plist
 !/fe/App/LocalCompanion.entitlements
+!/fe/App/ReportNotifications.entitlements
 !/fe/Core/
 !/fe/Core/Package.swift
 !/fe/Core/Package.resolved
@@ -69,6 +70,7 @@
 !/contracts/banking.md
 !/contracts/banking.schema.json
 !/contracts/patterns.schema.json
+!/contracts/report_notifications.schema.json
 !/scripts/
 !/scripts/*.py
 !/scripts/*.sh
@@ -80,6 +82,7 @@
 .env.*
 *.pem
 *.key
+*.p8
 *.p12
 *.pfx
 *.keystore

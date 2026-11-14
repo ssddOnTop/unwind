@@ -21,6 +21,8 @@ import CompanionCore
     @Published private(set) var notificationPermission = "Not checked"
     /// Explicit dependency for legacy compatibility tests only; runtime uses banking v1.
     let plaid: PlaidController?
+    let reportNotifications: ReportNotificationController
+    private var notificationUpdates: AnyCancellable?
     let banking: BankingController
     private var bankingUpdates: AnyCancellable?
     private let client: CompanionClient
@@ -35,6 +37,9 @@ import CompanionCore
 
     init(client: CompanionClient, accountNamespace: String, legacyController: PlaidController? = nil) {
         self.client = client
+        let notificationDevice = ReportNotificationAdapter()
+        reportNotifications = ReportNotificationController(client: client, device: notificationDevice, accountNamespace: accountNamespace)
+        notificationDevice.bind(reportNotifications)
         reminders = LocalReminders(accountNamespace: accountNamespace)
         // Do not publish disk snapshots before a current authenticated fetch succeeds.
         plaid = legacyController
@@ -51,15 +56,18 @@ import CompanionCore
             self.refreshTask?.cancel()
             self.refreshTask = Task { [weak self] in await self?.reloadExperience() }
         }
+        notificationUpdates = reportNotifications.objectWillChange.sink { [weak self] _ in Task { @MainActor in self?.objectWillChange.send() } }
         bankingUpdates = banking.objectWillChange.sink { [weak self] _ in Task { @MainActor in self?.objectWillChange.send() } }
         plaidUpdates = plaid?.objectWillChange.sink { [weak self] _ in Task { @MainActor in self?.objectWillChange.send() } }
     }
     func hideForAdmission() {
+        reportNotifications.suspend()
         admissionBlocked = true; connected = false; experience = nil; patternOverview = nil; patternRequestID = nil; workflowOverview = nil; workflowPollTask?.cancel(); snapshot = LocalSnapshot()
         health.cancelAll(); reminders.cancelAll(); plaid?.pauseForAdmission(); banking.pauseForAdmission()
     }
-    func allowAdmittedUpdates() { admissionBlocked = false; banking.admissionRestored() }
+    func allowAdmittedUpdates() { reportNotifications.resume(); admissionBlocked = false; banking.admissionRestored() }
     func invalidateForSignOut(cancelReminders: Bool = true) {
+        reportNotifications.suspend()
         active = false; banking.invalidateSession()
         refreshTask?.cancel(); refreshTask = nil
         plaid?.cancel("Signed out. Connection work stopped.")
@@ -77,12 +85,14 @@ import CompanionCore
             experience = nil; reminders.cancelAll()
         }
         if epoch != nil && epoch != snapshot.state?.data_epoch {
+            reportNotifications.suspend(); reportNotifications.resume()
             patternOverview = nil; patternRequestID = nil; workflowOverview = nil; workflowPollTask?.cancel()
             plaid?.cancel("Records were reset. Reconnect explicitly if needed."); banking.cancelForLifecycle()
         }
     }
     private func reloadExperience() async {
         guard active, !admissionBlocked, !hasPending else { return }
+        reportNotifications.resume()
         do {
             var value = try await client.refreshExperience()
             guard active, !admissionBlocked else { return }
@@ -99,6 +109,7 @@ import CompanionCore
             guard active, !admissionBlocked else { patternOverview = nil; return }
             try await reminders.reconcile(state: state, locallyBlocked: hasPending)
             notificationPermission = reminders.permission
+            await reportNotifications.refresh()
         } catch {
             guard active else { return }
             experience = nil; message = "Your overview couldn’t be loaded. Try refreshing."
@@ -174,6 +185,7 @@ import CompanionCore
             connected = true
             try await reminders.reconcile(state: state, locallyBlocked: hasPending)
             notificationPermission = reminders.permission
+            await reportNotifications.refresh()
         } catch {
             guard active else { return }
             publish(); experience = nil; connected = false; reminders.cancelAll()
@@ -212,11 +224,17 @@ import CompanionCore
         await perform(preferReceivedExperience: true) { client in try await submit(request, path: "/experience/v1/answers", client: client) }
     }
     func deleteData() async {
+        reportNotifications.stopForLogout()
+        await reportNotifications.clearDeviceAlerts()
         banking.cancelForLifecycle(); plaid?.cancel("Deletion requested. Connection work stopped."); health.cancelAll(); reminders.cancelAll(); experience = nil; patternOverview = nil; patternRequestID = nil; workflowOverview = nil; workflowPollTask?.cancel()
         await perform { client in
             guard let current = client.snapshot.state else { throw ClientFailure.noState }
             try await submit(DeleteRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: current.data_epoch, confirm: "delete_all"), path: "/data", method: "DELETE", replacingQueue: true, client: client)
         }
+    }
+    func prepareNotificationLogout() async throws {
+        health.cancelAll(); banking.cancelForLifecycle(); workflowPollTask?.cancel()
+        try await reportNotifications.logout()
     }
     func process() async { await process(mode: "disabled") }
     func processLive() async { await process(mode: "live") }

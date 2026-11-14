@@ -81,10 +81,11 @@ class Boundary:
                 requests[('POST', '/patterns/v1/clarify')] = 'pattern_clarify'
                 requests[('POST','/patterns/v1/brief')] = 'pattern_brief'
                 requests[('POST','/workflows/v1/enqueue')] = 'workflow_enqueue'
+                for action in ('status','register','revoke','logout'):requests[('POST','/report-notifications/v1/'+action)]='notification_request'
                 requests[('POST','/health/v1/samples')] = 'health_samples'
             if self.banking_profile:
                 requests[('POST','/banking/v1/actions')] = 'banking_request'
-            reads = {"/health", "/state"} | ({"/experience/v1", '/patterns/v1', '/workflows/v1'} if self.experience_profile else set()) | ({'/banking/v1'} if self.banking_profile else set())
+            reads = {"/health", "/state"} | ({"/experience/v1", '/patterns/v1', '/workflows/v1','/report-notifications/v1'} if self.experience_profile else set()) | ({'/banking/v1'} if self.banking_profile else set())
             if scope.get("query_string") and scope["path"] in {*reads, *(r[1] for r in requests)}:
                 raise DomainError()
             chunks, size = [], 0
@@ -121,6 +122,10 @@ class Boundary:
                     from .health_ingestion import HealthIngestRequest
                     try: HealthIngestRequest.model_validate_json(raw)
                     except Exception: raise DomainError() from None
+                elif route[1].startswith('/report-notifications/v1/'):
+                    from .report_notification_contracts import NotificationRegister,NotificationRevoke,NotificationLogout,NotificationStatusRequest
+                    try: {'status':NotificationStatusRequest,'register':NotificationRegister,'revoke':NotificationRevoke,'logout':NotificationLogout}[route[1].split('/')[-1]].model_validate(body)
+                    except Exception:raise DomainError() from None
                 elif route == ('POST','/workflows/v1/enqueue'):
                     from .workflow_contracts import EnqueueRequest
                     try:EnqueueRequest.model_validate(body)
@@ -290,6 +295,41 @@ def create_app(data_dir: Path | None = None, *, replacements=None, scheduler=Non
         @app.post('/patterns/v1/analyze', response_model=PatternOverview, responses=experience_errors)
         async def analyze_patterns(body: AnalyzeRequest):
             raise DomainError('consent_required',403,'Direct manual analysis is disabled. Use the authorized workflow action.')
+
+        from .report_notification_contracts import NotificationStatus,NotificationRegister,NotificationRegistration,NotificationRevoke,NotificationLogout,NotificationLogoutResult,NotificationStatusRequest
+        from .auth import Principal
+
+        def notification_context(request):
+            principal=request.scope.get('state',{}).get('principal')
+            if not isinstance(principal,Principal):raise DomainError('consent_required',403)
+            notifications=getattr(service,'report_notifications',None)
+            if notifications is None:raise DomainError('not_configured',409)
+            return notifications,principal
+
+        @app.get('/report-notifications/v1',response_model=NotificationStatus,responses=experience_errors)
+        async def report_notification_status(request: Request):
+            notifications,principal=notification_context(request)
+            return await notifications.status(principal,service.document)
+
+        @app.post('/report-notifications/v1/status',response_model=NotificationStatus,responses=experience_errors)
+        async def report_notification_selected_status(body: NotificationStatusRequest,request: Request):
+            notifications,principal=notification_context(request)
+            return await notifications.status(principal,service.document,body.registration_request_id)
+
+        @app.post('/report-notifications/v1/register',response_model=NotificationRegistration,responses=experience_errors)
+        async def report_notification_register(body: NotificationRegister,request: Request):
+            notifications,principal=notification_context(request)
+            return await notifications.register(principal,body,service.document)
+
+        @app.post('/report-notifications/v1/revoke',response_model=NotificationStatus,responses=experience_errors)
+        async def report_notification_revoke(body: NotificationRevoke,request: Request):
+            notifications,principal=notification_context(request)
+            return await notifications.revoke(principal,body,service.document)
+
+        @app.post('/report-notifications/v1/logout',response_model=NotificationLogoutResult,responses=experience_errors)
+        async def report_notification_logout(body: NotificationLogout,request: Request):
+            notifications,principal=notification_context(request)
+            return await notifications.logout(principal)
 
         from .workflow_contracts import WorkflowOverview,EnqueueRequest
 

@@ -3140,6 +3140,346 @@ public struct EnqueueRequest: Codable, Equatable, Sendable {
     }
 }
 
+public struct NotificationInstallation: Codable, Equatable, Sendable {
+    public var id: String
+    public var enabled: Bool
+    public var token_version: Int
+    public var consent_revision: Int
+    public init(id: String, enabled: Bool, token_version: Int, consent_revision: Int) {
+        self.id = id
+        self.enabled = enabled
+        self.token_version = token_version
+        self.consent_revision = consent_revision
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case id, enabled, token_version, consent_revision
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        enabled = try c.decode(Bool.self, forKey: .enabled)
+        token_version = try c.decode(Int.self, forKey: .token_version)
+        consent_revision = try c.decode(Int.self, forKey: .consent_revision)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(enabled, forKey: .enabled)
+        try c.encode(token_version, forKey: .token_version)
+        try c.encode(consent_revision, forKey: .consent_revision)
+    }
+}
+
+public struct NotificationStatus: Codable, Equatable, Sendable {
+    public var schema_version: String
+    public var data_epoch: String
+    public var scope_revision: Int?
+    public var session_binding: String
+    public var session_revoked: Bool
+    public var selected_installation_id: String?
+    public var eligible: Bool
+    public var delivery_status: String
+    public var title: String
+    public var message: String
+    public var enable_label: String?
+    public var revoke_label: String
+    public var installations: [NotificationInstallation]
+    public init(schema_version: String, data_epoch: String, scope_revision: Int?, session_binding: String, session_revoked: Bool, selected_installation_id: String?, eligible: Bool, delivery_status: String, title: String, message: String, enable_label: String?, revoke_label: String, installations: [NotificationInstallation]) {
+        self.schema_version = schema_version
+        self.data_epoch = data_epoch
+        self.scope_revision = scope_revision
+        self.session_binding = session_binding
+        self.session_revoked = session_revoked
+        self.selected_installation_id = selected_installation_id
+        self.eligible = eligible
+        self.delivery_status = delivery_status
+        self.title = title
+        self.message = message
+        self.enable_label = enable_label
+        self.revoke_label = revoke_label
+        self.installations = installations
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schema_version, data_epoch, scope_revision, session_binding, session_revoked, selected_installation_id, eligible, delivery_status, title, message, enable_label, revoke_label, installations
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema_version = try c.decode(String.self, forKey: .schema_version)
+        do { let value = schema_version;
+            guard value == "1" else { throw DecodingError.dataCorruptedError(forKey: .schema_version, in: c, debugDescription: "Invalid contract value") }
+        }
+        data_epoch = try c.decode(String.self, forKey: .data_epoch)
+        scope_revision = try c.decodeIfPresent(Int.self, forKey: .scope_revision)
+        session_binding = try c.decode(String.self, forKey: .session_binding)
+        session_revoked = try c.decode(Bool.self, forKey: .session_revoked)
+        selected_installation_id = try c.decodeIfPresent(String.self, forKey: .selected_installation_id)
+        eligible = try c.decode(Bool.self, forKey: .eligible)
+        delivery_status = try c.decode(String.self, forKey: .delivery_status)
+        do { let value = delivery_status;
+            guard ["disabled", "unavailable", "ready"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .delivery_status, in: c, debugDescription: "Invalid contract value") }
+        }
+        title = try c.decode(String.self, forKey: .title)
+        message = try c.decode(String.self, forKey: .message)
+        enable_label = try c.decodeIfPresent(String.self, forKey: .enable_label)
+        revoke_label = try c.decode(String.self, forKey: .revoke_label)
+        installations = try c.decode([NotificationInstallation].self, forKey: .installations)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schema_version, forKey: .schema_version)
+        try c.encode(data_epoch, forKey: .data_epoch)
+        try c.encode(scope_revision, forKey: .scope_revision)
+        try c.encode(session_binding, forKey: .session_binding)
+        try c.encode(session_revoked, forKey: .session_revoked)
+        try c.encode(selected_installation_id, forKey: .selected_installation_id)
+        try c.encode(eligible, forKey: .eligible)
+        try c.encode(delivery_status, forKey: .delivery_status)
+        try c.encode(title, forKey: .title)
+        try c.encode(message, forKey: .message)
+        try c.encode(enable_label, forKey: .enable_label)
+        try c.encode(revoke_label, forKey: .revoke_label)
+        try c.encode(installations, forKey: .installations)
+    }
+}
+
+public struct NotificationRegister: Codable, Equatable, Sendable {
+    public var schema_version: String
+    public var request_id: String
+    public var data_epoch: String
+    public var scope_revision: Int
+    public var token: String
+    public var installation_id: String?
+    public var expected_token_version: Int
+    public var expected_consent_revision: Int?
+    public var opt_in: Bool
+    public init(schema_version: String, request_id: String, data_epoch: String, scope_revision: Int, token: String, installation_id: String?, expected_token_version: Int, expected_consent_revision: Int?, opt_in: Bool) {
+        self.schema_version = schema_version
+        self.request_id = request_id
+        self.data_epoch = data_epoch
+        self.scope_revision = scope_revision
+        self.token = token
+        self.installation_id = installation_id
+        self.expected_token_version = expected_token_version
+        self.expected_consent_revision = expected_consent_revision
+        self.opt_in = opt_in
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schema_version, request_id, data_epoch, scope_revision, token, installation_id, expected_token_version, expected_consent_revision, opt_in
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema_version = try c.decode(String.self, forKey: .schema_version)
+        do { let value = schema_version;
+            guard value == "1" else { throw DecodingError.dataCorruptedError(forKey: .schema_version, in: c, debugDescription: "Invalid contract value") }
+        }
+        request_id = try c.decode(String.self, forKey: .request_id)
+        data_epoch = try c.decode(String.self, forKey: .data_epoch)
+        scope_revision = try c.decode(Int.self, forKey: .scope_revision)
+        token = try c.decode(String.self, forKey: .token)
+        installation_id = try c.decodeIfPresent(String.self, forKey: .installation_id)
+        expected_token_version = try c.decode(Int.self, forKey: .expected_token_version)
+        expected_consent_revision = try c.decodeIfPresent(Int.self, forKey: .expected_consent_revision)
+        opt_in = try c.decode(Bool.self, forKey: .opt_in)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schema_version, forKey: .schema_version)
+        try c.encode(request_id, forKey: .request_id)
+        try c.encode(data_epoch, forKey: .data_epoch)
+        try c.encode(scope_revision, forKey: .scope_revision)
+        try c.encode(token, forKey: .token)
+        try c.encode(installation_id, forKey: .installation_id)
+        try c.encode(expected_token_version, forKey: .expected_token_version)
+        try c.encode(expected_consent_revision, forKey: .expected_consent_revision)
+        try c.encode(opt_in, forKey: .opt_in)
+    }
+}
+
+public struct NotificationRegistration: Codable, Equatable, Sendable {
+    public var schema_version: String
+    public var installation_id: String
+    public var token_version: Int
+    public var consent_revision: Int
+    public var status: NotificationStatus
+    public init(schema_version: String, installation_id: String, token_version: Int, consent_revision: Int, status: NotificationStatus) {
+        self.schema_version = schema_version
+        self.installation_id = installation_id
+        self.token_version = token_version
+        self.consent_revision = consent_revision
+        self.status = status
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schema_version, installation_id, token_version, consent_revision, status
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema_version = try c.decode(String.self, forKey: .schema_version)
+        do { let value = schema_version;
+            guard value == "1" else { throw DecodingError.dataCorruptedError(forKey: .schema_version, in: c, debugDescription: "Invalid contract value") }
+        }
+        installation_id = try c.decode(String.self, forKey: .installation_id)
+        token_version = try c.decode(Int.self, forKey: .token_version)
+        consent_revision = try c.decode(Int.self, forKey: .consent_revision)
+        status = try c.decode(NotificationStatus.self, forKey: .status)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schema_version, forKey: .schema_version)
+        try c.encode(installation_id, forKey: .installation_id)
+        try c.encode(token_version, forKey: .token_version)
+        try c.encode(consent_revision, forKey: .consent_revision)
+        try c.encode(status, forKey: .status)
+    }
+}
+
+public struct NotificationRevoke: Codable, Equatable, Sendable {
+    public var schema_version: String
+    public var installation_id: String?
+    public var registration_request_id: String
+    public var expected_consent_revision: Int?
+    public init(schema_version: String, installation_id: String?, registration_request_id: String, expected_consent_revision: Int?) {
+        self.schema_version = schema_version
+        self.installation_id = installation_id
+        self.registration_request_id = registration_request_id
+        self.expected_consent_revision = expected_consent_revision
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schema_version, installation_id, registration_request_id, expected_consent_revision
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema_version = try c.decode(String.self, forKey: .schema_version)
+        do { let value = schema_version;
+            guard value == "1" else { throw DecodingError.dataCorruptedError(forKey: .schema_version, in: c, debugDescription: "Invalid contract value") }
+        }
+        installation_id = try c.decodeIfPresent(String.self, forKey: .installation_id)
+        registration_request_id = try c.decode(String.self, forKey: .registration_request_id)
+        expected_consent_revision = try c.decodeIfPresent(Int.self, forKey: .expected_consent_revision)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schema_version, forKey: .schema_version)
+        try c.encode(installation_id, forKey: .installation_id)
+        try c.encode(registration_request_id, forKey: .registration_request_id)
+        try c.encode(expected_consent_revision, forKey: .expected_consent_revision)
+    }
+}
+
+public struct NotificationLogout: Codable, Equatable, Sendable {
+    public var schema_version: String
+    public var request_id: String
+    public init(schema_version: String, request_id: String) {
+        self.schema_version = schema_version
+        self.request_id = request_id
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schema_version, request_id
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema_version = try c.decode(String.self, forKey: .schema_version)
+        do { let value = schema_version;
+            guard value == "1" else { throw DecodingError.dataCorruptedError(forKey: .schema_version, in: c, debugDescription: "Invalid contract value") }
+        }
+        request_id = try c.decode(String.self, forKey: .request_id)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schema_version, forKey: .schema_version)
+        try c.encode(request_id, forKey: .request_id)
+    }
+}
+
+public struct NotificationLogoutResult: Codable, Equatable, Sendable {
+    public var schema_version: String
+    public var revoked: Bool
+    public init(schema_version: String, revoked: Bool) {
+        self.schema_version = schema_version
+        self.revoked = revoked
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schema_version, revoked
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema_version = try c.decode(String.self, forKey: .schema_version)
+        do { let value = schema_version;
+            guard value == "1" else { throw DecodingError.dataCorruptedError(forKey: .schema_version, in: c, debugDescription: "Invalid contract value") }
+        }
+        revoked = try c.decode(Bool.self, forKey: .revoked)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schema_version, forKey: .schema_version)
+        try c.encode(revoked, forKey: .revoked)
+    }
+}
+
+public struct NotificationStatusRequest: Codable, Equatable, Sendable {
+    public var schema_version: String
+    public var registration_request_id: String
+    public init(schema_version: String, registration_request_id: String) {
+        self.schema_version = schema_version
+        self.registration_request_id = registration_request_id
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schema_version, registration_request_id
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema_version = try c.decode(String.self, forKey: .schema_version)
+        do { let value = schema_version;
+            guard value == "1" else { throw DecodingError.dataCorruptedError(forKey: .schema_version, in: c, debugDescription: "Invalid contract value") }
+        }
+        registration_request_id = try c.decode(String.self, forKey: .registration_request_id)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schema_version, forKey: .schema_version)
+        try c.encode(registration_request_id, forKey: .registration_request_id)
+    }
+}
+
 public struct PreferencesNotifications: Codable, Equatable, Sendable {
     public var enabled: Bool
     public var local_time: String

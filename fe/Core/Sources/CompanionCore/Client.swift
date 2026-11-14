@@ -193,6 +193,36 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
         throw ClientFailure.rejected(envelope.error.code, envelope.error.retryable)
     }
     /// Explicit manual review, never queued, scheduled or automatically transport-retried.
+    public func reportNotificationStatus(registrationRequestID: String? = nil) async throws -> NotificationStatus {
+        try validateSession()
+        let epoch = snapshot.state?.data_epoch
+        let body = try registrationRequestID.map { try Wire.encode(NotificationStatusRequest(schema_version: "1", registration_request_id: $0)) }
+        let value = try Wire.decode(NotificationStatus.self, await send(request(path: body == nil ? "/report-notifications/v1" : "/report-notifications/v1/status", method: body == nil ? "GET" : "POST", body: body)))
+        try validateSession()
+        guard epoch == snapshot.state?.data_epoch, epoch == value.data_epoch else { throw ClientFailure.invalidResponse }
+        return value
+    }
+    public func registerReportNotifications(_ body: NotificationRegister) async throws -> NotificationRegistration {
+        try validateSession()
+        guard snapshot.state?.data_epoch == body.data_epoch else { throw ClientFailure.invalidResponse }
+        let value = try Wire.decode(NotificationRegistration.self, await send(request(path: "/report-notifications/v1/register", method: "POST", body: Wire.encode(body))))
+        try validateSession()
+        guard snapshot.state?.data_epoch == body.data_epoch, value.status.data_epoch == body.data_epoch else { throw ClientFailure.invalidResponse }
+        return value
+    }
+    public func revokeReportNotifications(_ body: NotificationRevoke) async throws -> NotificationStatus {
+        try validateSession()
+        let value = try Wire.decode(NotificationStatus.self, await send(request(path: "/report-notifications/v1/revoke", method: "POST", body: Wire.encode(body))))
+        try validateSession()
+        return value
+    }
+    public func logoutReportNotifications() async throws -> NotificationLogoutResult {
+        try validateSession()
+        let body = NotificationLogout(schema_version: "1", request_id: UUID().uuidString)
+        let value = try Wire.decode(NotificationLogoutResult.self, await send(request(path: "/report-notifications/v1/logout", method: "POST", body: Wire.encode(body))))
+        try validateSession()
+        return value
+    }
     public func workflows(requestID: String? = nil) async throws -> WorkflowOverview {
         try validateSession()
         guard !busy, snapshot.outbox.isEmpty else { throw ClientFailure.busy }

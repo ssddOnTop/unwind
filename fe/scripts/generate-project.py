@@ -12,7 +12,7 @@ files=[]; builds=[]
 for source in sorted((root/'App').glob('*.swift')):
     f=obj(source.name,f'isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = {source.name}; sourceTree = "<group>";')
     files.append(f); builds.append(obj('build-'+source.name,f'isa = PBXBuildFile; fileRef = {f};'))
-for name,kind in [('Info.plist','text.plist.xml'),('LocalCompanion.entitlements','text.plist.entitlements')]:
+for name,kind in [('Info.plist','text.plist.xml'),('LocalCompanion.entitlements','text.plist.entitlements'),('ReportNotifications.entitlements','text.plist.entitlements')]:
     files.append(obj(name,f'isa = PBXFileReference; lastKnownFileType = {kind}; path = {name}; sourceTree = "<group>";'))
 app=obj('app-group',f'isa = PBXGroup; children = {refs(files)}; path = App; sourceTree = "<group>";')
 product=obj('product','isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LocalCompanion.app; sourceTree = BUILT_PRODUCTS_DIR;')
@@ -40,7 +40,7 @@ for config in ['Debug','Release']:
     # makes the app build both simulator slices while its local package builds one.
     active = 'YES' if debug else 'NO'
     projectconfigs.append(obj('project-'+config,'isa = XCBuildConfiguration; name = '+config+'; buildSettings = { CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SDKROOT = iphoneos; SWIFT_VERSION = 6.0; ONLY_ACTIVE_ARCH = '+active+'; };'))
-    settings={'PRODUCT_NAME':'"$(TARGET_NAME)"','PRODUCT_BUNDLE_IDENTIFIER':'org.localcompanion.prototype','INFOPLIST_FILE':'App/Info.plist','GENERATE_INFOPLIST_FILE':'NO','CODE_SIGN_ENTITLEMENTS':'App/LocalCompanion.entitlements','CODE_SIGN_STYLE':'Automatic','TARGETED_DEVICE_FAMILY':'"1,2"','SUPPORTED_PLATFORMS':'"iphoneos iphonesimulator"','SUPPORTS_MACCATALYST':'NO','SWIFT_STRICT_CONCURRENCY':'complete','SWIFT_OPTIMIZATION_LEVEL':'"-Onone"' if debug else '"-O"','DEBUG_INFORMATION_FORMAT':'dwarf','LD_RUNPATH_SEARCH_PATHS':'"$(inherited) @executable_path/Frameworks"'}
+    settings={'PRODUCT_NAME':'"$(TARGET_NAME)"','PRODUCT_BUNDLE_IDENTIFIER':'org.localcompanion.prototype','INFOPLIST_FILE':'App/Info.plist','GENERATE_INFOPLIST_FILE':'NO','CODE_SIGN_ENTITLEMENTS':'"$(REPORT_NOTIFICATIONS_ENTITLEMENTS)"','CODE_SIGN_STYLE':'Automatic','TARGETED_DEVICE_FAMILY':'"1,2"','SUPPORTED_PLATFORMS':'"iphoneos iphonesimulator"','SUPPORTS_MACCATALYST':'NO','SWIFT_STRICT_CONCURRENCY':'complete','SWIFT_OPTIMIZATION_LEVEL':'"-Onone"' if debug else '"-O"','DEBUG_INFORMATION_FORMAT':'dwarf','LD_RUNPATH_SEARCH_PATHS':'"$(inherited) @executable_path/Frameworks"'}
     if debug: settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS']='DEBUG'
     targetconfigs.append(obj('target-'+config,'isa = XCBuildConfiguration; baseConfigurationReference = '+authconfig+'; name = '+config+'; buildSettings = { '+' '.join(f'{k} = {v};' for k,v in settings.items())+' };'))
 pc=obj('project-configs',f'isa = XCConfigurationList; buildConfigurations = {refs(projectconfigs)}; defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;')
