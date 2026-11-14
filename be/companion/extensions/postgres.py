@@ -88,7 +88,7 @@ class PostgresPersistenceExtension:
                             WHERE companion_private.receipts.account_id=%s""",
                             (self.account_id,r['epoch'],r['route'],r['request_id'],r['digest'],Jsonb(r['response']) if r['response'] is not None else None,r['created_at'],self.account_id))
                     if payload.get('recover_pending'):
-                        await self.conn.execute("UPDATE companion_private.receipts SET response=%s WHERE account_id=%s AND response IS NULL", (Jsonb(payload['document']['state']),self.account_id))
+                        await self.conn.execute("UPDATE companion_private.receipts SET response=%s WHERE account_id=%s AND response IS NULL AND route<>'/patterns/v1/analyze'", (Jsonb(payload['document']['state']),self.account_id))
                     return {"committed":True}
             except asyncio.CancelledError:
                 raise

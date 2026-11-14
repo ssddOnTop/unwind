@@ -2337,6 +2337,40 @@ public struct PatternAggregate: Codable, Equatable, Sendable {
     }
 }
 
+public struct PatternBankrefresh: Codable, Equatable, Sendable {
+    public var status: String
+    public var last_updated: String?
+    public var message: String
+    public init(status: String, last_updated: String?, message: String) {
+        self.status = status
+        self.last_updated = last_updated
+        self.message = message
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case status, last_updated, message
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        status = try c.decode(String.self, forKey: .status)
+        do { let value = status;
+            guard ["not_requested", "complete", "partial", "failed", "unavailable"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .status, in: c, debugDescription: "Invalid contract value") }
+        }
+        last_updated = try c.decodeIfPresent(String.self, forKey: .last_updated)
+        message = try c.decode(String.self, forKey: .message)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(status, forKey: .status)
+        try c.encode(last_updated, forKey: .last_updated)
+        try c.encode(message, forKey: .message)
+    }
+}
+
 public struct PatternFinding: Codable, Equatable, Sendable {
     public var concern_id: String
     public var title: String
@@ -2460,10 +2494,11 @@ public struct PatternOverview: Codable, Equatable, Sendable {
     public var can_analyze: Bool
     public var source_label: String
     public var doctor_brief: String
+    public var bank_refresh: PatternBankrefresh
     public var privacy_notice: String
     public var evidence: PatternAggregate?
     public var findings: [PatternFinding]
-    public init(schema_version: String, status: String, analyzed_at: String?, run_id: String?, engine: String, is_demo: Bool, can_analyze: Bool, source_label: String, doctor_brief: String, privacy_notice: String, evidence: PatternAggregate?, findings: [PatternFinding]) {
+    public init(schema_version: String, status: String, analyzed_at: String?, run_id: String?, engine: String, is_demo: Bool, can_analyze: Bool, source_label: String, doctor_brief: String, bank_refresh: PatternBankrefresh, privacy_notice: String, evidence: PatternAggregate?, findings: [PatternFinding]) {
         self.schema_version = schema_version
         self.status = status
         self.analyzed_at = analyzed_at
@@ -2473,12 +2508,13 @@ public struct PatternOverview: Codable, Equatable, Sendable {
         self.can_analyze = can_analyze
         self.source_label = source_label
         self.doctor_brief = doctor_brief
+        self.bank_refresh = bank_refresh
         self.privacy_notice = privacy_notice
         self.evidence = evidence
         self.findings = findings
     }
     enum CodingKeys: String, CodingKey, CaseIterable {
-        case schema_version, status, analyzed_at, run_id, engine, is_demo, can_analyze, source_label, doctor_brief, privacy_notice, evidence, findings
+        case schema_version, status, analyzed_at, run_id, engine, is_demo, can_analyze, source_label, doctor_brief, bank_refresh, privacy_notice, evidence, findings
     }
     public init(from decoder: Decoder) throws {
         let keys = try decoder.container(keyedBy: AnyKey.self)
@@ -2505,6 +2541,7 @@ public struct PatternOverview: Codable, Equatable, Sendable {
         can_analyze = try c.decode(Bool.self, forKey: .can_analyze)
         source_label = try c.decode(String.self, forKey: .source_label)
         doctor_brief = try c.decode(String.self, forKey: .doctor_brief)
+        bank_refresh = try c.decode(PatternBankrefresh.self, forKey: .bank_refresh)
         privacy_notice = try c.decode(String.self, forKey: .privacy_notice)
         evidence = try c.decodeIfPresent(PatternAggregate.self, forKey: .evidence)
         findings = try c.decode([PatternFinding].self, forKey: .findings)
@@ -2520,6 +2557,7 @@ public struct PatternOverview: Codable, Equatable, Sendable {
         try c.encode(can_analyze, forKey: .can_analyze)
         try c.encode(source_label, forKey: .source_label)
         try c.encode(doctor_brief, forKey: .doctor_brief)
+        try c.encode(bank_refresh, forKey: .bank_refresh)
         try c.encode(privacy_notice, forKey: .privacy_notice)
         try c.encode(evidence, forKey: .evidence)
         try c.encode(findings, forKey: .findings)
@@ -2529,12 +2567,16 @@ public struct PatternOverview: Codable, Equatable, Sendable {
 public struct PatternAnalyzeRequest: Codable, Equatable, Sendable {
     public var schema_version: String
     public var request_id: String
-    public init(schema_version: String, request_id: String) {
+    public var data_epoch: String
+    public var fetch_latest_bank_data: Bool
+    public init(schema_version: String, request_id: String, data_epoch: String, fetch_latest_bank_data: Bool) {
         self.schema_version = schema_version
         self.request_id = request_id
+        self.data_epoch = data_epoch
+        self.fetch_latest_bank_data = fetch_latest_bank_data
     }
     enum CodingKeys: String, CodingKey, CaseIterable {
-        case schema_version, request_id
+        case schema_version, request_id, data_epoch, fetch_latest_bank_data
     }
     public init(from decoder: Decoder) throws {
         let keys = try decoder.container(keyedBy: AnyKey.self)
@@ -2548,11 +2590,15 @@ public struct PatternAnalyzeRequest: Codable, Equatable, Sendable {
             guard value == "1" else { throw DecodingError.dataCorruptedError(forKey: .schema_version, in: c, debugDescription: "Invalid contract value") }
         }
         request_id = try c.decode(String.self, forKey: .request_id)
+        data_epoch = try c.decode(String.self, forKey: .data_epoch)
+        fetch_latest_bank_data = try c.decode(Bool.self, forKey: .fetch_latest_bank_data)
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(schema_version, forKey: .schema_version)
         try c.encode(request_id, forKey: .request_id)
+        try c.encode(data_epoch, forKey: .data_epoch)
+        try c.encode(fetch_latest_bank_data, forKey: .fetch_latest_bank_data)
     }
 }
 

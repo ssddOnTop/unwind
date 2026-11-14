@@ -320,8 +320,9 @@ def create_authenticated_app(auth_root: Path, *, auth_config: AuthConfig | None 
                 async def bank_guard():
                     return bool(service.document['state']['data_epoch']==job['epoch'] and await inbox.current(job))
                 response = await service.banking_coordinator.sync_item(job['item_id'],admission_guard=bank_guard)
+                if response and response.get('deferred_until'):return response
                 if response and response['result']['status']=='partial':raise AccountError()
-                return
+                return response
             async with service.lock:
                 doc = service.document
                 if (doc['state']['data_epoch'] != job['epoch'] or not doc['meta'].get('plaid_connected')
@@ -332,10 +333,11 @@ def create_authenticated_app(auth_root: Path, *, auth_config: AuthConfig | None 
                 return bool(meta.get('plaid_connected') and meta.get('plaid_item_id') == job['item_id'] and await inbox.current(job))
             from uuid import uuid4
             result = await service.plaid_coordinator.request({'schema_version':'1', 'request_id':'webhook:'+str(uuid4()),
-                'data_epoch':job['epoch'], 'action':'sync'}, admission_guard=admission_guard)
+                'data_epoch':job['epoch'], 'action':'sync'}, admission_guard=admission_guard,automatic=True)
+            if result.get('deferred_until'):return result
             if result['result']['status'] == 'error':
                 raise AccountError()
-        worker = WebhookWorker(inbox, sync_job)
+        worker = WebhookWorker(inbox, sync_job, periodic=True)
     gateway = _Gateway(accounts, verifier, plaid_profile=plaid_profile, experience_profile=experience_profile, webhook_receiver=receiver, banking_profile=banking_profile, allowed_hosts=allowed_hosts)
 
     @asynccontextmanager

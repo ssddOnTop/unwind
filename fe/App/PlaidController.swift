@@ -160,7 +160,7 @@ import LinkKit
                     updateNotice = "Bank setup was confirmed after secure access was restored. Update bank records to check import readiness."
                     working = false; return
                 }
-                try await syncLoop(id: id, epoch: epoch)
+                message += " Use Sync explicitly; background fetching is server-paced."
             } catch { await handleFailure(error, id: id) }
             if id == ticket { working = false }
         }
@@ -173,17 +173,16 @@ import LinkKit
         let id = ticket; working = true
         work = Task { [weak self] in
             guard let self else { return }
-            do { try await syncLoop(id: id, epoch: epoch) }
+            do { try await syncOnce(id: id, epoch: epoch) }
             catch { await handleFailure(error, id: id) }
             if id == ticket { working = false }
         }
     }
-    private func syncLoop(id: UUID, epoch: String) async throws {
-        var plan = PlaidPollPlan()
-        while valid(id, epoch: epoch) {
+    private func syncOnce(id: UUID, epoch: String) async throws {
+        if valid(id, epoch: epoch) {
             guard client.snapshot.state?.sources.contains(where: { $0.id == "plaid" && $0.enabled && $0.consent == "granted" }) == true else { throw PlaidFailure.staleWork }
             message = "Syncing synthetic bank records…"
-            // Each iteration creates a NEW logical request ID; transport retries preserve its bytes.
+            // One explicit action creates one logical request; transport retries preserve its bytes.
             let admission = admissionRevision
             let reply = try await request(.sync, epoch: epoch)
             stateChanged?()
@@ -198,12 +197,8 @@ import LinkKit
                 updateNotice = result.status == "complete" ? "Bank update confirmed after secure access was restored." : "Secure access was restored, but bank records are still pending. Automatic updates paused."
                 return
             }
-            guard let delay = plan.nextDelay(result: result, foreground: foreground, connected: true) else {
-                if result.status != "complete" { message += " Automatic attempts ended. Use Sync again." }
-                return
-            }
-            message += " Next foreground attempt in \(delay)s (\(plan.attempts)/5)."
-            try await Task.sleep(for: .seconds(delay))
+            if result.status != "complete" { message += " Automatic polling is disabled. Use Sync explicitly or wait for the server’s daily update." }
+
         }
     }
     func disconnect() {

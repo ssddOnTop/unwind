@@ -21,9 +21,16 @@ struct BackendHomeView: View {
                         Text(verbatim: patterns.source_label).font(.caption).foregroundStyle(.secondary)
                         Text("Only a pattern summary is sent for AI review.").font(.caption)
                         AccessibleInfoPopover(title: "Pattern privacy", message: patterns.privacy_notice)
-                        Button(model.patternBusy ? "Analyzing patterns…" : "Analyze patterns") {
+                        Toggle("Fetch latest bank data", isOn: $model.fetchLatestBankData)
+                            .disabled(model.busy || model.patternRetryPending)
+                            .accessibilityIdentifier("patterns.fetchBanks")
+                        Text("Off uses saved bank data. On refreshes linked banks before analysis, even within 24 hours.").font(.caption)
+                        if model.patternRetryPending && !model.patternBusy { Text("Retry keeps the original fetch choice.").font(.caption) }
+                        Text(verbatim: patterns.bank_refresh.message).font(.caption)
+                        if let updated = patterns.bank_refresh.last_updated { Text("All linked banks last refreshed: " + updated).font(.caption) }
+                        Button(model.patternBusy ? (model.fetchLatestBankData ? "Fetching banks, then analyzing…" : "Analyzing patterns…") : "Analyze patterns") {
                             Task { await model.analyzePatterns() }
-                        }.buttonStyle(.borderedProminent).disabled(model.busy || model.hasPending || !patterns.can_analyze)
+                        }.buttonStyle(.borderedProminent).disabled(model.busy || model.hasPending || (!patterns.can_analyze && !model.fetchLatestBankData))
                             .accessibilityIdentifier("patterns.analyze")
                         PatternSummaryView(model: model, value: patterns)
                         if !patterns.findings.isEmpty {

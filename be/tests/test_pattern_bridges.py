@@ -72,7 +72,7 @@ async def test_health_real_route_batches_atomic_publication_epoch_replay_and_ana
         class RankHealth:
             async def ainvoke(self,*args,**kwargs):return type('Reply',(),{'content':'{"concern_ids":["sleep","activity"]}'})()
         coordinator.model_factory=lambda:RankHealth()
-        result=await client.post('/patterns/v1/analyze',headers=h.headers('a'),json={'schema_version':'1','request_id':str(uuid4())})
+        result=await client.post('/patterns/v1/analyze',headers=h.headers('a'),json={'schema_version':'1','request_id':str(uuid4()),'data_epoch':state['data_epoch'],'fetch_latest_bank_data':False})
         assert result.status_code==200,result.text
         assert {f['concern_id'] for f in result.json()['findings']}=={'activity','sleep'}
         assert result.json()['is_demo'] and 'HealthKit' in result.json()['source_label']
@@ -182,7 +182,7 @@ async def test_complete_six_month_normal_health_and_plaid_pipeline_without_opera
         for p in health_pages(state['data_epoch']):
             r=await send(client,h,p);assert r.status_code==200,r.text
         model=Model();service.pattern_coordinator.model_factory=lambda:model
-        r=await client.post('/patterns/v1/analyze',headers=h.headers(),json={'schema_version':'1','request_id':str(uuid4())})
+        r=await client.post('/patterns/v1/analyze',headers=h.headers(),json={'schema_version':'1','request_id':str(uuid4()),'data_epoch':state['data_epoch'],'fetch_latest_bank_data':False})
         assert r.status_code==200,r.text
         result=r.json()
         assert result['engine']=='LLMassisted' and result['status']=='complete'

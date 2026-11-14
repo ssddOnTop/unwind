@@ -199,7 +199,7 @@ async def test_authenticated_http_vertical_slice_and_delete(pg_dsn,tmp_path):
         assert overview.status_code==200 and overview.json()['is_demo']
         account_handle=await h.handle('a')
         model=Model();account_handle.service.app.state.service.pattern_coordinator.model_factory=lambda:model
-        request={'schema_version':'1','request_id':str(uuid4())}
+        request={'schema_version':'1','request_id':str(uuid4()),'data_epoch':account_handle.service.app.state.service.document['state']['data_epoch'],'fetch_latest_bank_data':False}
         response=await client.post('/patterns/v1/analyze',headers=h.headers('a'),json=request)
         assert response.status_code==200,response.text
         PatternOverview.model_validate(response.json())

@@ -146,15 +146,15 @@ import Combine
     }
 }
 
-@Test @MainActor func actualControllerNormalWaitingAndPartialRemainVisibleUntilCancellation() async throws {
+@Test @MainActor func actualControllerWaitingAndPartialStopWithoutAutomaticPolling() async throws {
     for status in ["waiting", "partial"] {
         let flow = try FlowHarness(); defer { flow.cleanup() }; try await flow.prepare()
         flow.network.responseStatus = status; flow.controller.sync()
-        try await flow.wait { flow.controller.lastSync?.status == status }
-        #expect(flow.controller.working); #expect(flow.network.syncCalls.count == 1)
+        try await flow.wait { flow.controller.lastSync?.status == status && !flow.controller.working }
+        #expect(flow.controller.message.contains("Automatic polling is disabled")); #expect(flow.network.syncCalls.count == 1)
         flow.controller.cancel("Update stopped. Import readiness remains unconfirmed.")
         #expect(!flow.controller.working); #expect(flow.controller.lastSync == nil)
-        #expect(flow.controller.updateNotice == "Update stopped. Import readiness remains unconfirmed.")
+        #expect(flow.controller.updateNotice == nil, "No interrupted work is claimed after a terminal response")
     }
 }
 
@@ -239,17 +239,15 @@ import Combine
     #expect(!flow.controller.working)
 }
 
-@Test @MainActor func actualControllerAdmissionDuringPollingSleepIsExplicitlyInterrupted() async throws {
+@Test @MainActor func actualControllerAdmissionAfterPendingResultCannotStartNewPoll() async throws {
     let flow = try FlowHarness(); defer { flow.cleanup() }; try await flow.prepare()
     flow.network.responseStatus = "waiting"; flow.controller.sync()
-    try await flow.wait { flow.controller.lastSync?.status == "waiting" }
+    try await flow.wait { flow.controller.lastSync?.status == "waiting" && !flow.controller.working }
     flow.transport.invalidateAdmission()
     #expect(!flow.controller.working); #expect(flow.controller.lastSync == nil)
-    #expect(flow.controller.updateNotice?.contains("interrupted") == true)
     try await flow.transport.admit(); await flow.model.refresh()
     for _ in 0..<30 { await Task.yield() }
     #expect(flow.network.syncCalls.count == 1)
-    #expect(flow.controller.updateNotice?.contains("interrupted") == true)
 }
 
 @Test @MainActor func actualControllerCannotStartWithoutForegroundReportsReason() async throws {
@@ -277,6 +275,10 @@ import Combine
     let old = try #require(flow.controller.session).configuration
     old.onLoad(); try await flow.wait { flow.controller.showingLink }
     old.onSuccess(LinkSuccess(publicToken: "public-sandbox-unit-only"))
+    try await flow.wait { !flow.controller.working }
+    #expect(flow.network.syncCalls.isEmpty, "Link completion must not implicitly fetch transactions")
+    #expect(flow.controller.lastSync == nil)
+    flow.controller.sync()
     try await flow.wait { flow.controller.lastSync?.status == "complete" && !flow.controller.working }
     let before = flow.network.calls.filter { $0.httpMethod == "POST" }.count
     old.onLoad(); old.onExit(LinkExit(error: nil)); old.onSuccess(LinkSuccess(publicToken: "public-sandbox-unit-only"))

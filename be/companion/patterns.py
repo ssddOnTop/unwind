@@ -26,6 +26,8 @@ class Strict(BaseModel):
 class AnalyzeRequest(Strict):
     schema_version: Literal['1']
     request_id: str
+    data_epoch: str = Field(pattern=r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$')
+    fetch_latest_bank_data: bool
     @model_validator(mode='after')
     def valid(self):
         UUID(self.request_id)
@@ -122,6 +124,11 @@ class Finding(Strict):
     attribution: Literal['unconfirmed','for_me','not_for_me','unsure'] = 'unconfirmed'
     evidence_summary: str
 
+class BankRefresh(Strict):
+    status: Literal['not_requested','complete','partial','failed','unavailable']
+    last_updated: str | None
+    message: str
+
 class PatternOverview(Strict):
     schema_version: Literal['1'] = '1'
     status: Literal['not_analyzed','running','complete','unavailable']
@@ -132,6 +139,7 @@ class PatternOverview(Strict):
     can_analyze: bool
     source_label: str
     doctor_brief: str
+    bank_refresh: BankRefresh = Field(default_factory=lambda: BankRefresh(status='not_requested',last_updated=None,message='Using saved bank data; no bank fetch requested.'))
     privacy_notice: str = NOTICE
     evidence: Aggregate | None
     findings: list[Finding]
