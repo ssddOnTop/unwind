@@ -37,6 +37,7 @@ private enum NativeTestUnexpectedCall: Error { case permission }
     func reconcile(state: CompanionCore.State?, locallyBlocked: Bool) async throws {}
     func requestPermission() async throws { throw NativeTestUnexpectedCall.permission }
 }
+enum BankingViewStatus: Equatable { case idle, loading, updating, failed(String) }
 enum ExperienceConnectionKind { case bank, appleHealth, reminders }
 enum ExperienceConnectionState { case notConnected, working, connected, accessNotConfirmed, unavailable, needsAttention }
 struct ExperienceConnection {

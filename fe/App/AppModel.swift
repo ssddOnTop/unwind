@@ -11,7 +11,10 @@ import CompanionCore
     @Published var message: String?
     @Published private(set) var connected = false
     @Published private(set) var notificationPermission = "Not checked"
+    /// Explicit dependency for legacy compatibility tests only; runtime uses banking v1.
     let plaid: PlaidController?
+    let banking: BankingController
+    private var bankingUpdates: AnyCancellable?
     private let client: CompanionClient
     private let health = HealthStepsAdapter()
     private let reminders: LocalReminders
@@ -22,26 +25,34 @@ import CompanionCore
     var state: CompanionCore.State? { active && !admissionBlocked && !snapshot.hidesCachedData ? snapshot.state : nil }
     var hasPending: Bool { !snapshot.outbox.isEmpty }
 
-    init(client: CompanionClient, accountNamespace: String) {
+    init(client: CompanionClient, accountNamespace: String, legacyController: PlaidController? = nil) {
         self.client = client
         reminders = LocalReminders(accountNamespace: accountNamespace)
         // Do not publish disk snapshots before a current authenticated fetch succeeds.
-        plaid = PlaidController(client: client)
+        plaid = legacyController
+        banking = BankingController(client: client)
         plaid?.stateChanged = { [weak self] in
             guard let self, self.active, !self.admissionBlocked else { return }
             self.publish()
             self.refreshTask?.cancel()
             self.refreshTask = Task { [weak self] in await self?.reloadExperience() }
         }
+        banking.stateChanged = { [weak self] in
+            guard let self, self.active, !self.admissionBlocked else { return }
+            self.publish()
+            self.refreshTask?.cancel()
+            self.refreshTask = Task { [weak self] in await self?.reloadExperience() }
+        }
+        bankingUpdates = banking.objectWillChange.sink { [weak self] _ in Task { @MainActor in self?.objectWillChange.send() } }
         plaidUpdates = plaid?.objectWillChange.sink { [weak self] _ in Task { @MainActor in self?.objectWillChange.send() } }
     }
     func hideForAdmission() {
         admissionBlocked = true; connected = false; experience = nil; snapshot = LocalSnapshot()
-        health.cancelAll(); reminders.cancelAll(); plaid?.pauseForAdmission()
+        health.cancelAll(); reminders.cancelAll(); plaid?.pauseForAdmission(); banking.pauseForAdmission()
     }
-    func allowAdmittedUpdates() { admissionBlocked = false }
+    func allowAdmittedUpdates() { admissionBlocked = false; banking.admissionRestored() }
     func invalidateForSignOut(cancelReminders: Bool = true) {
-        active = false
+        active = false; banking.invalidateSession()
         refreshTask?.cancel(); refreshTask = nil
         plaid?.cancel("Signed out. Connection work stopped.")
         health.cancelAll()
@@ -53,17 +64,28 @@ import CompanionCore
         guard active, !admissionBlocked else { return }
         let epoch = snapshot.state?.data_epoch
         snapshot = client.snapshot
-        if epoch != snapshot.state?.data_epoch || hasPending {
+        let olderExperience = experience.map { $0.data_epoch != snapshot.state?.data_epoch || $0.revision < (snapshot.state?.revision ?? 0) } ?? false
+        if epoch != snapshot.state?.data_epoch || hasPending || olderExperience {
             experience = nil; reminders.cancelAll()
         }
-        if epoch != nil && epoch != snapshot.state?.data_epoch { plaid?.cancel("Records were reset. Reconnect explicitly if needed.") }
+        if epoch != nil && epoch != snapshot.state?.data_epoch {
+            plaid?.cancel("Records were reset. Reconnect explicitly if needed."); banking.cancelForLifecycle()
+        }
     }
     private func reloadExperience() async {
         guard active, !admissionBlocked, !hasPending else { return }
         do {
-            let value = try await client.refreshExperience()
-            guard active else { return }
+            var value = try await client.refreshExperience()
+            guard active, !admissionBlocked else { return }
+            if plaid == nil, client.bankingSnapshot == nil, !banking.working {
+                await banking.refresh(notify: false)
+                guard active, !admissionBlocked else { return }
+                publish(); value = try await client.refreshExperience()
+            }
+            guard active, !admissionBlocked else { return }
             experience = value; connected = true
+            try await reminders.reconcile(state: state, locallyBlocked: hasPending)
+            notificationPermission = reminders.permission
         } catch {
             guard active else { return }
             experience = nil; message = "Your overview couldn’t be loaded. Try refreshing."
@@ -77,6 +99,7 @@ import CompanionCore
             try await action(client)
             guard active else { return }
             publish()
+            if !hasPending, plaid == nil { await banking.refresh(notify: false); publish() }
             if !hasPending {
                 if preferReceivedExperience, let received = client.experienceSnapshot { experience = received }
                 else { experience = try await client.refreshExperience() }
@@ -123,7 +146,7 @@ import CompanionCore
         await perform(preferReceivedExperience: true) { client in try await submit(request, path: "/experience/v1/answers", client: client) }
     }
     func deleteData() async {
-        plaid?.cancel("Deletion requested. Connection work stopped."); health.cancelAll(); reminders.cancelAll(); experience = nil
+        banking.cancelForLifecycle(); plaid?.cancel("Deletion requested. Connection work stopped."); health.cancelAll(); reminders.cancelAll(); experience = nil
         await perform { client in
             guard let current = client.snapshot.state else { throw ClientFailure.noState }
             try await submit(DeleteRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: current.data_epoch, confirm: "delete_all"), path: "/data", method: "DELETE", replacingQueue: true, client: client)

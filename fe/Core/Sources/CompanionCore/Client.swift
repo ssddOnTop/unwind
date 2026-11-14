@@ -140,6 +140,14 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
     private let baseURL: URL
     private let retryDelay: UInt64
     public private(set) var experienceSnapshot: ExperienceV1?
+    /// Inventory and credential-bearing replies are never part of LocalSnapshot.
+    public private(set) var bankingSnapshot: BankingOverview?
+    private var bankingGeneration = 0
+    private var bankingFlight: UUID?
+    public func clearBankingSnapshot() { bankingSnapshot = nil }
+    public func invalidateBankingWork() {
+        bankingGeneration += 1; bankingFlight = nil; bankingSnapshot = nil
+    }
     private var sessionActive = true
     private let sessionValidator: @MainActor @Sendable () throws -> Void
     private var plaidGeneration = 0
@@ -154,7 +162,7 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
         snapshot = try storage.load()
     }
     public func invalidateSession() {
-        sessionActive = false; invalidatePlaidWork(); snapshot = LocalSnapshot(); experienceSnapshot = nil
+        sessionActive = false; invalidatePlaidWork(); invalidateBankingWork(); snapshot = LocalSnapshot(); experienceSnapshot = nil
     }
     private func validateSession() throws {
         guard sessionActive else { throw AuthenticationFailure.locked }
@@ -162,6 +170,7 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
     }
     private func persist(_ next: LocalSnapshot) throws {
         try validateSession()
+        if snapshot.state?.data_epoch != next.state?.data_epoch { invalidateBankingWork() }
         if snapshot.state?.data_epoch != next.state?.data_epoch || (experienceSnapshot?.revision ?? -1) < (next.state?.revision ?? 0) { experienceSnapshot = nil }
         try storage.save(next); snapshot = next
     }
@@ -184,6 +193,81 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
         let incoming = try Wire.decode(State.self, await send(request(path: "/state")))
         if snapshot.state?.data_epoch != incoming.data_epoch { invalidatePlaidWork() }
         var next = snapshot; next.accept(incoming); try persist(next)
+    }
+    private func bankingResponse(_ outgoing: URLRequest, current: BankingVersion) async throws -> BankingOverview {
+        try validateSession()
+        let response = try await transport.send(outgoing)
+        try validateSession()
+        if response.status == 404 && outgoing.httpMethod == "GET" { throw BankingTransportFailure.profileUnavailable }
+        return try BankingResponse.decode(response.body, statusCode: response.status, current: current)
+    }
+    private func fetchBanking() async throws -> BankingOverview {
+        try validateSession(); bankingSnapshot = nil
+        guard let state = snapshot.state else { throw ClientFailure.noState }
+        let generation = bankingGeneration
+        let version = BankingVersion(data_epoch: state.data_epoch, revision: state.revision)
+        let value = try await bankingResponse(request(path: "/banking/v1"), current: version)
+        guard value.result == nil else { throw ClientFailure.invalidResponse }
+        if value.revision > (snapshot.state?.revision ?? -1) { try await fetch() }
+        try validateSession()
+        guard generation == bankingGeneration, snapshot.state?.data_epoch == value.data_epoch,
+              value.revision == snapshot.state?.revision else { throw BankingFailure.staleResponse }
+        bankingSnapshot = value
+        return value
+    }
+    public func refreshBanking() async throws -> BankingOverview {
+        try validateSession()
+        guard !busy, bankingFlight == nil else { throw ClientFailure.busy }
+        guard snapshot.outbox.isEmpty else { bankingSnapshot = nil; throw ClientFailure.pendingChanges }
+        return try await fetchBanking()
+    }
+    /// One logical action, one immutable body and request ID. Nothing is queued or cached.
+    /// Auth 401 replay is handled by the admitted transport; a one-use exchange is otherwise
+    /// never automatically retried on an ambiguous transport/internal failure.
+    public func banking(_ action: BankingRequest) async throws -> BankingOverview {
+        try validateSession()
+        guard !busy, bankingFlight == nil else { throw ClientFailure.busy }
+        guard snapshot.outbox.isEmpty else { throw ClientFailure.pendingChanges }
+        guard let state = snapshot.state, let current = bankingSnapshot,
+              current.version == action.version, state.data_epoch == action.version.data_epoch,
+              state.revision == action.version.revision else { throw BankingTransportFailure.staleAction }
+        let generation = bankingGeneration, flight = UUID()
+        bankingFlight = flight
+        defer { if bankingFlight == flight { bankingFlight = nil } }
+        func check() throws {
+            try Task.checkCancellation(); try validateSession()
+            guard generation == bankingGeneration, snapshot.state?.data_epoch == action.version.data_epoch,
+                  snapshot.outbox.isEmpty else { throw BankingTransportFailure.interrupted }
+        }
+        let body = try action.body()
+        let outgoing = request(path: "/banking/v1/actions", method: "POST", body: body)
+        var acknowledged: BankingOverview?
+        for attempt in 0..<3 {
+            try check()
+            do {
+                acknowledged = try await bankingResponse(outgoing, current: action.version)
+                break
+            } catch {
+                try check()
+                if let rejected = error as? BankingAPIError {
+                    if action.action.name == "exchange", rejected.code == .internal_error || (rejected.retryable && rejected.code != .busy) {
+                        throw BankingTransportFailure.ambiguousExchange
+                    }
+                    guard [.busy, .internal_error].contains(rejected.code), rejected.retryable, attempt < 2 else { throw error }
+                } else if error is URLError {
+                    if action.action.name == "exchange" { throw BankingTransportFailure.ambiguousExchange }
+                    guard attempt < 2 else { throw error }
+                } else { throw error }
+                try await Task.sleep(nanoseconds: retryDelay * UInt64(1 << attempt))
+            }
+        }
+        try check()
+        guard let acknowledged, acknowledged.result != nil else { throw ClientFailure.invalidResponse }
+        // A receipt acknowledges an action, not the current inventory. GET State and inventory
+        // before publishing; an old receipt cannot resurrect a removed account or old selection.
+        try await fetch(); try check()
+        _ = try await fetchBanking(); try check()
+        return acknowledged
     }
     /// Memory-only, bounded retries. Each call is one logical action with one stable identity.
     /// A caller must carry the Link-origin epoch into exchange, never substitute the current one.

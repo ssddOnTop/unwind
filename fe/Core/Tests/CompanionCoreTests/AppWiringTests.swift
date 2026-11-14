@@ -44,3 +44,15 @@ private var frontend: URL {
     #expect(manifest.contains(".testTarget(name: \"CompanionCoreTests\""))
     #expect(manifest.contains("resources: [.copy(\"Fixtures\")]"))
 }
+
+@Test func actualAppRoutesBankManagementOnlyThroughVersionedCoordinator() throws {
+    let root = try String(contentsOf: frontend.appendingPathComponent("App/LocalCompanionApp.swift"), encoding: .utf8)
+    let settings = try String(contentsOf: frontend.appendingPathComponent("App/SettingsView.swift"), encoding: .utf8)
+    let host = try String(contentsOf: frontend.appendingPathComponent("App/AppModel.swift"), encoding: .utf8)
+    #expect(root.contains("bankAccountsPresented = true"))
+    #expect(root.contains("NativeBankingPresentation(controller: model.banking)"))
+    #expect(settings.contains("BankingScreen(controller: model.banking)"))
+    #expect(!root.contains("model.plaid")); #expect(!settings.contains("model.plaid"))
+    #expect(host.contains("plaid = legacyController"))
+    #expect(host.contains("await banking.refresh(notify: false)"))
+}

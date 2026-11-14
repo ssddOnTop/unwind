@@ -79,7 +79,7 @@ import Combine
         try await transport.admit()
         let authenticated = transport!
         client = try CompanionClient(storage: storage, transport: authenticated, baseURL: origin, allowedPort: 9876, retryDelay: 0, sessionValidator: { try authenticated.validate() })
-        model = AppModel(client: client, accountNamespace: "test-only")
+        model = AppModel(client: client, accountNamespace: "test-only", legacyController: PlaidController(client: client))
         let host = model!
         transport.onAdmissionInvalidated = { [weak host] in host?.hideForAdmission() }
         transport.onAdmissionRestored = { [weak host] in host?.allowAdmittedUpdates() }

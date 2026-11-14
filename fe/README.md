@@ -2,6 +2,43 @@
 
 SwiftUI Today / Ledger / Settings app. Clerk owns native authentication; the backend owns Home selection, inference, visit copy, clarification identity and persisted answers. The local Foundation/CryptoKit package has no remote dependencies. The app uses official SwiftPM packages **Clerk 1.7.2** (`ClerkKit`, `ClerkKitUI`) and **Plaid LinkKit 7.4.0**, both exactly pinned with a shared resolved lockfile.
 
+## Banking v1 integration in this branch
+
+This branch includes two reviewable units: the prerequisite frontend authentication/experience/native-infrastructure and frozen-contract/component baseline, then the banking wiring. It does **not** include backend implementation. The authenticated backend must enable **`--banking`** before bank management works; the existing service is not changed or restarted by this work. A missing banking route shows an actionable setup error. There is **no fallback to `/connections/plaid`**, anonymous data or frontend fixtures. Merge requires user approval; nothing is deployed.
+
+### Actual app routing
+
+**Settings → Bank accounts**, and Home's backend-provided connect action, open the actual `BankAccountsView` through `BankingScreen`. The native Link sheet is retained by the account-scoped `BankingController`. The previous simple bank toggle/one-Item controls are no longer mounted. Legacy protocol/controller tests are preserved through an explicitly injected compatibility dependency; the production host never constructs that controller.
+
+The screen displays server institution labels, account names/official names, masks (including leading zeros), type/subtype, availability, import status and server-defined groups. Enable/remove toggles and group actions emit the exact currently rendered opaque IDs and revision. No client grouping or selection policy is added. Removing accounts/groups keeps history, stops future imports and excludes new insights **on the backend**; whole-bank disconnection is separate. New/discovered accounts remain exactly as the server returns them, normally disabled. Update is available per bank and for all manageable banks.
+
+### Wire and native lifecycle
+
+- Only `GET /banking/v1` and `POST /banking/v1/actions` are used. State's schema is unchanged. State and banking revisions must agree before inventory publication. State, experience and notification reconciliation refresh after committed bank changes; stale experience is hidden immediately.
+- Every logical action captures one request ID, epoch, expected revision and exact body. Safe transient retries are bounded; stale/obsolete conflicts trigger reads only, never retagging or automatic action resubmission. No optimistic account-selection success is rendered.
+- Add Link success sends `exchange` with its opaque session ID and the success public token. Update Link success sends **`reconcile`**, not exchange; callback public token and metadata are ignored for update. Inventory always comes from the server.
+- Link tokens, session context, inventory and action requests are memory-only and excluded from JSON cache/outbox/logging. The durable outbox rejects banking actions. An ambiguous one-use exchange is not replayed; the user must inspect refreshed connections before another setup. A proven no-side-effect401 may use the existing single same-session refresh/re-admission retry with identical bytes.
+- Link SDK callbacks have their own invalidation ticket. A validated in-flight HTTP result may survive same-account re-admission, but an old SDK flow cannot revive. Cancellation sends `cancel_link` when an admitted current context is available; logout, switch, background/epoch invalidation clear local work and do not send with an obsolete identity. Unconfirmed cancellation is not represented as remote success.
+- Replies and current inventory are kept separate. An old receipt cannot restore a removed account or stale selection. Partial outcomes, failed setup and incompatible/missing profiles have explicit status instead of silent empty inventory. No automatic provider sync, model processing or account enabling follows Link success.
+
+### Verification and review scope
+
+The copied baseline passed **129 macOS Swift Testing tests** before its separate commit. The integrated suite currently passes **155**: the original tests, all 24 component handoff tests, 25 new actual host/controller/transport banking regressions and one routing regression. New tests exercise all actions, multi-Item/group identity, explicit null, no optimistic changes, add/update callback separation, stale revisions/epochs, identity switching,401 visibility, cancellation, bounded retries, missing profiles and credential/outbox exclusion. SDK/OS substitutes exist only in the test target. These are not native runtime acceptance results.
+
+Ten actual Swift-encoded action variants (including individual/all-bank sync) and the inventory fixture validate against the frozen JSON Schema with format checks. Debug/Release app builds and UI-test compilation are recorded under ignored `fe/evidence/bank-integration`. No simulator installation, launch, Update tap, provider/model call or backend operation is performed in this worktree.
+
+The obsolete mutating single-bank UI journey is preserved under `Legacy/AnonymousPresentation/SignedInSingleBankAcceptanceTests.swift`, outside targets. Its current replacement is read-only banking navigation for a separately authorized signed-in simulator. Neither it nor the signed-out auth test is run here. Actual add/update Link, live selection/removal, import behavior and multi-Item runtime acceptance await the parent-enabled backend and explicit authorization.
+
+```sh
+FE_EVIDENCE_SUBDIR=bank-integration ./fe/scripts/test-core.sh
+# Use an existing Python environment with jsonschema; no environment installation is required.
+PYTHONDONTWRITEBYTECODE=1 FE_EVIDENCE_SUBDIR=bank-integration \
+  "$EXISTING_PYTHON" fe/scripts/validate-banking-contracts.py
+python3 fe/scripts/generate-project.py
+```
+
+The sections below retain earlier auth/experience verification history. Their single-bank live outcomes are historical and are not evidence for this new banking profile.
+
 ## Current profile and boundaries
 
 This supersedes account-free onboarding and client-side Home/visit rules. Missing auth configuration shows a setup screen, never anonymous access. A loaded SDK and active session are necessary but not sufficient: the app also requires a fresh, exact `/auth/v1/session` admission for the configured endpoint, issuer and SDK subject before opening account storage or fetching any data. A legacy backend returning anonymous `/state` cannot unlock the app.

@@ -14,3 +14,5 @@
 
 !/Legacy/
 !/Legacy/**
+
+!/Core/Tests/CompanionCoreTests/Fixtures/banking-inventory.example.json

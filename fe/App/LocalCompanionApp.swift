@@ -81,46 +81,34 @@ struct AppRoot: View {
     @Environment(\.scenePhase) private var scenePhase
     @SwiftUI.State private var tab: CompanionTab = .today
     @SwiftUI.State private var ledgerCard: String?
-    @SwiftUI.State private var consentBank = false
-    @SwiftUI.State private var disconnectBank = false
+    @SwiftUI.State private var bankAccountsPresented = false
     @SwiftUI.State private var disconnectHealth = false
-    private var bankActions: ConnectionActions {
-        ConnectionActions(connect: { consentBank = true }, disconnect: model.bankCanDisconnect ? { disconnectBank = true } : nil)
-    }
     private var healthActions: ConnectionActions {
         ConnectionActions(connect: { Task { await model.healthSync(connect: true) } }, disconnect: model.healthHasConsent ? { disconnectHealth = true } : nil)
     }
     var body: some View {
         TabView(selection: $tab) {
-            BackendHomeView(model: model, openConnections: { tab = .settings }, openLedger: { card in ledgerCard = card; tab = .ledger })
+            BackendHomeView(model: model, openConnections: { tab = .settings; bankAccountsPresented = true }, openLedger: { card in ledgerCard = card; tab = .ledger })
                 .tabItem { Label("Today", systemImage: "sun.max") }.tag(CompanionTab.today)
             LedgerView(model: model, selectedCard: $ledgerCard)
                 .tabItem { Label("Ledger", systemImage: "list.bullet.rectangle") }.tag(CompanionTab.ledger)
-            SettingsView(model: model, bankActions: bankActions, healthActions: healthActions, manageAccount: manageAccount, signOut: signOut)
+            SettingsView(model: model, bankAccountsPresented: $bankAccountsPresented, healthActions: healthActions, manageAccount: manageAccount, signOut: signOut)
                 .tabItem { Label("Settings", systemImage: "gearshape") }.tag(CompanionTab.settings)
         }
-        .overlay { if let controller = model.plaid { NativePlaidPresentation(controller: controller) } }
-        .confirmationDialog("Connect Plaid Sandbox?", isPresented: $consentBank, titleVisibility: .visible) {
-            Button("Connect bank") { model.plaid?.connect() }
-            Button("Cancel", role: .cancel) {}
-        } message: { Text("Only synthetic Sandbox bank records will be shared with your authenticated service. Do not enter real bank credentials. This does not enable cloud sharing.") }
-        .confirmationDialog("Disconnect bank?", isPresented: $disconnectBank, titleVisibility: .visible) {
-            Button("Disconnect bank", role: .destructive) { model.plaid?.disconnect() }
-            Button("Cancel", role: .cancel) {}
-        } message: { Text("Stops future use. Previous records remain until deleted. Remote removal may need a retry.") }
+        .overlay { NativeBankingPresentation(controller: model.banking) }
         .confirmationDialog("Disconnect Apple Health?", isPresented: $disconnectHealth, titleVisibility: .visible) {
             Button("Disconnect Apple Health", role: .destructive) { Task { await model.disconnectHealth() } }
             Button("Cancel", role: .cancel) {}
         } message: { Text("Stops step sharing here. Previous records remain until deleted. Apple Health records and Apple's permission settings are unchanged.") }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { model.plaid?.setForeground(true); Task { await model.refresh() } }
-            if phase == .background { model.plaid?.setForeground(false) }
+            if phase == .active { Task { await model.refresh() } }
+            if phase == .background { model.banking.cancelForLifecycle() }
         }
     }
 }
 
-private struct NativePlaidPresentation: View {
-    @ObservedObject var controller: PlaidController
+private struct NativeBankingPresentation: View {
+    @ObservedObject var controller: BankingController
     var body: some View {
         Color.clear.frame(width: 0, height: 0)
             .sheet(isPresented: $controller.showingLink, onDismiss: { controller.sheetDismissed() }) {

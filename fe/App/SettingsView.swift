@@ -3,7 +3,7 @@ import CompanionCore
 
 struct SettingsView: View {
     @ObservedObject var model: AppModel
-    let bankActions: ConnectionActions
+    @Binding var bankAccountsPresented: Bool
     let healthActions: ConnectionActions
     let manageAccount: () -> Void
     let signOut: () -> Void
@@ -16,24 +16,13 @@ struct SettingsView: View {
                 if let message = model.message {
                     Section { Text(message); Button("Try again") { Task { await model.refresh() } } }
                 }
-                ConnectionsSection(bank: model.bankConnection, health: model.healthConnection, bankActions: bankActions, healthActions: healthActions)
-                if let notice = model.plaid?.updateNotice {
-                    Section { Text(verbatim: notice).font(.callout).accessibilityIdentifier("bank.update.notice") }
+                Section {
+                    Button("Bank accounts") { bankAccountsPresented = true }
+                        .accessibilityIdentifier("settings.bankAccounts")
+                    Text("Manage banks and choose which accounts can provide new records.").font(.caption).foregroundStyle(.secondary)
                 }
-                if model.bankHasConsent {
-                    Section {
-                        Button("Update bank records") { model.plaid?.sync() }.disabled(model.plaid?.working == true || model.hasPending)
-                        if model.plaid?.working == true { Button("Stop updating") { model.plaid?.cancel("Updating stopped. You can try again when ready.") } }
-                        if let update = model.plaid?.lastSync {
-                            HStack {
-                                Text(update.status == "complete" ? "Bank update finished" : update.status == "partial" ? "More bank records are pending" : update.status == "error" ? "Bank update needs attention" : "Waiting for bank records")
-                                    .accessibilityIdentifier("bank.update.result").accessibilityValue(update.status)
-                                Spacer()
-                                AccessibleInfoPopover(title: "Bank update", message: "This server-confirmed update added \(update.added), changed \(update.modified), removed \(update.removed), and skipped \(update.skipped) records. These are update counts, not spending or meals. Missing or waiting records do not mean zero purchases.")
-                            }
-                        }
-                        if let message = model.plaid?.message, model.bankConnection.state == .needsAttention { Text(message).font(.caption) }
-                    }
+                Section("Apple Health") {
+                    ConnectionRow(connection: model.healthConnection, actions: healthActions)
                 }
                 if model.healthHasConsent {
                     Section { Button("Update step records") { Task { await model.healthSync(connect: false) } }.disabled(model.busy || model.hasPending) }
@@ -62,6 +51,7 @@ struct SettingsView: View {
                     HStack { Text("Your signed-in account"); Spacer(); AccessibleInfoPopover(title: "Your privacy", message: "Sign-in is required. Connections remain optional and separate from cloud consent. This app stores normalized records locally with file protection and backup exclusion. Bank connections currently use synthetic Sandbox data. No provider keys or iCloud writes are used here.") }
                 }
             }.navigationTitle("Settings").accessibilityIdentifier("app.settings")
+                .navigationDestination(isPresented: $bankAccountsPresented) { BankingScreen(controller: model.banking) }
                 .confirmationDialog("Sign out?", isPresented: $confirmSignOut, titleVisibility: .visible) {
                     Button("Sign out and clear this device", role: .destructive, action: signOut)
                     Button("Cancel", role: .cancel) {}

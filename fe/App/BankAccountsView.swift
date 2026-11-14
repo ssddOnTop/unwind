@@ -62,6 +62,11 @@ struct BankAccountsView: View {
                     }
                     .disabled(controlsDisabled || overview.status == .not_configured)
                     .accessibilityIdentifier("banking.add")
+                    if !overview.connections.isEmpty {
+                        Button("Update all banks") { emit(.sync(connectionID: nil), overview) }
+                            .disabled(controlsDisabled || !overview.connections.contains(where: { $0.can_manage }))
+                            .accessibilityIdentifier("banking.updateAll")
+                    }
                 }
             }
 
