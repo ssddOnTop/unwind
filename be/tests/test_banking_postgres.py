@@ -48,10 +48,6 @@ async def add(client,h,key='one',who='a'):
     return next(c for c in value['connections'] if c['institution_name']=='PRIVATE Bank '+key)
 
 
-async def enable(client,h,connection,who='a',enabled=True):
-    return await act(client,h,'select_accounts',who,connection_id=connection['id'],account_ids=[a['id'] for a in connection['accounts']],enabled=enabled)
-
-
 async def test_banking_routes_require_verified_user_before_account_admission(tmp_path,signing_key,runtime):
     h,providers=setup(tmp_path,signing_key,runtime)
     async with h.client() as client:
@@ -71,7 +67,7 @@ async def test_same_epoch_request_and_provider_account_ids_two_users_and_items_a
             service=handle.service.app.state.service;doc=deepcopy(service.document);doc['state']['data_epoch']=EPOCH
             async with service.lock:await service.commit(doc)
         async def populate(who):
-            for key in ('one','two'):await enable(client,h,await add(client,h,key,who),who)
+            for key in ('one','two'):await add(client,h,key,who)
             value=await act(client,h,'sync',who,request_id='same-sync',connection_id=None)
             assert value['result']['added']==12
             return value
@@ -111,14 +107,16 @@ async def test_item_collision_denied_before_any_inventory_sync_or_cleanup_other_
 async def test_webhook_exact_item_target_and_selection_generation_fence(tmp_path,signing_key,runtime):
     h,providers=setup(tmp_path,signing_key,runtime)
     async with h.client() as client:
-        one,two=await add(client,h),await add(client,h,'two');await enable(client,h,one);await enable(client,h,two)
+        one,two=await add(client,h),await add(client,h,'two')
         handle=await h.handle('a');provider=providers[handle.account_id];inbox=h.app.state.webhook_inbox
         item='item-'+handle.account_id+'-two'
         await inbox.enqueue_verified(event(item));assert await h.app.state.webhook_worker.tick()
         calls=[b for p,b in provider.calls if p=='/transactions/sync']
         assert len(calls)==2 and all(b['access_token']=='access-sandbox-two' for b in calls)
         await inbox.enqueue_verified(event(item,2));job=await inbox.claim();assert job and await inbox.current(job)
-        await enable(client,h,two,enabled=False)
+        provider.items['access-sandbox-two']['accounts']=[]
+        link=await act(client,h,'update_link',connection_id=two['id'])
+        await act(client,h,'reconcile',connection_id=two['id'],link_session_id=link['result']['link_session_id'])
         assert not await inbox.current(job)
         from companion.contracts import DomainError
         with pytest.raises(DomainError):await h.app.state.webhook_worker.callback(job)
@@ -208,7 +206,7 @@ async def test_existing_pg_single_item_upgrades_locally_preserving_identity_owne
         value=(await client.get('/banking/v1',headers=new.headers())).json();handle=await new.handle('a')
         assert handle.account_id==identifier and (handle.data_dir/'plaid.key').read_bytes()==key
         assert value['data_epoch']==epoch and len(value['connections'])==1
-        assert all(not a['enabled'] for a in value['connections'][0]['accounts'])
+        assert all(a['enabled'] for a in value['connections'][0]['accounts'])
         assert handle.service.app.state.service.document['state']['observations']==history
         assert (await client.post('/connections/plaid',headers=new.headers(),json=replay_body)).json()==replay
         async with runtime.pool.connection() as conn:

@@ -25,9 +25,8 @@
           "type": "depository",
           "subtype": "checking",
           "availability": "available",
-          "enabled": false,
-          "can_enable": true,
-          "import_status": "disabled",
+          "enabled": true,
+          "import_status": "not_synced",
           "last_sync_at": null
         },
         {
@@ -39,7 +38,6 @@
           "subtype": "future-subtype",
           "availability": "available",
           "enabled": true,
-          "can_enable": true,
           "import_status": "ready",
           "last_sync_at": "2026-11-14T12:00:00+00:00"
         }
@@ -74,7 +72,6 @@
           "subtype": null,
           "availability": "disconnected",
           "enabled": false,
-          "can_enable": false,
           "import_status": "disabled",
           "last_sync_at": null
         }

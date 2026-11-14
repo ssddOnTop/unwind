@@ -97,13 +97,12 @@ public struct BankingAccount: Decodable, Equatable, Sendable, Identifiable {
     public let subtype: String?
     public let availability: BankingAvailability
     public let enabled: Bool
-    public let can_enable: Bool
     public let import_status: BankingImportStatus
     public let last_sync_at: String?
     public var displayName: String { name.isEmpty ? (official_name ?? "") : name }
 
     public init(from decoder: Decoder) throws {
-        let c = try BankingFields(decoder, "id name official_name mask type subtype availability enabled can_enable import_status last_sync_at")
+        let c = try BankingFields(decoder, "id name official_name mask type subtype availability enabled import_status last_sync_at")
         id = try c.id("id")
         name = try c.string("name", max: 160)
         official_name = try c.optionalString("official_name", max: 240)
@@ -112,7 +111,6 @@ public struct BankingAccount: Decodable, Equatable, Sendable, Identifiable {
         subtype = try c.optionalString("subtype", max: 100)
         availability = try c.value("availability")
         enabled = try c.value("enabled")
-        can_enable = try c.value("can_enable")
         import_status = try c.value("import_status")
         last_sync_at = try c.optionalTimestamp("last_sync_at")
     }
@@ -213,8 +211,6 @@ public enum BankingAction: Equatable, Sendable, CustomStringConvertible, CustomD
     case updateLink(connectionID: String)
     case reconcile(connectionID: String, linkSessionID: String)
     case cancelLink(linkSessionID: String)
-    case selectAccounts(connectionID: String, accountIDs: [String], enabled: Bool)
-    case selectGroup(connectionID: String, groupID: String, accountIDs: [String], enabled: Bool)
     case sync(connectionID: String?)
     /// Emit only after confirming whole-bank disconnection.
     case disconnect(connectionID: String)
@@ -226,8 +222,6 @@ public enum BankingAction: Equatable, Sendable, CustomStringConvertible, CustomD
         case .updateLink: "update_link"
         case .reconcile: "reconcile"
         case .cancelLink: "cancel_link"
-        case .selectAccounts: "select_accounts"
-        case .selectGroup: "select_group"
         case .sync: "sync"
         case .disconnect: "disconnect"
         }
@@ -265,7 +259,7 @@ public struct BankingRequest: Encodable, Sendable, CustomStringConvertible, Cust
     public func body() throws -> Data { try Wire.encode(self) }
     private enum CodingKeys: String, CodingKey {
         case schema_version, request_id, data_epoch, expected_revision, action, consent_sandbox
-        case connection_id, link_session_id, public_token, account_ids, group_id, enabled
+        case connection_id, link_session_id, public_token
     }
     public func encode(to encoder: Encoder) throws {
         guard bankingID(requestID), bankingID(version.data_epoch), version.revision >= 0 else {
@@ -280,13 +274,6 @@ public struct BankingRequest: Encodable, Sendable, CustomStringConvertible, Cust
         func id(_ value: String, _ key: CodingKeys) throws {
             guard bankingID(value) else { throw BankingFailure.invalidRequest }
             try c.encode(value, forKey: key)
-        }
-        func selection(_ ids: [String], _ enabled: Bool) throws {
-            guard (1...1000).contains(ids.count), Set(ids).count == ids.count, ids.allSatisfy(bankingID) else {
-                throw BankingFailure.invalidRequest
-            }
-            try c.encode(ids, forKey: .account_ids)
-            try c.encode(enabled, forKey: .enabled)
         }
         switch action {
         case .addLink:
@@ -304,13 +291,6 @@ public struct BankingRequest: Encodable, Sendable, CustomStringConvertible, Cust
             try id(session, .link_session_id)
         case .cancelLink(let session):
             try id(session, .link_session_id)
-        case .selectAccounts(let connection, let ids, let enabled):
-            try id(connection, .connection_id)
-            try selection(ids, enabled)
-        case .selectGroup(let connection, let group, let ids, let enabled):
-            try id(connection, .connection_id)
-            try id(group, .group_id)
-            try selection(ids, enabled)
         case .sync(let connection):
             if let connection { try id(connection, .connection_id) }
             else { try c.encodeNil(forKey: .connection_id) }

@@ -11,7 +11,7 @@ from ..domain import instant
 from ..plaid_projection import project
 from ..vault import PrivateVault
 
-NOTICE='Removing an account here stops future imports and excludes its saved records from new insights. Saved history stays in your ledger. This is a local setting, not bank-side access revocation.'
+NOTICE='All accounts shared through Plaid are enabled. Manage accounts in Plaid to change sharing where supported; Chase removals require its Security Center. Accounts no longer shared stop future imports and new insights; saved history stays. Disconnect bank removes the whole connection.'
 
 
 def text(value,limit,default=None):
@@ -62,7 +62,12 @@ class BankingExtension:
             if not isinstance(raw,str) or not 1<=len(raw)<=256 or raw in seen:raise PlaidFailure()
             seen.add(raw)
             prior=old.get(raw)
-            account=deepcopy(prior) if prior else {'id':str(uuid4()),'enabled':False,'stream':{'cursor':None,'records':{},'status':'not_synced','last_sync_at':None}}
+            account=deepcopy(prior) if prior else {'id':str(uuid4()),'enabled':True,'stream':{'cursor':None,'records':{},'status':'not_synced','last_sync_at':None}}
+            # Successful shared inventory is the only migration/enable authority.
+            # Preserve each account cursor and mapping, including formerly disabled accounts.
+            if not account['enabled'] or account['stream']['status']=='disabled':
+                account['stream']['status']='not_synced'
+            account['enabled']=True
             account.update(name=text(row.get('name'),160,'Unnamed account'),official_name=text(row.get('official_name'),240),
                 mask=row.get('mask') if isinstance(row.get('mask'),str) and len(row['mask'])<=16 else None,
                 type=text(row.get('type'),80,'unknown'),subtype=text(row.get('subtype'),100),availability='available')
@@ -71,6 +76,9 @@ class BankingExtension:
             if raw not in seen:
                 account.update(availability='missing',enabled=False)
                 account['stream']['status']='disabled'
+        before={(raw,a['enabled'],a['availability']) for raw,a in item['accounts'].items()}
+        after={(raw,a['enabled'],a['availability']) for raw,a in old.items()}
+        if before!=after:result['generation']+=1
         result['institution_name']=text(provider_item.get('institution_name'),180)
         result['last_inventory_at']=now
         result['status']='connected'
@@ -93,7 +101,7 @@ class BankingExtension:
                 available=value['availability'] if item['connected'] else 'disconnected'
                 accounts.append({k:deepcopy(value[k]) for k in ('id','name','official_name','mask','type','subtype')}|{
                     'availability':available,'enabled':value['enabled'] and item['connected'] and available=='available',
-                    'can_enable':item['connected'] and available=='available','import_status':value['stream']['status'] if value['enabled'] and item['connected'] else 'disabled',
+                    'import_status':value['stream']['status'] if value['enabled'] and item['connected'] else 'disabled',
                     'last_sync_at':value['stream']['last_sync_at']})
                 if available=='available':
                     gid=group_id(value['type'],value['subtype'])
@@ -207,8 +215,8 @@ class BankingExtension:
             item={'id':str(uuid4()),'item_id':legacy['item_id'],'access_token':legacy['access_token'],'connected':connected,'generation':1,
                 'status':'attention' if connected else 'disconnected','removal_pending':bool(legacy.get('removal_pending')),'accounts':{},'institution_name':None,'last_inventory_at':None,'last_sync_at':None,
                 'legacy_records':deepcopy(legacy.get('records',{}))}
-            # No old Item cursor becomes an account cursor. Legacy consent did not
-            # identify individual accounts, so they need explicit selection.
+            # No old Item cursor becomes an account cursor. Only fresh shared
+            # inventory enables accounts; historical associations remain conservative.
             if connected:
                 if self.claim_item is not None and not await self.claim_item(item['item_id'],state['data_epoch']):raise DomainError('consent_required',409)
                 try:item=await self.inventory(item,now)
@@ -226,18 +234,7 @@ class BankingExtension:
                     candidate=deepcopy(pending['item']);candidate.update(connected=False,status='disconnected',removal_pending=True,generation=candidate['generation']+1)
                     for account in candidate['accounts'].values():account['enabled']=False;account['stream']['status']='disabled'
                     if not any(i['item_id']==candidate['item_id'] for i in private['items'].values()):private['items'][candidate['id']]=candidate
-            else:
-                if not item or not item['connected']:raise DomainError('not_found',404)
-                selected=set(body['account_ids']);rows={a['id']:a for a in item['accounts'].values()}
-                if not selected<=rows.keys() or any(rows[a]['availability']!='available' for a in selected):raise DomainError('obsolete_selection',409)
-                if action=='select_group':
-                    group=[a['id'] for a in item['accounts'].values() if group_id(a['type'],a['subtype'])==body['group_id'] and a['availability']=='available']
-                    if selected!=set(group):raise DomainError('obsolete_selection',409)
-                for app_id in selected:
-                    a=rows[app_id]
-                    if a['enabled']!=body['enabled']:
-                        a['enabled']=body['enabled'];a['stream']['status']='not_synced' if body['enabled'] else 'disabled'
-                item['generation']+=1
+            else:raise DomainError('invalid_request',422,'Account selection is managed only through Plaid Link.')
             return {'vault':self.vault.seal(private)}
         if operation=='revoke_all':
             captured=[]

@@ -102,7 +102,7 @@ import LinkKit
                     }
                     try present(result, action: event.action, epoch: event.version.data_epoch, callback: callback)
                 default:
-                    // No implicit process/sync/selection. New accounts stay as the server returned them.
+                    // No implicit process/sync. Plaid-shared inventory is enabled by the server.
                     guard result.link_token == nil, result.expiration == nil else { throw ClientFailure.invalidResponse }
                 }
             } catch {
@@ -189,7 +189,7 @@ import LinkKit
         if let error = error as? BankingAPIError {
             switch error.code {
             case .stale_banking, .obsolete_selection, .epoch_mismatch, .idempotency_conflict:
-                return "Bank accounts changed. Refresh and review the current selection before choosing again. The original action was not retagged."
+                return "Bank accounts changed. Refresh and review current Plaid sharing before continuing. The original action was not retagged."
             case .not_configured: return "Bank management is unavailable. Ask the service operator to enable the banking profile."
             case .not_found: return "This bank or account is no longer available. Refresh bank accounts."
             case .busy: return "Bank management is busy. Refresh before trying again."

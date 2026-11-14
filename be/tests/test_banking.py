@@ -86,8 +86,9 @@ def add(client,key='one'):
     return next(c for c in value['connections'] if c['institution_name']=='PRIVATE Bank '+key)
 
 
-def enable(client,connection,accounts=None,enabled=True):
-    return act(client,'select_accounts',connection_id=connection['id'],account_ids=accounts or [a['id'] for a in connection['accounts']],enabled=enabled)
+def reconcile(client,connection):
+    token=act(client,'update_link',connection_id=connection['id'])
+    return act(client,'reconcile',connection_id=connection['id'],link_session_id=token['result']['link_session_id'])
 
 
 def sync(client,connection=None):return act(client,'sync',connection_id=connection['id'] if connection else None)
@@ -108,7 +109,7 @@ def test_explicit_profile_contract_openapi_and_private_inventory(bank):
     assert operation['requestBody']['content']['application/json']['schema']['discriminator']['propertyName']=='action'
     assert '/banking/v1/demo' not in spec['paths']
     connection=add(client)
-    assert all(not a['enabled'] for a in connection['accounts'])
+    assert all(a['enabled'] for a in connection['accounts'])
     assert next(a for a in connection['accounts'] if a['subtype']=='checking')['mask']=='0007'
     value=banking(client);raw=json.dumps(value)
     assert 'access-sandbox-' not in raw and 'private-item-' not in raw and 'same-provider-account' not in raw
@@ -123,7 +124,6 @@ def test_multiple_items_identical_provider_account_and_transaction_ids_are_isola
     client,provider,_=bank
     one,two=add(client),add(client,'two')
     assert one['id']!=two['id'] and not {a['id'] for a in one['accounts']} & {a['id'] for a in two['accounts']}
-    enable(client,one);enable(client,two)
     value=sync(client)
     assert value['result']['added']==12
     state=client.get('/state').json();assert len(state['observations'])==12
@@ -136,16 +136,17 @@ def test_multiple_items_identical_provider_account_and_transaction_ids_are_isola
     assert all('cursor' in body for path,body in provider.calls[-6:] if path=='/transactions/sync')
 
 
-def test_disable_keeps_immutable_history_but_excludes_all_new_insights(bank):
+def test_provider_deselection_keeps_immutable_history_but_excludes_all_new_insights(bank):
     client,provider,app=bank
-    connection=add(client);enable(client,connection);sync(client)
+    connection=add(client);sync(client)
     before=client.get('/state').json();assert len(before['observations'])==6
-    value=enable(client,connection,enabled=False)
+    provider.items['access-sandbox-one']['accounts']=[]
+    value=reconcile(client,connection)
     after=client.get('/state').json();assert after['observations']==before['observations']
     assert all(o['operation']=='upsert' for o in after['observations'])
     assert all(not card['evidence'] for card in after['ledger'])
     assert not after['notification_intents']
-    assert 'local' in value['selection_notice'] and 'history' in value['selection_notice'].lower()
+    assert 'Plaid' in value['selection_notice'] and 'history' in value['selection_notice'].lower()
     experience=client.get('/experience/v1').json();assert experience['clarification'] is None
     assert all(not a['enabled'] for a in value['connections'][0]['accounts'])
     count=sum(path=='/transactions/sync' for path,_ in provider.calls);sync(client)
@@ -156,9 +157,11 @@ def test_disable_keeps_immutable_history_but_excludes_all_new_insights(bank):
 
 def test_reenable_resumes_own_stream_without_duplicate_history(bank):
     client,provider,_=bank
-    connection=add(client);enable(client,connection);sync(client)
+    connection=add(client);sync(client)
     old=deepcopy(client.get('/state').json()['observations'])
-    enable(client,connection,enabled=False);enable(client,connection)
+    shared=deepcopy(provider.items['access-sandbox-one']['accounts'])
+    provider.items['access-sandbox-one']['accounts']=[];reconcile(client,connection)
+    provider.items['access-sandbox-one']['accounts']=shared;reconcile(client,connection)
     assert all(not c['evidence'] for c in client.get('/state').json()['ledger'])
     result=sync(client);assert result['result']['added']==0
     assert client.get('/state').json()['observations']==old
@@ -166,23 +169,33 @@ def test_reenable_resumes_own_stream_without_duplicate_history(bank):
     assert client.get('/state').json()['ledger'][0]['purchase_count']==6
 
 
-def test_subtype_batch_is_exact_snapshot_not_future_auto_optin(bank):
+def test_new_provider_shared_accounts_are_enabled_and_sync_without_local_selection(bank):
     client,provider,_=bank
-    connection=add(client);group=next(g for g in connection['groups'] if g['label']=='checking')
-    act(client,'select_group',connection_id=connection['id'],group_id=group['id'],account_ids=group['account_ids'],enabled=True)
+    connection=add(client);sync(client)
     row=deepcopy(provider.items['access-sandbox-one']['accounts'][0]);row.update(account_id='new-checking',name='New private checking')
     provider.items['access-sandbox-one']['accounts'].append(row)
-    token=act(client,'update_link',connection_id=connection['id'])
-    value=act(client,'reconcile',connection_id=connection['id'],link_session_id=token['result']['link_session_id'])
-    accounts=value['connections'][0]['accounts'];assert sum(a['enabled'] for a in accounts)==1
-    body=action_body(client,'select_group',connection_id=connection['id'],group_id=group['id'],account_ids=group['account_ids'],enabled=True)
-    rejected=client.post('/banking/v1/actions',json=body)
-    assert rejected.status_code==409 and rejected.json()['error']['code']=='obsolete_selection'
+    value=reconcile(client,connection)
+    assert len(value['connections'][0]['accounts'])==3
+    assert all(a['enabled'] for a in value['connections'][0]['accounts'])
+    assert sync(client)['result']['added']==3
+    calls=[b for p,b in provider.calls if p=='/transactions/sync'][-3:]
+    assert next(b for b in calls if b['options']['account_id']=='new-checking').get('cursor') is None
+    assert all(b.get('cursor') for b in calls if b['options']['account_id']!='new-checking')
+
+
+@pytest.mark.parametrize('action',['select_accounts','select_group'])
+def test_app_selection_actions_are_removed_and_cannot_disable_shared_accounts(bank,action):
+    client,provider,_=bank;connection=add(client);before=banking(client);calls=len(provider.calls)
+    fields=dict(connection_id=connection['id'],account_ids=[a['id'] for a in connection['accounts']],enabled=False)
+    if action=='select_group':fields['group_id']=connection['groups'][0]['id']
+    response=client.post('/banking/v1/actions',json=action_body(client,action,**fields))
+    assert response.status_code==422
+    assert banking(client)==before and len(provider.calls)==calls
 
 
 def test_update_link_uses_existing_token_and_reconcile_not_exchange(bank):
     client,provider,_=bank
-    connection=add(client);enable(client,connection)
+    connection=add(client)
     token=act(client,'update_link',connection_id=connection['id']);sid=token['result']['link_session_id']
     request=next(body for path,body in reversed(provider.calls) if path=='/link/token/create')
     assert request['access_token']=='access-sandbox-one' and request['update']=={'account_selection_enabled':True}
@@ -196,7 +209,7 @@ def test_update_link_uses_existing_token_and_reconcile_not_exchange(bank):
 
 def test_update_cancel_preserves_inventory_selection_and_does_not_reconcile(bank):
     client,provider,_=bank
-    connection=add(client);enable(client,connection);before=banking(client)['connections']
+    connection=add(client);before=banking(client)['connections']
     token=act(client,'update_link',connection_id=connection['id']);sid=token['result']['link_session_id']
     act(client,'cancel_link',link_session_id=sid)
     assert banking(client)['connections']==before
@@ -208,7 +221,7 @@ def test_update_cancel_preserves_inventory_selection_and_does_not_reconcile(bank
 
 def test_missing_accounts_and_unknown_inventory_fail_closed_without_losing_history(bank):
     client,provider,_=bank
-    connection=add(client);enable(client,connection);sync(client)
+    connection=add(client);sync(client)
     old=client.get('/state').json()['observations']
     provider.items['access-sandbox-one']['accounts']=[]
     sync(client)
@@ -219,12 +232,12 @@ def test_missing_accounts_and_unknown_inventory_fail_closed_without_losing_histo
     provider.items['access-sandbox-one']['accounts']=[{'account_id':'new-id','type':'future_kind','subtype':'future_subtype'}]
     result=sync(client);new=next(a for a in result['connections'][0]['accounts'] if a['availability']=='available')
     assert new['name']=='Unnamed account' and new['official_name'] is None and new['mask'] is None
-    assert not new['enabled'] and new['type']=='future_kind'
+    assert new['enabled'] and new['type']=='future_kind'
 
 
 def test_partial_import_failure_preserves_other_stream_cursor_and_history(bank):
     client,provider,_=bank
-    connection=add(client);enable(client,connection);provider.fail.add('savings')
+    connection=add(client);provider.fail.add('savings')
     value=sync(client)
     assert value['result']['status']=='partial' and value['result']['added']==3
     assert len(client.get('/state').json()['observations'])==3
@@ -240,7 +253,7 @@ def test_partial_import_failure_preserves_other_stream_cursor_and_history(bank):
 
 def test_disconnect_one_item_only_never_closes_account_and_keeps_other_bank(bank):
     client,provider,_=bank
-    one,two=add(client),add(client,'two');enable(client,one);enable(client,two);sync(client)
+    one,two=add(client),add(client,'two');sync(client)
     old=client.get('/state').json()['observations']
     value=act(client,'disconnect',connection_id=one['id'])
     assert value['result']['status']=='disconnected'
@@ -263,14 +276,14 @@ def test_disconnect_failure_is_local_disabled_and_explicit_remote_pending(bank):
 
 
 @pytest.mark.parametrize('mutation',[{'expected_revision':999},{'account_ids':['unknown-account']},{'schema_version':'2'},{'user_id':'forged-user'},{'enabled':'yes'}])
-def test_bad_or_stale_selection_rejected_atomically(bank,mutation):
+def test_bad_or_stale_sync_rejected_atomically(bank,mutation):
     client,_,_=bank;connection=add(client)
-    body=action_body(client,'select_accounts',connection_id=connection['id'],account_ids=[connection['accounts'][0]['id']],enabled=True)
+    body=action_body(client,'sync',connection_id=connection['id'])
     before=client.get('/state').json();body.update(mutation)
     response=client.post('/banking/v1/actions',json=body)
     assert response.status_code in (409,422)
     assert client.get('/state').json()==before
-    assert all(not a['enabled'] for a in banking(client)['connections'][0]['accounts'])
+    assert all(a['enabled'] for a in banking(client)['connections'][0]['accounts'])
 
 
 def test_malformed_json_duplicate_keys_openapi_and_query_rejection(bank):
@@ -285,30 +298,30 @@ def test_malformed_json_duplicate_keys_openapi_and_query_rejection(bank):
 
 def test_receipts_exact_replay_conflict_and_encrypted_storage(bank,tmp_path):
     client,provider,_=bank;connection=add(client)
-    body=action_body(client,'select_accounts',connection_id=connection['id'],account_ids=[connection['accounts'][0]['id']],enabled=True)
+    body=action_body(client,'sync',connection_id=connection['id'])
     first=client.post('/banking/v1/actions',json=body);assert first.status_code==200
     assert client.post('/banking/v1/actions',json=body).json()==first.json()
-    changed=body|{'enabled':False}
+    changed=body|{'connection_id':None}
     assert client.post('/banking/v1/actions',json=changed).json()['error']['code']=='idempotency_conflict'
     snapshot=(tmp_path/'state.sqlite').read_bytes()
     for secret in (b'PRIVATE Bank',b'PRIVATE Checking',b'access-sandbox-one',b'public-sandbox-one',b'"mask":"0007"'):
         assert secret not in snapshot
 
 
-def test_restart_preserves_inventory_selection_and_receipts(tmp_path):
+def test_restart_preserves_shared_inventory_and_receipts(tmp_path):
     provider=BankProvider()
     with TestClient(app_for(tmp_path,provider),base_url='http://127.0.0.1') as client:
-        connection=add(client);enable(client,connection);sync(client)
-        body=action_body(client,'select_accounts',connection_id=connection['id'],account_ids=[connection['accounts'][0]['id']],enabled=False)
+        connection=add(client);sync(client)
+        body=action_body(client,'sync',connection_id=connection['id'])
         reply=client.post('/banking/v1/actions',json=body).json();before=client.get('/state').json()['observations']
     with TestClient(app_for(tmp_path,provider),base_url='http://127.0.0.1') as client:
         assert client.post('/banking/v1/actions',json=body).json()==reply
         assert client.get('/state').json()['observations']==before
-        assert sum(a['enabled'] for a in banking(client)['connections'][0]['accounts'])==1
+        assert sum(a['enabled'] for a in banking(client)['connections'][0]['accounts'])==2
 
 
 def test_whole_data_delete_erases_all_banks_keys_and_epoch_and_stale_receipts(bank,tmp_path):
-    client,provider,_=bank;one,two=add(client),add(client,'two');enable(client,one);sync(client)
+    client,provider,_=bank;one,two=add(client),add(client,'two');sync(client)
     prior=banking(client);body=action_body(client,'sync',connection_id=two['id'])
     response=client.request('DELETE','/data',json={'schema_version':'1','request_id':'delete-all','data_epoch':prior['data_epoch'],'confirm':'delete_all'})
     assert response.status_code==200,response.text
@@ -319,7 +332,7 @@ def test_whole_data_delete_erases_all_banks_keys_and_epoch_and_stale_receipts(ba
 
 
 @pytest.mark.asyncio
-async def test_disable_during_sync_discards_late_pages_and_preserves_other_history(tmp_path):
+async def test_disconnect_during_sync_discards_late_pages_and_preserves_other_history(tmp_path):
     provider=BankProvider();app=app_for(tmp_path,provider)
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://127.0.0.1') as client:
@@ -329,11 +342,10 @@ async def test_disable_during_sync_discards_late_pages_and_preserves_other_histo
             linked=(await request('add_link',consent_sandbox=True)).json()
             value=(await request('exchange',link_session_id=linked['result']['link_session_id'],public_token='public-sandbox-one')).json()
             connection=value['connections'][0]
-            assert (await request('select_accounts',connection_id=connection['id'],account_ids=[a['id'] for a in connection['accounts']],enabled=True)).status_code==200
             provider.entered,provider.release=asyncio.Event(),asyncio.Event()
             pending=asyncio.create_task(request('sync',connection_id=connection['id']))
             await asyncio.wait_for(provider.entered.wait(),2)
-            disabled=await request('select_accounts',connection_id=connection['id'],account_ids=[a['id'] for a in connection['accounts']],enabled=False)
+            disabled=await request('disconnect',connection_id=connection['id'])
             assert disabled.status_code==200
             provider.release.set();response=await pending
             assert response.status_code==200,response.text
@@ -344,3 +356,69 @@ async def test_disable_during_sync_discards_late_pages_and_preserves_other_histo
 
 def test_examples_match_frozen_schema():
     for value in SCHEMA['examples']:validate_banking('banking',value)
+
+
+@pytest.mark.parametrize('failure',['unavailable','duplicate','wrong_item','missing_accounts'])
+def test_existing_app_disabled_accounts_migrate_only_after_successful_shared_inventory(bank,failure):
+    client,provider,app=bank
+    connection=add(client);sync(client)
+    service=app.state.service;coordinator=service.banking_coordinator
+    # Offline persisted old-format state: no provider/local live database is involved.
+    async def old_selection():
+        async with service.lock:
+            doc=deepcopy(service.document)
+            private=await coordinator.call('receipt_open',{'ciphertext':doc['meta']['banking_vault']})
+            item=private['items'][connection['id']]
+            for account in item['accounts'].values():
+                account['enabled']=False;account['stream']['status']='disabled'
+            doc['meta']['banking_vault']=(await coordinator.call('receipt_seal',private))['ciphertext']
+            await service.evaluate(doc);await service.commit(doc)
+            return deepcopy(item)
+    old=client.portal.call(old_selection)
+    cached=banking(client)['connections'][0]['accounts']
+    assert not any(a['enabled'] for a in cached)
+    history=client.get('/state').json()['observations']
+    original=deepcopy(provider.items['access-sandbox-one'])
+    if failure=='unavailable':provider.fail.add('/accounts/get')
+    elif failure=='duplicate':provider.items['access-sandbox-one']['accounts'].append(deepcopy(original['accounts'][0]))
+    elif failure=='wrong_item':provider.items['access-sandbox-one']['item']['item_id']='wrong-item'
+    else:provider.items['access-sandbox-one'].pop('accounts')
+    calls=sum(p=='/transactions/sync' for p,_ in provider.calls)
+    value=sync(client)
+    assert value['result']['status']=='partial'
+    assert value['connections'][0]['accounts']==cached
+    assert sum(p=='/transactions/sync' for p,_ in provider.calls)==calls
+    assert client.get('/state').json()['observations']==history
+    provider.fail.clear();provider.items['access-sandbox-one']=original
+    value=sync(client)
+    assert all(a['enabled'] for a in value['connections'][0]['accounts'])
+    assert value['result']['added']==0 and client.get('/state').json()['observations']==history
+    last=[b for p,b in provider.calls if p=='/transactions/sync'][-2:]
+    assert all(b['cursor']==old['accounts'][b['options']['account_id']]['stream']['cursor'] for b in last)
+    assert {a['id'] for a in value['connections'][0]['accounts']}=={a['id'] for a in cached}
+
+
+def test_failed_reconcile_preserves_shared_inventory_history_and_can_retry(bank):
+    client,provider,_=bank;connection=add(client);sync(client)
+    before=banking(client)['connections'][0]['accounts'];history=client.get('/state').json()['observations']
+    token=act(client,'update_link',connection_id=connection['id'])
+    provider.fail.add('/accounts/get')
+    body=action_body(client,'reconcile',connection_id=connection['id'],link_session_id=token['result']['link_session_id'])
+    response=client.post('/banking/v1/actions',json=body)
+    assert response.status_code==500
+    assert banking(client)['connections'][0]['accounts']==before
+    assert client.get('/state').json()['observations']==history
+    provider.fail.clear()
+    assert all(a['enabled'] for a in act(client,'reconcile',connection_id=connection['id'],link_session_id=token['result']['link_session_id'])['connections'][0]['accounts'])
+
+
+@pytest.mark.parametrize('subtypes',[['checking'],['savings'],['checking','savings']])
+def test_add_enables_exactly_provider_shared_checking_savings_or_both(bank,subtypes):
+    client,provider,_=bank
+    provider.items['access-sandbox-one']['accounts']=[a for a in provider.items['access-sandbox-one']['accounts'] if a['subtype'] in subtypes]
+    connection=add(client)
+    assert {a['subtype'] for a in connection['accounts']}==set(subtypes)
+    assert all(a['enabled'] and a['import_status']=='not_synced' for a in connection['accounts'])
+    assert sync(client)['result']['added']==3*len(subtypes)
+    raw_ids={a['account_id'] for a in provider.items['access-sandbox-one']['accounts']}
+    assert {b['options']['account_id'] for p,b in provider.calls if p=='/transactions/sync'}==raw_ids

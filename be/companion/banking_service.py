@@ -50,7 +50,7 @@ class BankingCoordinator:
         if ctx['connected']:
             source.update(enabled=True,consent='granted',authorization_requested=True,read_access='not_applicable',
                 status='ready' if ctx['ready'] else 'syncing' if ctx['selected_count'] else 'empty',coverage='partial' if ctx['ready'] else 'unknown',
-                coverage_window=None,last_success_at=ctx['last_success_at'],reason='Synthetic Sandbox records from explicitly selected accounts only; disabled account history is excluded from new insights.')
+                coverage_window=None,last_success_at=ctx['last_success_at'],reason='Synthetic Sandbox records from Plaid-shared accounts only; no-longer-shared account history is excluded from new insights.')
             enabled=doc['state']['preferences']['enabled_source_ids']
             if 'plaid' not in enabled:enabled.append('plaid')
         else:
@@ -120,7 +120,7 @@ class BankingCoordinator:
 
     async def action(self,body,*,admission_guard=None):
         validate_banking('request',body);service=self.service;action=body['action'];run_id=str(uuid4())
-        local=action in {'select_accounts','select_group','cancel_link'}
+        local=action=='cancel_link'
         async with service.lock:
             if self.deleting:raise DomainError('busy',409)
             generation=self.generation
@@ -140,7 +140,7 @@ class BankingCoordinator:
                 outcome=await self.call('local',self.payload(doc)|{'request':body})
                 doc['meta']['banking_vault']=outcome['vault']
                 service.invalidate(doc['state']);await service.cancel_synthesis();await service.clear_checkpoints()
-                response=await self.publish(doc,receipt,result('cancelled' if action=='cancel_link' else 'saved','Link cancelled; existing choices are unchanged. Any completed exchange is locally disabled; remote removal may remain unconfirmed.' if action=='cancel_link' else 'Selection saved locally. History is kept; future imports and new insights follow this selection.'))
+                response=await self.publish(doc,receipt,result('cancelled','Link cancelled; existing sharing is unchanged. Any completed exchange is locally disabled; remote removal may remain unconfirmed.'))
                 if action=='cancel_link':await self.call('finish_recovery',self.payload(service.document))
                 return response
             captured=(await self.call('describe',self.payload(doc)))['items']
@@ -185,7 +185,7 @@ class BankingCoordinator:
                 doc['meta']['banking_vault']=merged['vault'];doc['state']['observations']=merged['observations']
                 if action in {'add_link','update_link'}:reply=result('link_ready','Open native Sandbox Link.',link_session_id=outcome['session_id'],link_token=outcome['link_token'],expiration=outcome['expiration'])
                 elif merged.get('cancelled'):reply=result('cancelled','Link was cancelled. Local imports are stopped; remote Item removal is unconfirmed. Use Disconnect bank to retry removal.')
-                else:reply=result('partial' if merged['partial'] else 'complete','Some selected account imports or inventory need attention.' if merged['partial'] else 'Bank information updated. New accounts require an explicit selection.',**merged['counts'])
+                else:reply=result('partial' if merged['partial'] else 'complete','Some shared account imports or inventory need attention.' if merged['partial'] else 'Bank information updated. All accounts returned by Plaid shared inventory are enabled.',**merged['counts'])
             service.invalidate(doc['state']);await service.clear_checkpoints()
             response=await self.publish(doc,receipt,reply)
             if action=='exchange':await self.call('committed',{})
