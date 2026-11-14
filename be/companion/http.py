@@ -77,9 +77,13 @@ class Boundary:
                 requests[("POST", "/connections/plaid")] = "request"
             if self.experience_profile:
                 requests[("POST", "/experience/v1/answers")] = "answer_request"
+                requests[('POST', '/patterns/v1/analyze')] = 'pattern_request'
+                requests[('POST', '/patterns/v1/clarify')] = 'pattern_clarify'
+                requests[('POST','/patterns/v1/brief')] = 'pattern_brief'
+                requests[('POST','/health/v1/samples')] = 'health_samples'
             if self.banking_profile:
                 requests[('POST','/banking/v1/actions')] = 'banking_request'
-            reads = {"/health", "/state"} | ({"/experience/v1"} if self.experience_profile else set()) | ({'/banking/v1'} if self.banking_profile else set())
+            reads = {"/health", "/state"} | ({"/experience/v1", '/patterns/v1'} if self.experience_profile else set()) | ({'/banking/v1'} if self.banking_profile else set())
             if scope.get("query_string") and scope["path"] in {*reads, *(r[1] for r in requests)}:
                 raise DomainError()
             chunks, size = [], 0
@@ -112,7 +116,15 @@ class Boundary:
                     request_id = body["request_id"]
                 if headers.get(b"content-type", b"").split(b";")[0].strip().lower() != b"application/json":
                     raise DomainError()
-                if route == ('POST','/banking/v1/actions'):
+                if route == ('POST','/health/v1/samples'):
+                    from .health_ingestion import HealthIngestRequest
+                    try: HealthIngestRequest.model_validate_json(raw)
+                    except Exception: raise DomainError() from None
+                elif route in {('POST','/patterns/v1/analyze'),('POST','/patterns/v1/clarify'),('POST','/patterns/v1/brief')}:
+                    from .patterns import AnalyzeRequest, ClarifyRequest, BriefRequest
+                    try: ({'/patterns/v1/analyze':AnalyzeRequest,'/patterns/v1/clarify':ClarifyRequest,'/patterns/v1/brief':BriefRequest}[route[1]]).model_validate(body)
+                    except Exception: raise DomainError() from None
+                elif route == ('POST','/banking/v1/actions'):
                     from .banking_contracts import validate_banking
                     validate_banking('request',body)
                 elif route == ("POST", "/connections/plaid"):
@@ -251,6 +263,35 @@ def create_app(data_dir: Path | None = None, *, replacements=None, scheduler=Non
     if experience_profile:
         from .experience_contracts import Experience, AnswerRequest, ExperienceError
         experience_errors = {status: {"model": ExperienceError} for status in errors}
+
+        from .patterns import AnalyzeRequest, ClarifyRequest, BriefRequest, PatternOverview
+        from .health_ingestion import HealthIngestRequest, ingest_health
+
+        @app.post('/health/v1/samples',response_model=state_model,responses=errors)
+        async def health_samples(body: HealthIngestRequest):
+            return await ingest_health(service,body.model_dump(mode='json'))
+
+        def patterns():
+            coordinator = getattr(service, 'pattern_coordinator', None)
+            if coordinator is None:
+                raise DomainError('invalid_request', 503, 'Normalized PostgreSQL pattern storage is unavailable.')
+            return coordinator
+
+        @app.get('/patterns/v1', response_model=PatternOverview, responses=experience_errors)
+        async def pattern_overview():
+            return await patterns().get()
+
+        @app.post('/patterns/v1/analyze', response_model=PatternOverview, responses=experience_errors)
+        async def analyze_patterns(body: AnalyzeRequest):
+            return await patterns().analyze(body.request_id)
+
+        @app.post('/patterns/v1/clarify', response_model=PatternOverview, responses=experience_errors)
+        async def clarify_pattern(body: ClarifyRequest):
+            return await patterns().clarify(body)
+
+        @app.post('/patterns/v1/brief',response_model=PatternOverview,responses=experience_errors)
+        async def save_pattern_brief(body: BriefRequest):
+            return await patterns().save_brief(body)
 
         @app.get("/experience/v1", response_model=Experience, responses=experience_errors)
         async def experience():

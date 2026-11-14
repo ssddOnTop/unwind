@@ -71,7 +71,7 @@ class CompanionService:
             await self.experience_coordinator.reconcile(doc)
             await self.experience_coordinator.capture_history(doc)
 
-    async def commit(self, doc, receipt=None, erase=False, recover=False, bump=True):
+    async def commit(self, doc, receipt=None, erase=False, recover=False, bump=True, health_ingest=None, pattern_bank_changes=None):
         if bump:
             doc["state"]["revision"] += 1
             doc["state"]["generated_at"] = iso(self.clock())
@@ -97,6 +97,7 @@ class CompanionService:
                 receipt["response"] = deepcopy(doc["state"])
         await self.registry.dispatch("persistence", "commit", {
             "document": doc, "receipt": receipt, "erase_receipts": erase,
+            "health_ingest": health_ingest, "pattern_bank_changes": pattern_bank_changes,
             "recover_pending": recover,
             "erase_receipt_routes": ["/experience/v1/answers"] if erase_experience else [],
             "receipt_cutoff": iso(self.clock() - timedelta(days=90))})

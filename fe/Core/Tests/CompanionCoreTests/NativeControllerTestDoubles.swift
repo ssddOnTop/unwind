@@ -24,6 +24,7 @@ struct LinkTokenConfiguration {
 }
 @MainActor final class HealthStepsAdapter {
     func cancelAll() {}
+    func collectNormalized(state: CompanionCore.State, requestAuthorization: Bool) async throws -> [HealthIngestRequest] { throw NativeTestUnexpectedCall.permission }
     func collect(state: CompanionCore.State, requestAuthorization: Bool) async throws -> ObservationBatch {
         throw NativeTestUnexpectedCall.permission
     }

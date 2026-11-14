@@ -82,7 +82,7 @@ class PostgresRuntime:
                     AND to_regclass('companion_private.plaid_owners') IS NOT NULL
                     AND to_regclass('companion_private.webhook_jobs') IS NOT NULL
                     AND to_regclass('companion_private.webhook_receipts') IS NOT NULL""")).fetchone()
-                if versions != [(1,)] or not row[0]:
+                if versions not in ([(1,)], [(2,)], [(3,)]) or not row[0]:
                     raise ValueError
         except Exception:
             raise PostgresUnavailable() from None

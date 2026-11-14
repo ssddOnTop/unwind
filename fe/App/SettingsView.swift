@@ -23,9 +23,11 @@ struct SettingsView: View {
                 }
                 Section("Apple Health") {
                     ConnectionRow(connection: model.healthConnection, actions: healthActions)
+                    Text("Read steps, sleep stages, heart rate, resting heart rate and supported workouts from the last six months. This app needs its own read permissions; no Health writes are requested.").font(.caption)
+                    if let progress = model.healthProgress { ProgressView(progress) }
                 }
                 if model.healthHasConsent {
-                    Section { Button("Update step records") { Task { await model.healthSync(connect: false) } }.disabled(model.busy || model.hasPending) }
+                    Section { Button("Refresh six-month Health records") { Task { await model.healthSync(connect: false) } }.disabled(model.busy || model.hasPending) }
                 }
                 Section {
                     ConnectionRow(connection: model.reminderConnection,

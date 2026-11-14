@@ -133,6 +133,9 @@ struct LedgerView: View {
     var body: some View {
         NavigationStack {
             List {
+                if let patterns = model.patternOverview, patterns.status != "not_analyzed" {
+                    Section("Saved pattern review") { PatternSummaryView(model: model, value: patterns) }
+                }
                 if let value = model.experience {
                     ForEach(value.inference_history.reversed(), id: \.id) { entry in
                         NavigationLink { InferenceHistoryDetail(entry: entry) } label: {
@@ -144,7 +147,7 @@ struct LedgerView: View {
                             }.padding(.vertical, 4)
                         }
                     }
-                    if value.inference_history.isEmpty {
+                    if value.inference_history.isEmpty && (model.patternOverview?.findings.isEmpty ?? true) {
                         Text("No inferences yet.").font(.headline)
                         Text("When your records support a possible pattern, its explanation and supporting evidence will appear here.")
                     }

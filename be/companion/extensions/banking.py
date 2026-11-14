@@ -116,11 +116,12 @@ class BankingExtension:
             'environment':'sandbox','status':status,'selection_notice':NOTICE,'connections':sorted(connections,key=lambda i:i['id']),'result':result}
 
     def context(self,private,state,now):
-        allowed=set();ownership=[];successes=[];selected=[];inventory_ready=True
+        allowed=set();ownership=[];successes=[];selected=[];inventory_ready=True;pattern_accounts=[]
         for item in private['items'].values():
             if item['connected']:
                 ownership.append({'item_id':item['item_id'],'generation':item['generation']})
             for account in item['accounts'].values():
+                pattern_accounts.append({'connection_id':item['id'],'bank_account_id':account['id'],'active':bool(item['connected'] and account['enabled'] and account['availability']=='available' and account['stream']['status']=='ready' and account['stream']['last_sync_at'] and instant(now)-instant(account['stream']['last_sync_at'])<=timedelta(days=1))})
                 if item['connected'] and account['enabled'] and account['availability']=='available':
                     selected.append(account);inventory_ready &= item['status']=='connected'
                     stamp=account['stream']['last_sync_at']
@@ -129,8 +130,9 @@ class BankingExtension:
                         allowed.update(account['stream']['records'].values())
         ready=bool(selected) and inventory_ready and all(a['stream']['status']=='ready' for a in selected)
         if not ready:allowed.clear()
+        for item in pattern_accounts:item['active'] &= ready
         excluded=[o['id'] for o in state['observations'] if o['source_id']=='plaid' and o['id'] not in allowed]
-        return {'excluded_ids':sorted(set(excluded)),'items':ownership,'selected_count':len(selected),'ready':ready,
+        return {'pattern_accounts':pattern_accounts,'excluded_ids':sorted(set(excluded)),'items':ownership,'selected_count':len(selected),'ready':ready,
                 'last_success_at':max(successes) if successes else None,'connected':bool(ownership)}
 
     async def handle(self,operation,payload):
@@ -147,7 +149,7 @@ class BankingExtension:
         if operation=='describe':return {'items':{cid:{k:i[k] for k in ('item_id','generation','connected')} for cid,i in private['items'].items()},'sessions':deepcopy(private['sessions'])}
         if operation=='merge':
             body,outcome=payload['request'],payload['outcome'];action=body['action'];counts={'added':0,'modified':0,'removed':0};partial=False
-            observations=deepcopy(state['observations'])
+            observations=deepcopy(state['observations']);pattern_changes=[]
             def session_ok(sid):
                 session=private['sessions'].get(sid)
                 if not session or session['cancelled']:raise DomainError('obsolete_selection',409)
@@ -182,11 +184,12 @@ class BankingExtension:
                     candidate=result['item'];current=private['items'].get(candidate['id'])
                     if not current or not current['connected'] or current['generation']!=payload['captured'].get(candidate['id']):partial=True;continue
                     private['items'][candidate['id']]=candidate;partial|=result['partial']
+                    pattern_changes.extend(result.get('pattern_changes',[]))
                     for o in result['observations']:
                         k=(o['id'],o['revision'])
                         if k not in input_keys and k not in present and o['local_date']>=cutoff:observations.append(o);present.add(k)
                     for k in counts:counts[k]+=result['counts'][k]
-            return {'vault':self.vault.seal(private),'observations':observations,'counts':counts,'partial':partial}
+            return {'vault':self.vault.seal(private),'observations':observations,'counts':counts,'partial':partial,'pattern_changes':pattern_changes}
         if operation=='prune':
             ids=set(payload['observation_ids'])
             for item in private['items'].values():
@@ -306,7 +309,7 @@ class BankingExtension:
             if body['connection_id'] and not items:raise DomainError('not_found',404)
             outcomes=[]
             for original in items:
-                candidate=deepcopy(original);observations=deepcopy(state['observations']);counts={'added':0,'modified':0,'removed':0};partial=False
+                candidate=deepcopy(original);observations=deepcopy(state['observations']);counts={'added':0,'modified':0,'removed':0};partial=False;pattern_changes=[]
                 try:candidate=await self.inventory(candidate,now)
                 except Exception:candidate['status']='attention';outcomes.append({'item':candidate,'observations':[],'counts':counts,'partial':True});continue
                 def guard():
@@ -316,6 +319,8 @@ class BankingExtension:
                     try:
                         staged=await self.client.sync_pages(candidate['access_token'],a['stream']['cursor'],guard=guard,account_id=raw)
                         if any(not isinstance(row,dict) or row.get('account_id')!=raw for field in ('added','modified','removed') for row in staged[field]):raise PlaidFailure()
+                        from ..pattern_banking import normalize_delta
+                        normalized=normalize_delta(staged,candidate['id'],a['id'],state['preferences']['timezone'],now)
                         expired=set(a['stream'].get('expired',[])) | set(candidate.get('legacy_expired',[]))
                         for field in ('added','modified'):staged[field]=[r for r in staged[field] if r['transaction_id'] not in expired]
                         mapping=deepcopy(a['stream']['records'])
@@ -330,8 +335,9 @@ class BankingExtension:
                         a['stream'].update(last_sync_at=now,status='ready' if staged['status']=='HISTORICAL_UPDATE_COMPLETE' else 'syncing')
                         partial|=a['stream']['status']!='ready'
                         for k in counts:counts[k]+=projected['counts'][k]
+                        pattern_changes.append(normalized)
                     except Exception:a['stream']['status']='error';partial=True
                 candidate.update(last_sync_at=now,status='attention' if partial else 'connected')
-                outcomes.append({'item':candidate,'observations':observations,'counts':counts,'partial':partial})
+                outcomes.append({'item':candidate,'observations':observations,'counts':counts,'partial':partial,'pattern_changes':pattern_changes})
             return {'outcomes':outcomes}
         raise ValueError('Unsupported banking operation')
