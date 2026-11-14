@@ -7,6 +7,7 @@ from uuid import uuid4
 from .contracts import DomainError
 from .domain import defaults,iso,instant,preference_update
 from .banking_contracts import validate_banking
+from . import banking_schedule as schedule
 
 
 def result(status,message,**fields):
@@ -118,7 +119,7 @@ class BankingCoordinator:
         await self.service.commit(doc,receipt,bump=False,pattern_bank_changes=pattern_changes)
         return value
 
-    async def action(self,body,*,admission_guard=None):
+    async def action(self,body,*,admission_guard=None,automatic=False,eligible_only=False):
         validate_banking('request',body);service=self.service;action=body['action'];run_id=str(uuid4())
         local=action=='cancel_link'
         async with service.lock:
@@ -144,6 +145,16 @@ class BankingCoordinator:
                 if action=='cancel_link':await self.call('finish_recovery',self.payload(service.document))
                 return response
             captured=(await self.call('describe',self.payload(doc)))['items']
+            sync_ids=None;sync_items=[]
+            if action=='sync':
+                targets={cid:i for cid,i in captured.items() if i['connected'] and (body['connection_id'] is None or cid==body['connection_id']) and (not (automatic or eligible_only) or i['eligible'])}
+                now=service.clock()
+                sync_ids=[cid for cid,i in targets.items() if not automatic or schedule.next_due(doc,i,now)<=now]
+                if automatic and not sync_ids:
+                    due=min((schedule.next_due(doc,i,now) for i in targets.values()),default=now+timedelta(hours=24))
+                    return {'deferred_until':iso(due)}
+                sync_items=[targets[cid]['item_id'] for cid in sync_ids]
+                for item_id in sync_items:schedule.reserve(doc,item_id,now)
             if action=='disconnect':
                 outcome=await self.call('disconnect_local',self.payload(doc)|{'connection_id':body['connection_id']})
                 doc['meta']['banking_vault']=outcome['vault']
@@ -157,7 +168,7 @@ class BankingCoordinator:
                 doc['meta']['banking_inflight']={'action':action,'run_id':run_id}
                 if action=='sync':self.source(doc)['last_attempt_at']=iso(service.clock())
                 await service.evaluate(doc);await service.commit(doc)
-                task=asyncio.create_task(self.call('network',self.payload(doc)|{'request':body}))
+                task=asyncio.create_task(self.call('network',self.payload(doc)|{'request':body,'sync_connection_ids':sync_ids}))
             self.tasks[run_id]=task;epoch=doc['state']['data_epoch']
             inputs=[(o['id'],o['revision']) for o in doc['state']['observations']]
         try:
@@ -167,6 +178,7 @@ class BankingCoordinator:
                 self.tasks.pop(run_id,None)
                 if service.document['state']['data_epoch']==epoch:
                     failed=deepcopy(service.document);failed['meta'].pop('banking_inflight',None)
+                    for item_id in sync_items:schedule.finish(failed,item_id,service.clock(),False)
                     await service.commit(failed)
             if isinstance(exc,asyncio.CancelledError):raise
             if isinstance(exc,DomainError):raise
@@ -186,6 +198,9 @@ class BankingCoordinator:
                 if action in {'add_link','update_link'}:reply=result('link_ready','Open native Sandbox Link.',link_session_id=outcome['session_id'],link_token=outcome['link_token'],expiration=outcome['expiration'])
                 elif merged.get('cancelled'):reply=result('cancelled','Link was cancelled. Local imports are stopped; remote Item removal is unconfirmed. Use Disconnect bank to retry removal.')
                 else:reply=result('partial' if merged['partial'] else 'complete','Some shared account imports or inventory need attention.' if merged['partial'] else 'Bank information updated. All accounts returned by Plaid shared inventory are enabled.',**merged['counts'])
+            if action=='sync':
+                successful=set(merged.get('committed_sync_items',[]))
+                for item_id in sync_items:schedule.finish(doc,item_id,service.clock(),item_id in successful)
             service.invalidate(doc['state']);await service.clear_checkpoints()
             response=await self.publish(doc,receipt,reply,merged.get('pattern_changes',[]) if action!='disconnect' else [])
             if action=='exchange':await self.call('committed',{})
@@ -198,17 +213,15 @@ class BankingCoordinator:
             if not match:return None
             body={'schema_version':'1','request_id':'item-sync:'+str(uuid4()),'data_epoch':doc['state']['data_epoch'],
                 'expected_revision':doc['state']['revision'],'action':'sync','connection_id':match}
-        return await self.action(body,admission_guard=admission_guard)
+        return await self.action(body,admission_guard=admission_guard,automatic=True)
 
     async def daily_sync(self):
         async with self.service.lock:
             doc=self.service.document
             if self.busy or not doc['meta'].get('plaid_connected') or not doc['meta'].get('banking_selected_count'):return
-            source=self.source(doc)
-            if source['last_attempt_at'] and self.service.clock()-instant(source['last_attempt_at'])<timedelta(hours=24):return
             body={'schema_version':'1','request_id':'banks-daily:'+str(uuid4()),'data_epoch':doc['state']['data_epoch'],
                 'expected_revision':doc['state']['revision'],'action':'sync','connection_id':None}
-        try:return await self.action(body)
+        try:return await self.action(body,automatic=True)
         except DomainError:return None
 
     async def delete(self,body):

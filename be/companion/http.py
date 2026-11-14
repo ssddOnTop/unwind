@@ -283,7 +283,7 @@ def create_app(data_dir: Path | None = None, *, replacements=None, scheduler=Non
 
         @app.post('/patterns/v1/analyze', response_model=PatternOverview, responses=experience_errors)
         async def analyze_patterns(body: AnalyzeRequest):
-            return await patterns().analyze(body.request_id)
+            return await patterns().execute(body)
 
         @app.post('/patterns/v1/clarify', response_model=PatternOverview, responses=experience_errors)
         async def clarify_pattern(body: ClarifyRequest):

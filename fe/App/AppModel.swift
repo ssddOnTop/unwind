@@ -11,6 +11,9 @@ import CompanionCore
     @Published private(set) var patternBusy = false
     @Published private(set) var healthProgress: String?
     @Published private(set) var patternMessage: String?
+    @Published var fetchLatestBankData = false
+    var patternRetryPending: Bool { patternRequestID != nil }
+    private var patternRequestFetch = false
     private var patternRequestID: String?
     @Published private(set) var busy = false
     @Published var message: String?
@@ -52,7 +55,7 @@ import CompanionCore
         plaidUpdates = plaid?.objectWillChange.sink { [weak self] _ in Task { @MainActor in self?.objectWillChange.send() } }
     }
     func hideForAdmission() {
-        admissionBlocked = true; connected = false; experience = nil; patternOverview = nil; patternRequestID = nil; snapshot = LocalSnapshot()
+        admissionBlocked = true; connected = false; experience = nil; patternOverview = nil; patternRequestID = nil; fetchLatestBankData = false; snapshot = LocalSnapshot()
         health.cancelAll(); reminders.cancelAll(); plaid?.pauseForAdmission(); banking.pauseForAdmission()
     }
     func allowAdmittedUpdates() { admissionBlocked = false; banking.admissionRestored() }
@@ -63,7 +66,7 @@ import CompanionCore
         health.cancelAll()
         if cancelReminders { reminders.cancelAll() } else { reminders.suspendCallbacks() }
         client.invalidateSession()
-        snapshot = LocalSnapshot(); experience = nil; patternOverview = nil; patternRequestID = nil; patternMessage = nil; message = nil; connected = false
+        snapshot = LocalSnapshot(); experience = nil; patternOverview = nil; patternRequestID = nil; fetchLatestBankData = false; patternMessage = nil; message = nil; connected = false
     }
     private func publish() {
         guard active, !admissionBlocked else { return }
@@ -74,7 +77,7 @@ import CompanionCore
             experience = nil; reminders.cancelAll()
         }
         if epoch != nil && epoch != snapshot.state?.data_epoch {
-            patternOverview = nil; patternRequestID = nil
+            patternOverview = nil; patternRequestID = nil; fetchLatestBankData = false
             plaid?.cancel("Records were reset. Reconnect explicitly if needed."); banking.cancelForLifecycle()
         }
     }
@@ -103,9 +106,9 @@ import CompanionCore
         guard active, !admissionBlocked, !busy, !patternBusy, !hasPending else { return }
         patternBusy = true; busy = true; patternMessage = nil
         defer { patternBusy = false; busy = false }
-        if patternRequestID == nil { patternRequestID = UUID().uuidString }
+        if patternRequestID == nil { patternRequestID = UUID().uuidString; patternRequestFetch = fetchLatestBankData }
         do {
-            let value = try await client.patterns(requestID: patternRequestID)
+            let value = try await client.patterns(requestID: patternRequestID, fetchLatestBankData: patternRequestFetch)
             guard active, !admissionBlocked else { return }
             patternOverview = value; patternRequestID = nil
         } catch {
@@ -190,7 +193,7 @@ import CompanionCore
         await perform(preferReceivedExperience: true) { client in try await submit(request, path: "/experience/v1/answers", client: client) }
     }
     func deleteData() async {
-        banking.cancelForLifecycle(); plaid?.cancel("Deletion requested. Connection work stopped."); health.cancelAll(); reminders.cancelAll(); experience = nil; patternOverview = nil; patternRequestID = nil
+        banking.cancelForLifecycle(); plaid?.cancel("Deletion requested. Connection work stopped."); health.cancelAll(); reminders.cancelAll(); experience = nil; patternOverview = nil; patternRequestID = nil; fetchLatestBankData = false
         await perform { client in
             guard let current = client.snapshot.state else { throw ClientFailure.noState }
             try await submit(DeleteRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: current.data_epoch, confirm: "delete_all"), path: "/data", method: "DELETE", replacingQueue: true, client: client)

@@ -29,6 +29,44 @@
       "title": "Aggregate",
       "type": "object"
     },
+    "BankRefresh": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "not_requested",
+            "complete",
+            "partial",
+            "failed",
+            "unavailable"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "last_updated": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Updated"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "last_updated",
+        "message"
+      ],
+      "title": "BankRefresh",
+      "type": "object"
+    },
     "Finding": {
       "additionalProperties": false,
       "properties": {
@@ -238,6 +276,9 @@
           "title": "Doctor Brief",
           "type": "string"
         },
+        "bank_refresh": {
+          "$ref": "#/$defs/BankRefresh"
+        },
         "privacy_notice": {
           "default": "Only a coarse pattern summary is sent for AI review, not identities, merchants or raw records. Aggregates can still be sensitive. Missing data is unknown, not zero. These are observations, not diagnoses or causes.",
           "title": "Privacy Notice",
@@ -287,11 +328,22 @@
         "request_id": {
           "title": "Request Id",
           "type": "string"
+        },
+        "data_epoch": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
+          "title": "Data Epoch",
+          "type": "string"
+        },
+        "fetch_latest_bank_data": {
+          "title": "Fetch Latest Bank Data",
+          "type": "boolean"
         }
       },
       "required": [
         "schema_version",
-        "request_id"
+        "request_id",
+        "data_epoch",
+        "fetch_latest_bank_data"
       ],
       "title": "AnalyzeRequest",
       "type": "object"

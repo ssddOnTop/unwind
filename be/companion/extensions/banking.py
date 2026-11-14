@@ -146,10 +146,10 @@ class BankingExtension:
         if operation=='project':
             self.live_versions={cid:i['generation'] for cid,i in private['items'].items() if i['connected']};self.live_epoch=state['data_epoch']
             return {'view':self.view(private,state),'context':self.context(private,state,now)}
-        if operation=='describe':return {'items':{cid:{k:i[k] for k in ('item_id','generation','connected')} for cid,i in private['items'].items()},'sessions':deepcopy(private['sessions'])}
+        if operation=='describe':return {'items':{cid:{**{k:i[k] for k in ('item_id','generation','connected')},'last_sync_at':i.get('last_sync_at'),'eligible':any(a['enabled'] and a['availability']=='available' for a in i['accounts'].values())} for cid,i in private['items'].items()},'sessions':deepcopy(private['sessions'])}
         if operation=='merge':
             body,outcome=payload['request'],payload['outcome'];action=body['action'];counts={'added':0,'modified':0,'removed':0};partial=False
-            observations=deepcopy(state['observations']);pattern_changes=[]
+            observations=deepcopy(state['observations']);pattern_changes=[];committed_sync_items=[]
             def session_ok(sid):
                 session=private['sessions'].get(sid)
                 if not session or session['cancelled']:raise DomainError('obsolete_selection',409)
@@ -185,11 +185,12 @@ class BankingExtension:
                     if not current or not current['connected'] or current['generation']!=payload['captured'].get(candidate['id']):partial=True;continue
                     private['items'][candidate['id']]=candidate;partial|=result['partial']
                     pattern_changes.extend(result.get('pattern_changes',[]))
+                    if not result['partial']:committed_sync_items.append(candidate['item_id'])
                     for o in result['observations']:
                         k=(o['id'],o['revision'])
                         if k not in input_keys and k not in present and o['local_date']>=cutoff:observations.append(o);present.add(k)
                     for k in counts:counts[k]+=result['counts'][k]
-            return {'vault':self.vault.seal(private),'observations':observations,'counts':counts,'partial':partial,'pattern_changes':pattern_changes}
+            return {'vault':self.vault.seal(private),'observations':observations,'counts':counts,'partial':partial,'pattern_changes':pattern_changes,'committed_sync_items':committed_sync_items}
         if operation=='prune':
             ids=set(payload['observation_ids'])
             for item in private['items'].values():
@@ -305,7 +306,7 @@ class BankingExtension:
             return {'item':item,'session_id':body['link_session_id']}
         if operation=='network' and action=='reconcile':return {'item':await self.inventory(item,now),'session_id':body['link_session_id']}
         if operation=='network' and action=='sync':
-            items=[i for i in private['items'].values() if i['connected'] and (body['connection_id'] is None or i['id']==body['connection_id'])]
+            items=[i for i in private['items'].values() if i['connected'] and (body['connection_id'] is None or i['id']==body['connection_id']) and (payload.get('sync_connection_ids') is None or i['id'] in payload['sync_connection_ids'])]
             if body['connection_id'] and not items:raise DomainError('not_found',404)
             outcomes=[]
             for original in items:

@@ -8,6 +8,7 @@ from .connections.plaid import PlaidFailure, StalePlaidOperation
 from .contracts import DomainError
 from .domain import active, defaults, iso, instant, preference_update
 from .plaid_contracts import validate_profile
+from . import banking_schedule as schedule
 
 
 class PlaidCoordinator:
@@ -69,12 +70,10 @@ class PlaidCoordinator:
             source = self.source(doc)
             if self.busy or not doc["meta"].get("plaid_connected") or not source["enabled"] or source["consent"] != "granted":
                 return
-            if source["last_attempt_at"] and self.service.clock() - instant(source["last_attempt_at"]) < timedelta(hours=24):
-                return
             body = {"schema_version": "1", "request_id": "plaid-daily:" + str(uuid4()),
                     "data_epoch": doc["state"]["data_epoch"], "action": "sync"}
         try:
-            return await self.request(body)
+            return await self.request(body,automatic=True)
         except DomainError:
             return None
 
@@ -90,7 +89,7 @@ class PlaidCoordinator:
             await self.request({"schema_version": "1", "request_id": "revoke:" + str(uuid4()),
                                 "data_epoch": body["data_epoch"], "action": "disconnect"})
 
-    async def request(self, body, *, admission_guard=None):
+    async def request(self, body, *, admission_guard=None, automatic=False):
         validate_profile("request", body)
         action = body["action"]
         service = self.service
@@ -142,6 +141,11 @@ class PlaidCoordinator:
                 if "plaid" not in enabled:
                     enabled.append("plaid")
                 doc["meta"]["fixture_session"] = False
+            sync_item_id=doc['meta'].get('plaid_item_id','legacy:'+doc['state']['data_epoch'])
+            if action=='sync':
+                due=schedule.next_due(doc,{'item_id':sync_item_id,'last_sync_at':source['last_success_at']},service.clock())
+                if automatic and due>service.clock():return {'deferred_until':iso(due)}
+                schedule.reserve(doc,sync_item_id,service.clock())
             source["last_attempt_at"] = iso(service.clock())
             doc["meta"]["plaid_inflight"] = action
             await service.evaluate(doc)
@@ -187,6 +191,7 @@ class PlaidCoordinator:
             doc = deepcopy(service.document)
             source = self.source(doc)
             doc["meta"].pop("plaid_inflight", None)
+            if action=='sync':schedule.finish(doc,sync_item_id,service.clock(),not failure and outcome.get('result',{}).get('status')=='complete')
             erase = action == "disconnect"
             if failure:
                 source.update(status="error", coverage="unknown", reason="Plaid Sandbox request unavailable; no partial data committed.")

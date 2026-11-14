@@ -1,5 +1,7 @@
 """PostgreSQL-only pattern repository, sharing the account persistence session and lock."""
 from contextlib import asynccontextmanager
+from copy import deepcopy
+from . import banking_schedule as schedule
 from uuid import uuid4
 from psycopg.types.json import Jsonb
 from .patterns import Aggregate, PatternOverview, aggregate, concerns, findings, empty_overview, model_review, VERSION
@@ -24,6 +26,7 @@ class PatternCoordinator:
     def __init__(self, service, persistence, model_factory=None):
         self.service,self.store=service,persistence
         if not hasattr(persistence,'pattern_active_runs'):persistence.pattern_active_runs=set()
+        if not hasattr(persistence,'pattern_request_lock'):persistence.pattern_request_lock=asyncio.Lock()
         if model_factory is None:
             from .connections.llm import create_chat_model
             model_factory=create_chat_model
@@ -63,7 +66,7 @@ class PatternCoordinator:
         if label[1] is not None:
             brief=('SYNTHETIC HEALTH DEMO — not medical evidence.\n' if is_demo else '')+'User-edited notes (not AI conclusions):\n'+label[1]
         eligible=await (await conn.execute("SELECT EXISTS(SELECT 1 FROM companion_private.pattern_batches b WHERE b.account_id=%s AND b.active AND (EXISTS(SELECT 1 FROM companion_private.health_samples h WHERE h.account_id=b.account_id AND h.batch_id=b.batch_id AND NOT h.deleted) OR EXISTS(SELECT 1 FROM companion_private.pattern_transactions t WHERE t.account_id=b.account_id AND t.batch_id=b.batch_id AND NOT t.deleted)))",(self.store.account_id,))).fetchone()
-        return PatternOverview(doctor_brief=brief,status=status,run_id=str(run_id),analyzed_at=at.isoformat(),engine=engine,is_demo=is_demo,can_analyze=eligible[0],
+        return PatternOverview(bank_refresh={'status':'not_requested','last_updated':schedule.last_full_success(self.service.document) if hasattr(self.service,'document') else None,'message':'Using saved bank data; no bank fetch requested.'},doctor_brief=brief,status=status,run_id=str(run_id),analyzed_at=at.isoformat(),engine=engine,is_demo=is_demo,can_analyze=eligible[0],
             source_label=label[0],
             evidence=dto,findings=cards).model_dump()
 
@@ -103,9 +106,64 @@ class PatternCoordinator:
                 await c.execute('UPDATE companion_private.pattern_runs SET brief_override=%s WHERE account_id=%s AND run_id=%s',(body.text,self.store.account_id,body.run_id))
                 return await self._view(c,row)
 
-    async def analyze(self, request_id):
+    async def execute(self, body):
+        """One durable user action: optional explicit bank refresh, then analysis.
+
+        A reservation precedes every external effect. Interrupted actions are
+        terminalized without replaying bank or model calls. A fresh request is
+        needed for a genuinely new user-authorized refresh attempt.
+        """
+        service=self.service;lock=self.store.pattern_request_lock
+        if lock.locked():raise DomainError('busy',409,'A pattern action is already running.')
+        async with lock:
+            payload=body.model_dump();epoch=body.data_epoch
+            async with service.lock:
+                if service.document['state']['data_epoch']!=epoch:raise DomainError('epoch_mismatch',409)
+                receipt=service.receipt('/patterns/v1/analyze',payload)
+                cached=await service.registry.dispatch('persistence','receipt',receipt)
+                if cached and cached['digest']!=receipt['digest']:raise DomainError('idempotency_conflict',409)
+                if cached and cached['response'] is not None:return cached['response']
+                interrupted=bool(cached)
+                if not interrupted:
+                    receipt['preserve_response']=True
+                    await service.commit(deepcopy(service.document),receipt,bump=False)
+            refresh={'status':'not_requested','last_updated':schedule.last_full_success(service.document),'message':'Using saved bank data; no bank fetch requested.'}
+            should_analyze=not interrupted
+            if interrupted:
+                refresh.update(status='failed',message='The previous action response expired or was interrupted. Bank and AI calls were not repeated; start a new action to retry.')
+            elif body.fetch_latest_bank_data:
+                bank=service.banking_coordinator
+                refresh.update(status='unavailable',message='No eligible linked bank is available. Analysis was not run.')
+                should_analyze=False
+                if bank is not None:
+                    try:
+                        async with service.lock:
+                            if service.document['state']['data_epoch']!=epoch:raise DomainError('epoch_mismatch',409)
+                            doc=service.document;items=(await bank.call('describe',bank.payload(doc)))['items']
+                            eligible=any(i['connected'] and i['eligible'] for i in items.values())
+                            request={'schema_version':'1','request_id':'pattern-bank:'+body.request_id,'data_epoch':epoch,
+                                     'expected_revision':doc['state']['revision'],'action':'sync','connection_id':None}
+                        if eligible:
+                            response=await bank.action(request,eligible_only=True)
+                            should_analyze=response['result']['status']=='complete'
+                            refresh.update(status='complete' if should_analyze else 'partial',
+                                message='Bank refresh committed before this analysis.' if should_analyze else 'Bank refresh was incomplete. Analysis was not run; saved findings may be older.')
+                    except asyncio.CancelledError:raise
+                    except Exception:
+                        refresh.update(status='failed',message='Bank refresh failed. Analysis was not run; saved findings may be older.')
+                refresh['last_updated']=schedule.last_full_success(service.document)
+            value=await self.analyze(body.request_id,expected_epoch=epoch) if should_analyze else await self.get()
+            value['bank_refresh']=refresh
+            async with service.lock:
+                if service.document['state']['data_epoch']!=epoch:raise DomainError('epoch_mismatch',409)
+                receipt.update(response=None if interrupted else value,preserve_response=True)
+                await service.commit(deepcopy(service.document),receipt,bump=False)
+            return value
+
+    async def analyze(self, request_id, expected_epoch=None):
         # Serializes admission with account erasure, source changes and native double taps.
         async with self.service.lock:
+            if expected_epoch is not None and self.service.document['state']['data_epoch']!=expected_epoch:raise DomainError('epoch_mismatch',409)
             account=self.store.account_id
             async with self.transaction() as c:
                 await self._recover_orphans(c)
