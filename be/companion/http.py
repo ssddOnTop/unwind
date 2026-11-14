@@ -80,10 +80,11 @@ class Boundary:
                 requests[('POST', '/patterns/v1/analyze')] = 'pattern_request'
                 requests[('POST', '/patterns/v1/clarify')] = 'pattern_clarify'
                 requests[('POST','/patterns/v1/brief')] = 'pattern_brief'
+                requests[('POST','/workflows/v1/enqueue')] = 'workflow_enqueue'
                 requests[('POST','/health/v1/samples')] = 'health_samples'
             if self.banking_profile:
                 requests[('POST','/banking/v1/actions')] = 'banking_request'
-            reads = {"/health", "/state"} | ({"/experience/v1", '/patterns/v1'} if self.experience_profile else set()) | ({'/banking/v1'} if self.banking_profile else set())
+            reads = {"/health", "/state"} | ({"/experience/v1", '/patterns/v1', '/workflows/v1'} if self.experience_profile else set()) | ({'/banking/v1'} if self.banking_profile else set())
             if scope.get("query_string") and scope["path"] in {*reads, *(r[1] for r in requests)}:
                 raise DomainError()
             chunks, size = [], 0
@@ -120,6 +121,10 @@ class Boundary:
                     from .health_ingestion import HealthIngestRequest
                     try: HealthIngestRequest.model_validate_json(raw)
                     except Exception: raise DomainError() from None
+                elif route == ('POST','/workflows/v1/enqueue'):
+                    from .workflow_contracts import EnqueueRequest
+                    try:EnqueueRequest.model_validate(body)
+                    except Exception:raise DomainError() from None
                 elif route in {('POST','/patterns/v1/analyze'),('POST','/patterns/v1/clarify'),('POST','/patterns/v1/brief')}:
                     from .patterns import AnalyzeRequest, ClarifyRequest, BriefRequest
                     try: ({'/patterns/v1/analyze':AnalyzeRequest,'/patterns/v1/clarify':ClarifyRequest,'/patterns/v1/brief':BriefRequest}[route[1]]).model_validate(body)
@@ -244,6 +249,7 @@ def create_app(data_dir: Path | None = None, *, replacements=None, scheduler=Non
 
     @app.post("/process", response_model=state_model, responses=errors)
     async def process(body: ProcessRequest):
+        if getattr(service,'workflow_queue',None) is not None and body.synthesis_mode!='disabled':raise DomainError('consent_required',403,'AI review runs only through the queued workflow.')
         return await service.mutate("/process", body.model_dump())
 
     @app.post("/demo", response_model=state_model, responses=errors)
@@ -283,7 +289,23 @@ def create_app(data_dir: Path | None = None, *, replacements=None, scheduler=Non
 
         @app.post('/patterns/v1/analyze', response_model=PatternOverview, responses=experience_errors)
         async def analyze_patterns(body: AnalyzeRequest):
-            return await patterns().execute(body)
+            raise DomainError('consent_required',403,'Direct manual analysis is disabled. Use the authorized workflow action.')
+
+        from .workflow_contracts import WorkflowOverview,EnqueueRequest
+
+        def workflows():
+            queue=getattr(service,'workflow_queue',None)
+            if queue is None:raise DomainError('not_configured',409)
+            return queue
+
+        @app.get('/workflows/v1',response_model=WorkflowOverview,responses=experience_errors)
+        async def workflow_overview():
+            return await workflows().view(service.workflow_account,service)
+
+        @app.post('/workflows/v1/enqueue',response_model=WorkflowOverview,responses=experience_errors)
+        async def workflow_enqueue(body: EnqueueRequest):
+            await workflows().enqueue(service.workflow_account,body.request_id,body.data_epoch,'self')
+            return await workflows().view(service.workflow_account,service)
 
         @app.post('/patterns/v1/clarify', response_model=PatternOverview, responses=experience_errors)
         async def clarify_pattern(body: ClarifyRequest):

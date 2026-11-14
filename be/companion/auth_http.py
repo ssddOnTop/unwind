@@ -89,7 +89,7 @@ class _Gateway:
             self.routes.add(("POST", "/connections/plaid"))
         if experience_profile:
             self.routes.update({("GET", "/experience/v1"), ("POST", "/experience/v1/answers"),
-                ('POST','/health/v1/samples'), ('GET','/patterns/v1'), ('POST','/patterns/v1/analyze'), ('POST','/patterns/v1/clarify'), ('POST','/patterns/v1/brief')})
+                ('POST','/health/v1/samples'), ('GET','/patterns/v1'), ('POST','/patterns/v1/analyze'), ('POST','/patterns/v1/clarify'), ('POST','/patterns/v1/brief'),('GET','/workflows/v1'),('POST','/workflows/v1/enqueue')})
         if banking_profile:
             self.routes.update({('GET','/banking/v1'),('POST','/banking/v1/actions')})
         if webhook_receiver is not None:
@@ -196,13 +196,14 @@ class _Gateway:
                 await JSONResponse({"schema_version": "1", "issuer": principal.issuer,
                     "subject": principal.subject}, headers=_CACHE_HEADERS)(scope, receive, safe_send)
                 return
-            handle = await self.accounts.service_for(principal)
-            # Identity is server-owned scope metadata only, never a synthetic
-            # client header. Do not pass bearer/cookies or caller-selected owners.
-            child_scope = {**scope, "state": {"principal": principal, "account_id": handle.account_id},
-                "headers": [(k, v) for k, v in scope.get("headers", [])
-                            if k.lower() in {b"host", b"content-type", b"content-length", b"accept", b"accept-encoding"}]}
-            await handle.service.app(child_scope, receive, safe_send)
+            async def dispatch(handle):
+                child_scope = {**scope, "state": {"principal": principal, "account_id": handle.account_id},
+                    "headers": [(k, v) for k, v in scope.get("headers", [])
+                                if k.lower() in {b"host", b"content-type", b"content-length", b"accept", b"accept-encoding"}]}
+                await handle.service.app(child_scope, receive, safe_send)
+            if hasattr(self.accounts,'borrow'):
+                async with self.accounts.borrow(principal) as handle:await dispatch(handle)
+            else:await dispatch(await self.accounts.service_for(principal))
         except AuthError as exc:
             if not started:
                 await _error(exc.code, exc.status_code)(scope, receive, safe_send)
@@ -237,7 +238,7 @@ def create_authenticated_app(auth_root: Path, *, auth_config: AuthConfig | None 
         plaid_profile=False, experience_profile=False, max_accounts=128,
         postgres_runtime=None, webhook_url=None, webhook_verifier=None,
         replacements_factory=None, webhook_worker_enabled=True, banking_profile=False,
-        allowed_hosts=LOOPBACK_HOSTS) -> FastAPI:
+        allowed_hosts=LOOPBACK_HOSTS, workflow_config=None, workflow_worker_enabled=True) -> FastAPI:
     """Build an explicitly authenticated app without initializing user storage.
 
     Supply auth_config or a configured verifier (both must agree if supplied).
@@ -271,6 +272,12 @@ def create_authenticated_app(auth_root: Path, *, auth_config: AuthConfig | None 
         raise ValueError('Webhooks require PostgreSQL and the Sandbox profile.')
     children, services = WeakSet(), WeakSet()
 
+    from .workflow_contracts import WorkflowConfig
+    from .workflows import WorkflowQueue,WorkflowWorker
+    workflow_config=workflow_config or WorkflowConfig.from_env()
+    workflow_queue=WorkflowQueue(postgres_runtime,workflow_config,clock) if postgres_runtime is not None and experience_profile else None
+    if workflow_config.enabled and workflow_queue is None:raise ValueError('Workflows require authenticated PostgreSQL experience')
+
     async def child_service(path: Path):
         if service_factory is None:
             replacements = replacements_factory(path) if replacements_factory else {}
@@ -291,6 +298,8 @@ def create_authenticated_app(auth_root: Path, *, auth_config: AuthConfig | None 
         if postgres_runtime is not None and experience_profile:
             from .pattern_store import PatternCoordinator
             child.state.service.pattern_coordinator = PatternCoordinator(child.state.service, replacements['persistence'])
+            child.state.service.workflow_queue=workflow_queue
+            child.state.service.workflow_account=path.name
         # Reject accidentally shared application/service before starting it.
         if child in children or child.state.service in services:
             raise AccountError()
@@ -304,6 +313,7 @@ def create_authenticated_app(auth_root: Path, *, auth_config: AuthConfig | None 
         from .postgres_accounts import PostgresAccountManager
         accounts = PostgresAccountManager(auth_root, child_service, postgres_runtime,
             max_accounts=min(max_accounts, 8, max(1, postgres_runtime.config.max_connections//2)))
+    nightly=WorkflowWorker(workflow_queue,accounts) if workflow_queue and workflow_config.enabled else None
     receiver, worker, inbox = None, None, None
     if webhook_url:
         from .plaid_webhooks import PlaidWebhookVerifier
@@ -314,8 +324,10 @@ def create_authenticated_app(auth_root: Path, *, auth_config: AuthConfig | None 
         webhook_verifier = webhook_verifier or PlaidWebhookVerifier(SandboxVerificationKeys(PlaidSandboxClient(SandboxCredentials.from_environment())))
         receiver = WebhookReceiver(webhook_verifier, inbox)
         async def sync_job(job):
-            handle = await accounts.service_for_account(job['account_id'])
-            service = handle.service.app.state.service
+            async with accounts.borrow_account(job['account_id'],temporary=True) as handle:
+                return await sync_job_with_service(job,handle.service.app.state.service)
+
+        async def sync_job_with_service(job,service):
             if service.banking_coordinator is not None:
                 async def bank_guard():
                     return bool(service.document['state']['data_epoch']==job['epoch'] and await inbox.current(job))
@@ -345,11 +357,13 @@ def create_authenticated_app(auth_root: Path, *, auth_config: AuthConfig | None 
         try:
             if postgres_runtime is not None:
                 await postgres_runtime.check()
+            if nightly is not None and workflow_worker_enabled:await nightly.start()
             if worker is not None and webhook_worker_enabled:
                 await worker.start()
             yield
         finally:
             gateway._closing = True
+            if nightly is not None:await nightly.close()
             if worker is not None:
                 await worker.close()
                 await webhook_verifier.aclose()
@@ -359,6 +373,7 @@ def create_authenticated_app(auth_root: Path, *, auth_config: AuthConfig | None 
 
     app = FastAPI(title="Authenticated Companion", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
+    app.state.workflow_queue,app.state.workflow_worker=workflow_queue,nightly
     app.state.accounts, app.state.verifier = accounts, verifier
     app.state.webhook_inbox, app.state.webhook_worker = inbox, worker
     app.add_middleware(_Boundary, gateway=gateway)

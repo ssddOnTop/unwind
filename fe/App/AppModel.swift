@@ -11,9 +11,9 @@ import CompanionCore
     @Published private(set) var patternBusy = false
     @Published private(set) var healthProgress: String?
     @Published private(set) var patternMessage: String?
-    @Published var fetchLatestBankData = false
+    @Published private(set) var workflowOverview: WorkflowOverview?
+    private var workflowPollTask: Task<Void, Never>?
     var patternRetryPending: Bool { patternRequestID != nil }
-    private var patternRequestFetch = false
     private var patternRequestID: String?
     @Published private(set) var busy = false
     @Published var message: String?
@@ -55,7 +55,7 @@ import CompanionCore
         plaidUpdates = plaid?.objectWillChange.sink { [weak self] _ in Task { @MainActor in self?.objectWillChange.send() } }
     }
     func hideForAdmission() {
-        admissionBlocked = true; connected = false; experience = nil; patternOverview = nil; patternRequestID = nil; fetchLatestBankData = false; snapshot = LocalSnapshot()
+        admissionBlocked = true; connected = false; experience = nil; patternOverview = nil; patternRequestID = nil; workflowOverview = nil; workflowPollTask?.cancel(); snapshot = LocalSnapshot()
         health.cancelAll(); reminders.cancelAll(); plaid?.pauseForAdmission(); banking.pauseForAdmission()
     }
     func allowAdmittedUpdates() { admissionBlocked = false; banking.admissionRestored() }
@@ -66,7 +66,7 @@ import CompanionCore
         health.cancelAll()
         if cancelReminders { reminders.cancelAll() } else { reminders.suspendCallbacks() }
         client.invalidateSession()
-        snapshot = LocalSnapshot(); experience = nil; patternOverview = nil; patternRequestID = nil; fetchLatestBankData = false; patternMessage = nil; message = nil; connected = false
+        snapshot = LocalSnapshot(); experience = nil; patternOverview = nil; patternRequestID = nil; workflowOverview = nil; workflowPollTask?.cancel(); patternMessage = nil; message = nil; connected = false
     }
     private func publish() {
         guard active, !admissionBlocked else { return }
@@ -77,7 +77,7 @@ import CompanionCore
             experience = nil; reminders.cancelAll()
         }
         if epoch != nil && epoch != snapshot.state?.data_epoch {
-            patternOverview = nil; patternRequestID = nil; fetchLatestBankData = false
+            patternOverview = nil; patternRequestID = nil; workflowOverview = nil; workflowPollTask?.cancel()
             plaid?.cancel("Records were reset. Reconnect explicitly if needed."); banking.cancelForLifecycle()
         }
     }
@@ -93,7 +93,9 @@ import CompanionCore
             }
             guard active, !admissionBlocked else { return }
             experience = value; connected = true
-            patternOverview = try? await client.patterns()
+            workflowOverview = try? await client.workflows()
+            patternOverview = workflowOverview?.report
+            pollWorkflow()
             guard active, !admissionBlocked else { patternOverview = nil; return }
             try await reminders.reconcile(state: state, locallyBlocked: hasPending)
             notificationPermission = reminders.permission
@@ -102,19 +104,36 @@ import CompanionCore
             experience = nil; message = "Your overview couldn’t be loaded. Try refreshing."
         }
     }
+    func workflowPage(_ id: String) -> WorkflowPage? { workflowOverview?.pages.first { $0.id == id } }
     func analyzePatterns() async {
-        guard active, !admissionBlocked, !busy, !patternBusy, !hasPending else { return }
+        guard active, !admissionBlocked, !busy, !hasPending, workflowOverview?.action?.id == "enqueue" else { return }
         patternBusy = true; busy = true; patternMessage = nil
         defer { patternBusy = false; busy = false }
-        if patternRequestID == nil { patternRequestID = UUID().uuidString; patternRequestFetch = fetchLatestBankData }
+        if patternRequestID == nil { patternRequestID = UUID().uuidString }
         do {
-            let value = try await client.patterns(requestID: patternRequestID, fetchLatestBankData: patternRequestFetch)
+            let value = try await client.workflows(requestID: patternRequestID)
             guard active, !admissionBlocked else { return }
-            patternOverview = value; patternRequestID = nil
+            workflowOverview = value; patternOverview = value.report; patternRequestID = nil
+            pollWorkflow()
         } catch {
             guard active, !admissionBlocked else { return }
-            // Keep the same request ID for an ambiguous transport retry.
-            patternMessage = "Pattern review couldn’t be loaded. Retry safely with the same request."
+            patternMessage = "Workflow status is unavailable. Retry keeps the same request."
+        }
+    }
+    private func pollWorkflow() {
+        workflowPollTask?.cancel()
+        guard let status = workflowOverview?.job?.status, ["queued", "running"].contains(status) else { return }
+        workflowPollTask = Task { [weak self] in
+            for _ in 0..<120 {
+                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                guard let self, self.active, !self.admissionBlocked, !Task.isCancelled else { return }
+                do {
+                    let value = try await self.client.workflows()
+                    guard self.active, !self.admissionBlocked, !Task.isCancelled else { return }
+                    self.workflowOverview = value; self.patternOverview = value.report
+                    if !["queued", "running"].contains(value.job?.status ?? "") { return }
+                } catch { return } // Offline or admission change: explicit refresh can resume status reads.
+            }
         }
     }
     func clarifyPattern(_ concernID: String, attribution: String) async {
@@ -193,7 +212,7 @@ import CompanionCore
         await perform(preferReceivedExperience: true) { client in try await submit(request, path: "/experience/v1/answers", client: client) }
     }
     func deleteData() async {
-        banking.cancelForLifecycle(); plaid?.cancel("Deletion requested. Connection work stopped."); health.cancelAll(); reminders.cancelAll(); experience = nil; patternOverview = nil; patternRequestID = nil; fetchLatestBankData = false
+        banking.cancelForLifecycle(); plaid?.cancel("Deletion requested. Connection work stopped."); health.cancelAll(); reminders.cancelAll(); experience = nil; patternOverview = nil; patternRequestID = nil; workflowOverview = nil; workflowPollTask?.cancel()
         await perform { client in
             guard let current = client.snapshot.state else { throw ClientFailure.noState }
             try await submit(DeleteRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: current.data_epoch, confirm: "delete_all"), path: "/data", method: "DELETE", replacingQueue: true, client: client)

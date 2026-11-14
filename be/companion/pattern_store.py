@@ -27,6 +27,7 @@ class PatternCoordinator:
         self.service,self.store=service,persistence
         if not hasattr(persistence,'pattern_active_runs'):persistence.pattern_active_runs=set()
         if not hasattr(persistence,'pattern_request_lock'):persistence.pattern_request_lock=asyncio.Lock()
+        if not hasattr(persistence,'pattern_analysis_lock'):persistence.pattern_analysis_lock=asyncio.Lock()
         if model_factory is None:
             from .connections.llm import create_chat_model
             model_factory=create_chat_model
@@ -160,10 +161,18 @@ class PatternCoordinator:
                 await service.commit(deepcopy(service.document),receipt,bump=False)
             return value
 
-    async def analyze(self, request_id, expected_epoch=None):
+    async def analyze(self, request_id, expected_epoch=None, require_consent=False, expected_consent=None):
+        # Serialize reviews without blocking consent changes or account deletion during I/O.
+        async with self.store.pattern_analysis_lock:
+            return await self._analyze(request_id,expected_epoch,require_consent,expected_consent)
+
+    async def _analyze(self, request_id, expected_epoch=None, require_consent=False, expected_consent=None):
         # Serializes admission with account erasure, source changes and native double taps.
         async with self.service.lock:
             if expected_epoch is not None and self.service.document['state']['data_epoch']!=expected_epoch:raise DomainError('epoch_mismatch',409)
+            if require_consent:
+                from .workflow_contracts import eligible,consent_key
+                if not eligible(self.service.document) or expected_consent is not None and consent_key(self.service.document)!=expected_consent:raise DomainError('consent_required',403)
             account=self.store.account_id
             async with self.transaction() as c:
                 await self._recover_orphans(c)
@@ -194,18 +203,23 @@ class PatternCoordinator:
                     await c.execute('INSERT INTO companion_private.pattern_insights(account_id,run_id,concern_id,rank) VALUES(%s,%s,%s,%s)',(account,run,i,rank))
             # No transaction is held across network I/O. The durable reservation forbids transport retry calls.
             self.store.pattern_active_runs.add(run)
+        try:
+            status,engine='unavailable','deterministic'
+            cancelled=False
             try:
-                status,engine='unavailable','deterministic'
-                cancelled=False
-                try:
-                    from langsmith import tracing_context
-                    with tracing_context(enabled=False):
-                        ids=await model_review(dto,ids,self.model_factory)
-                    status,engine='complete','LLMassisted' if ids else 'deterministic'
-                except asyncio.CancelledError:
-                    cancelled=True
-                except Exception:
-                    pass  # Never log private provider payloads or prompts.
+                from langsmith import tracing_context
+                with tracing_context(enabled=False):
+                    ids=await model_review(dto,ids,self.model_factory)
+                status,engine='complete','LLMassisted' if ids else 'deterministic'
+            except asyncio.CancelledError:
+                cancelled=True
+            except Exception:
+                pass  # Never log private provider payloads or prompts.
+            async with self.service.lock:
+                if expected_epoch is not None and self.service.document['state']['data_epoch']!=expected_epoch:raise DomainError('epoch_mismatch',409)
+                if require_consent:
+                    from .workflow_contracts import eligible,consent_key
+                    if not eligible(self.service.document) or expected_consent is not None and consent_key(self.service.document)!=expected_consent:raise DomainError('consent_required',403)
                 async with self.transaction() as c:
                     await c.execute('UPDATE companion_private.pattern_runs SET status=%s,engine=%s WHERE account_id=%s AND run_id=%s',(status,engine,account,run))
                     # Remove old ranks before inserting the validated permutation.
@@ -214,7 +228,7 @@ class PatternCoordinator:
                         await c.execute('INSERT INTO companion_private.pattern_insights(account_id,run_id,concern_id,rank) VALUES(%s,%s,%s,%s)',(account,run,i,rank))
                     row=await (await c.execute('SELECT run_id,status,engine,analyzed_at,evidence,is_demo FROM companion_private.pattern_runs WHERE account_id=%s AND run_id=%s',(account,run))).fetchone()
                     result=await self._view(c,row)
-                if cancelled: raise asyncio.CancelledError
-                return result
-            finally:
-                self.store.pattern_active_runs.discard(run)
+            if cancelled: raise asyncio.CancelledError
+            return result
+        finally:
+            self.store.pattern_active_runs.discard(run)

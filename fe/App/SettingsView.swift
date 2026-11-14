@@ -41,7 +41,11 @@ struct SettingsView: View {
                 } header: {
                     HStack { Text("Reminders"); Spacer(); AccessibleInfoPopover(title: "Reminders", message: "Optional, generic reminders. Turning them off cancels reminders from this app; iOS permission can be changed in iOS Settings. Delivery is never guaranteed.") }
                 }
+                if let page = model.workflowPage("settings") {
+                    Section(page.title) { ForEach(page.paragraphs, id: \.self) { Text(verbatim: $0).font(.caption) } }
+                }
                 CloudConsentSection(isEnabled: model.state?.preferences.cloud_consent ?? false, isBusy: model.busy || model.hasPending || model.state == nil,
+                    label: model.workflowOverview?.consent_label ?? "Cloud review", notice: model.workflowOverview?.consent_notice ?? "Refresh to read the server’s cloud review policy.",
                     onChange: { value in if value { cloudConsent = true } else { Task { await model.setCloudConsent(false) } } })
                 Section {
                     Button("Preferences") { Task { await model.refresh(); if model.state != nil && !model.hasPending { editing = true } } }
@@ -50,7 +54,7 @@ struct SettingsView: View {
                     NavigationLink("Suggestion tools") { SuggestionToolsView(model: model) }
                     Button("Manage account", action: manageAccount)
                     Button("Sign out", role: .destructive) { confirmSignOut = true }
-                    HStack { Text("Your signed-in account"); Spacer(); AccessibleInfoPopover(title: "Your privacy", message: "Sign-in is required. Connections remain optional and separate from cloud consent. This app stores normalized records locally with file protection and backup exclusion. Bank connections currently use synthetic Sandbox data. No provider keys or iCloud writes are used here.") }
+                    HStack { Text("Your signed-in account"); Spacer(); AccessibleInfoPopover(title: "Your privacy", message: model.workflowPage("settings")?.paragraphs.joined(separator: "\n\n") ?? "Refresh to read the server’s data policy.") }
                 }
             }.navigationTitle("Settings").accessibilityIdentifier("app.settings")
                 .navigationDestination(isPresented: $bankAccountsPresented) { BankingScreen(controller: model.banking) }
@@ -62,20 +66,18 @@ struct SettingsView: View {
                 .confirmationDialog("Allow cloud suggestions?", isPresented: $cloudConsent, titleVisibility: .visible) {
                     Button("Allow eligible records to be shared") { Task { await model.setCloudConsent(true) } }
                     Button("Cancel", role: .cancel) {}
-                } message: { Text("Eligible server-provided records may be sent to an external AI service for optional wording. This does not authorize live Apple Health sharing. You can turn this off here anytime.") }
+                } message: { Text(verbatim: model.workflowOverview?.consent_notice ?? "Refresh to read the server’s cloud review policy.") }
         }
     }
 }
 
 private struct SuggestionToolsView: View {
     @ObservedObject var model: AppModel
-    @SwiftUI.State private var cloud = false
     var body: some View {
         List {
             Section("Update observations") {
                 Button("Update observations") { Task { await model.process() } }.accessibilityIdentifier("Recompute on backend (no AI)")
-                Button("Create cloud suggestions") { cloud = true }
-                    .disabled(!(model.state?.preferences.cloud_consent ?? false) || (model.state?.observations.contains { $0.mode == "live" } ?? true))
+                if let page = model.workflowPage("settings") { ForEach(page.paragraphs, id: \.self) { Text(verbatim: $0) } }
                 AccessibleInfoPopover(title: "Suggestions", message: "Observations use deterministic rules. Optional cloud wording uses a backend-configured free model, never paid fallback. If unavailable or rate limited, the observations remain available. Cloud consent is separate in Settings.")
                 if let synthesis = model.state?.process.synthesis {
                     if synthesis.status == "running" { ProgressView("Preparing suggestions…") }
@@ -83,10 +85,7 @@ private struct SuggestionToolsView: View {
                 }
             }.disabled(model.busy || model.hasPending || model.state == nil)
         }.navigationTitle("Suggestion tools")
-            .confirmationDialog("Create optional cloud wording?", isPresented: $cloud, titleVisibility: .visible) {
-                Button("Create suggestions") { Task { await model.processLive() } }
-                Button("Cancel", role: .cancel) {}
-            } message: { Text("Only consented eligible Sandbox coverage summaries may be sent. Your observations remain available if the service cannot respond.") }
+
     }
 }
 

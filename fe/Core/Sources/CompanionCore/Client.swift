@@ -193,6 +193,16 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
         throw ClientFailure.rejected(envelope.error.code, envelope.error.retryable)
     }
     /// Explicit manual review, never queued, scheduled or automatically transport-retried.
+    public func workflows(requestID: String? = nil) async throws -> WorkflowOverview {
+        try validateSession()
+        guard !busy, snapshot.outbox.isEmpty else { throw ClientFailure.busy }
+        guard let epoch = snapshot.state?.data_epoch else { throw ClientFailure.noState }
+        let body = try requestID.map { try Wire.encode(EnqueueRequest(schema_version: "1", request_id: $0, data_epoch: epoch)) }
+        let value = try Wire.decode(WorkflowOverview.self, await send(request(path: requestID == nil ? "/workflows/v1" : "/workflows/v1/enqueue", method: requestID == nil ? "GET" : "POST", body: body)))
+        try validateSession()
+        guard epoch == snapshot.state?.data_epoch else { throw ClientFailure.invalidResponse }
+        return value
+    }
     public func patterns(requestID: String? = nil, fetchLatestBankData: Bool = false) async throws -> PatternOverview {
         try validateSession()
         guard !busy, snapshot.outbox.isEmpty else { throw ClientFailure.busy }

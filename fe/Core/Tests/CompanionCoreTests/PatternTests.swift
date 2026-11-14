@@ -29,6 +29,7 @@ private func patternFixture() throws -> PatternOverview {
         requests.append(request)
         if request.url?.path == "/state" { return HTTPResult(status: 200, body: try Wire.encode(fixture())) }
         if fail { throw URLError(.networkConnectionLost) }
+        if request.url?.path.hasPrefix("/workflows/v1") == true { return HTTPResult(status: 200, body: try Wire.encode(workflowFixture())) }
         return HTTPResult(status: 200, body: try Wire.encode(patternFixture()))
     }
 }
@@ -65,8 +66,7 @@ private func patternFixture() throws -> PatternOverview {
     let http = PatternHTTP(), client = try CompanionClient(storage: storage, transport: http)
     try await client.refresh()
     let model = AppModel(client: client, accountNamespace: "private-test")
-    #expect(!model.fetchLatestBankData)
-    model.fetchLatestBankData = true
+    #expect(model.workflowOverview?.action == nil)
     _ = try await client.patterns(requestID: UUID().uuidString, fetchLatestBankData: true)
     let body = try #require(http.requests.last?.httpBody)
     let object = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
@@ -79,5 +79,39 @@ private func patternFixture() throws -> PatternOverview {
     value.bank_refresh.status = "pretend_fresh"
     #expect(throws: (any Error).self) { try Wire.decode(PatternOverview.self, Wire.encode(value)) }
     model.hideForAdmission()
-    #expect(!model.fetchLatestBankData)
+    #expect(model.workflowOverview == nil)
+}
+
+
+private func workflowFixture() throws -> WorkflowOverview {
+    WorkflowOverview(schema_version: "1", enabled: true, eligible: true, next_scheduled_at: "2026-11-15T00:00:00Z", consent_label: "Allow nightly review", consent_notice: "Coarse summaries only.", action: nil,
+        pages: [WorkflowPage(id: "home", title: "Server-owned title", paragraphs: ["Nightly at 00:00 UTC."])],
+        questions: [WorkflowQuestion(id: "attribution", label: "Server question", choices: [WorkflowChoice(id: "unsure", label: "Not sure")])],
+        job: nil, report: try patternFixture())
+}
+
+@Test @MainActor func workflowQueueRequestIsSelfOnlyAndStrictWithoutClientModelOrFetchFlags() async throws {
+    let storage = temporaryStorage(); defer { try? FileManager.default.removeItem(at: storage.directory) }
+    let http = PatternHTTP(), client = try CompanionClient(storage: storage, transport: http)
+    try await client.refresh()
+    let normal = try await client.workflows()
+    #expect(normal.action == nil)
+    #expect(normal.pages.first?.title == "Server-owned title")
+    let id = UUID().uuidString
+    _ = try await client.workflows(requestID: id)
+    let first = try #require(http.requests.last?.httpBody)
+    let body = try #require(JSONSerialization.jsonObject(with: first) as? [String: Any])
+    #expect(Set(body.keys) == ["schema_version", "request_id", "data_epoch"])
+    #expect(body["data_epoch"] as? String == client.snapshot.state?.data_epoch)
+    _ = try await client.workflows(requestID: id)
+    #expect(http.requests.last?.httpBody == first)
+    #expect(client.snapshot.outbox.isEmpty)
+    var invalid = try dictionary(normal)
+    invalid["target_account"] = "forbidden"
+    #expect(throws: (any Error).self) { try Wire.decode(WorkflowOverview.self, JSONSerialization.data(withJSONObject: invalid)) }
+    invalid = try dictionary(normal); invalid["action"] = ["id":"execute_script", "label":"Forbidden"]
+    #expect(throws: (any Error).self) { try Wire.decode(WorkflowOverview.self, JSONSerialization.data(withJSONObject: invalid)) }
+    client.invalidateSession();let before = http.requests.count
+    await #expect(throws: (any Error).self) { try await client.workflows(requestID: id) }
+    #expect(http.requests.count == before)
 }

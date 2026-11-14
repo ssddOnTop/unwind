@@ -200,11 +200,14 @@ async def test_authenticated_http_vertical_slice_and_delete(pg_dsn,tmp_path):
         account_handle=await h.handle('a')
         model=Model();account_handle.service.app.state.service.pattern_coordinator.model_factory=lambda:model
         request={'schema_version':'1','request_id':str(uuid4()),'data_epoch':account_handle.service.app.state.service.document['state']['data_epoch'],'fetch_latest_bank_data':False}
-        response=await client.post('/patterns/v1/analyze',headers=h.headers('a'),json=request)
+        assert (await client.post('/patterns/v1/analyze',headers=h.headers('a'),json=request)).status_code==403
+        # Legacy core replay remains covered internally; the app must use the authorized queue.
+        from test_banking_schedule import internal_post
+        response=await internal_post(h,request)
         assert response.status_code==200,response.text
         PatternOverview.model_validate(response.json())
         assert response.json()['engine']=='LLMassisted' and len(model.calls)==1
-        assert (await client.post('/patterns/v1/analyze',headers=h.headers('a'),json=request)).json()==response.json()
+        assert (await internal_post(h,request)).json()==response.json()
         assert (await client.get('/patterns/v1',headers=h.headers('b'))).json()['findings']==[]
         assert (await client.post('/patterns/v1/analyze',headers=h.headers('a'),json={**request,'account_id':a})).status_code==422
         state=(await client.get('/state',headers=h.headers('a'))).json()
@@ -261,6 +264,9 @@ def test_published_contract_matches_typed_allowlist_and_response():
     defs['Request']=AnalyzeRequest.model_json_schema();defs['ClarifyRequest']=ClarifyRequest.model_json_schema();defs['BriefRequest']=BriefRequest.model_json_schema()
     from companion.health_ingestion import HealthIngestRequest
     h=HealthIngestRequest.model_json_schema();defs.update(h.pop('$defs'));defs['HealthIngestRequest']=h
+    from companion.workflow_contracts import WorkflowOverview,EnqueueRequest
+    w=WorkflowOverview.model_json_schema();defs.update(w.pop('$defs'));defs.pop('PatternOverview',None);defs['WorkflowOverview']=w;defs['EnqueueRequest']=EnqueueRequest.model_json_schema()
+    defs=json.loads(json.dumps(defs).replace('#/$defs/PatternOverview','#/$defs/Overview'))
     published=json.loads((Path(__file__).resolve().parents[2]/'contracts/patterns.schema.json').read_text())
     assert published['$defs']==defs
     _,s,t=generate(NOW);dto=aggregate(s,t,NOW).model_dump()
