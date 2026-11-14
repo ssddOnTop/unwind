@@ -1,0 +1,89 @@
+{
+  "schema_version": "1",
+  "rule_version": "1.0.0",
+  "purpose": "Deterministic operational product settings; NOT clinical thresholds, risk scores, or validated health recommendations.",
+  "demo": {
+    "fixture_set": "representative-v1",
+    "evaluation_date": "2026-11-14",
+    "now_utc": "2026-11-14T12:00:00Z",
+    "timezone": "America/New_York"
+  },
+  "purchase_recurrence": {
+    "scenario_id": "purchase_recurrence",
+    "window_days_including_today": 28,
+    "category": "restaurant",
+    "minimum_distinct_dates": 3,
+    "minimum_span_days": 14,
+    "eligible_lifecycle": "posted",
+    "exclude_refunds": true,
+    "exclude_superseded": true,
+    "personal_suggestion_attributions": [
+      "self"
+    ],
+    "excluded_suggestion_attributions": [
+      "shared",
+      "other",
+      "unknown"
+    ],
+    "suggestion_id": "purchase_recurrence.plan",
+    "suggestion_requires_kitchen": false,
+    "suggestion_requires_spending": false,
+    "insufficient_text": "There are not enough distinct purchase dates in the available records to describe a recurring purchase pattern."
+  },
+  "recorded_steps": {
+    "scenario_id": "recorded_steps",
+    "completed_local_days": 7,
+    "metric": "steps",
+    "unit": "count",
+    "impute_missing_zero": false,
+    "extrapolate": false,
+    "sum_overlapping_sources": false,
+    "coverage_default": "unknown",
+    "suggestion_id": "recorded_steps.movement",
+    "suggestion_requires_movement": true,
+    "empty_text": "No activity records are available for this period. This does not mean you were inactive."
+  },
+  "preference_filter": {
+    "scenario_id": "preference_filter",
+    "apply_immediately": true,
+    "retain_original_evidence": true,
+    "free_text_creates_rules": false,
+    "no_compatible_text": "No suggestion fits your current preferences. We will not replace it with an incompatible recommendation."
+  },
+  "notifications": {
+    "maximum_new_intents_per_local_day": 1,
+    "same_suggestion_cooldown_days": 7,
+    "priority": [
+      "purchase_recurrence",
+      "recorded_steps"
+    ],
+    "generic_lock_screen_text_only": true,
+    "schedule_next_day_if_time_passed": false,
+    "dst_nonexistent": "skip_day",
+    "dst_repeated": "first_occurrence",
+    "cancel_on_suppression_or_revocation": true
+  },
+  "synthesis": {
+    "engine": "deepagents",
+    "modes": [
+      "disabled",
+      "scripted",
+      "live"
+    ],
+    "no_credentials_status": "skipped",
+    "no_credentials_reason": "no_credentials",
+    "may_mutate_ledger": false,
+    "may_schedule_notifications": false,
+    "live_health_data_enabled": false,
+    "maximum_run_seconds": 30,
+    "maximum_model_calls": 4,
+    "maximum_tool_calls": 4,
+    "maximum_input_tokens": 8000,
+    "maximum_output_tokens": 1000
+  },
+  "retention": {
+    "observation_days": 90,
+    "raw_private_payloads_allowed": false,
+    "delete_all_cascades": true
+  }
+}

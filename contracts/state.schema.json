@@ -1,0 +1,1688 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Local Companion v1 State",
+  "description": "State root; $defs also freeze all request/response payloads. Runtime semantic checks in v1.md are mandatory.",
+  "type": "object",
+  "$ref": "#/$defs/state",
+  "$defs": {
+    "evidence_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "observation_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "observation_id",
+        "revision"
+      ]
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "start_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "end_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "start_date",
+        "end_date",
+        "timezone"
+      ]
+    },
+    "preferences": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "food_suggestions": {
+          "type": "boolean"
+        },
+        "activity_suggestions": {
+          "type": "boolean"
+        },
+        "suppressed_scenario_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "purchase_recurrence",
+              "recorded_steps",
+              "preference_filter"
+            ]
+          }
+        },
+        "enabled_source_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "demo",
+              "healthkit",
+              "plaid",
+              "email"
+            ]
+          }
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notifications": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "local_time": {
+              "type": "string",
+              "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+            }
+          },
+          "required": [
+            "enabled",
+            "local_time"
+          ]
+        },
+        "no_kitchen": {
+          "type": "boolean"
+        },
+        "no_spending": {
+          "type": "boolean"
+        },
+        "movement_restriction": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "cloud_consent": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "food_suggestions",
+        "activity_suggestions",
+        "suppressed_scenario_ids",
+        "enabled_source_ids",
+        "timezone",
+        "notifications",
+        "no_kitchen",
+        "no_spending",
+        "movement_restriction",
+        "notes",
+        "cloud_consent"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": [
+            "demo",
+            "healthkit",
+            "plaid",
+            "email"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "consent": {
+          "type": "string",
+          "enum": [
+            "not_requested",
+            "granted",
+            "revoked"
+          ]
+        },
+        "capability": {
+          "type": "string",
+          "enum": [
+            "available",
+            "not_configured",
+            "unsupported"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "disabled",
+            "ready",
+            "syncing",
+            "empty",
+            "stale",
+            "error",
+            "not_configured"
+          ]
+        },
+        "authorization_requested": {
+          "type": "boolean"
+        },
+        "read_access": {
+          "type": "string",
+          "enum": [
+            "not_applicable",
+            "unknown",
+            "samples_readable"
+          ]
+        },
+        "last_attempt_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_success_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "coverage": {
+          "type": "string",
+          "enum": [
+            "unknown",
+            "partial"
+          ]
+        },
+        "coverage_window": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/window"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 1000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "enabled",
+        "consent",
+        "capability",
+        "status",
+        "authorization_requested",
+        "read_access",
+        "last_attempt_at",
+        "last_success_at",
+        "coverage",
+        "coverage_window",
+        "reason"
+      ]
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "type": "string",
+          "enum": [
+            "demo_fixture",
+            "healthkit_daily_steps",
+            "plaid_transactions"
+          ]
+        },
+        "adapter_version": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "record_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "synthetic",
+            "daily_cumulative_sum",
+            "provider_record"
+          ]
+        },
+        "coverage": {
+          "type": "string",
+          "enum": [
+            "unknown",
+            "partial"
+          ]
+        }
+      },
+      "required": [
+        "adapter",
+        "adapter_version",
+        "record_id",
+        "method",
+        "coverage"
+      ]
+    },
+    "purchase": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "restaurant",
+                "grocery",
+                "other"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "merchant": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 120
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "authorized_date": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "posted_date": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "is_refund": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "category",
+        "merchant",
+        "authorized_date",
+        "posted_date",
+        "is_refund"
+      ]
+    },
+    "activity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "metric": {
+          "type": "string",
+          "enum": [
+            "steps"
+          ]
+        },
+        "value": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unit": {
+          "type": "string",
+          "enum": [
+            "count"
+          ]
+        }
+      },
+      "required": [
+        "metric",
+        "value",
+        "unit"
+      ]
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_id": {
+          "type": "string",
+          "enum": [
+            "demo",
+            "healthkit",
+            "plaid"
+          ]
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "fixture",
+            "live"
+          ]
+        },
+        "operation": {
+          "type": "string",
+          "enum": [
+            "upsert",
+            "remove"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "purchase",
+            "activity"
+          ]
+        },
+        "local_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1
+        },
+        "time_precision": {
+          "type": "string",
+          "enum": [
+            "date",
+            "datetime"
+          ]
+        },
+        "occurred_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lifecycle": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "posted",
+            "recorded",
+            "removed"
+          ]
+        },
+        "supersedes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/evidence_ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "household_attribution": {
+          "type": "string",
+          "enum": [
+            "self",
+            "shared",
+            "other",
+            "unknown"
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "purchase": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/purchase"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "activity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/activity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "source_id",
+        "mode",
+        "operation",
+        "kind",
+        "local_date",
+        "timezone",
+        "time_precision",
+        "occurred_at",
+        "lifecycle",
+        "supersedes",
+        "household_attribution",
+        "provenance",
+        "purchase",
+        "activity"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "time_precision": {
+                "const": "date"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "occurred_at": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "occurred_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "remove"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "lifecycle": {
+                "const": "removed"
+              },
+              "purchase": {
+                "type": "null"
+              },
+              "activity": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "oneOf": [
+              {
+                "properties": {
+                  "kind": {
+                    "const": "purchase"
+                  },
+                  "purchase": {
+                    "$ref": "#/$defs/purchase"
+                  },
+                  "activity": {
+                    "type": "null"
+                  },
+                  "lifecycle": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "posted"
+                    ]
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "activity"
+                  },
+                  "activity": {
+                    "$ref": "#/$defs/activity"
+                  },
+                  "purchase": {
+                    "type": "null"
+                  },
+                  "lifecycle": {
+                    "const": "recorded"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "suggestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "eligible",
+            "suppressed",
+            "unavailable"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 1000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "requires_kitchen": {
+          "type": "boolean"
+        },
+        "requires_spending": {
+          "type": "boolean"
+        },
+        "requires_movement": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "text",
+        "status",
+        "reason",
+        "requires_kitchen",
+        "requires_spending",
+        "requires_movement"
+      ]
+    },
+    "ledger_card": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "scenario_id": {
+          "type": "string",
+          "enum": [
+            "purchase_recurrence",
+            "recorded_steps",
+            "preference_filter"
+          ]
+        },
+        "rule_version": {
+          "const": "1.0.0"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "fixture",
+            "live"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "observed",
+            "insufficient_evidence",
+            "suppressed"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "window": {
+          "$ref": "#/$defs/window"
+        },
+        "observed": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "inferred": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 1000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence_ref"
+          }
+        },
+        "feedback_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+          }
+        },
+        "purchase_count": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "distinct_purchase_dates": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recorded_steps": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "days_with_records": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 7
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "coverage": {
+          "type": "string",
+          "enum": [
+            "unknown",
+            "partial"
+          ]
+        },
+        "suggestion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/suggestion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "scenario_id",
+        "rule_version",
+        "revision",
+        "mode",
+        "status",
+        "title",
+        "window",
+        "observed",
+        "inferred",
+        "limitations",
+        "evidence",
+        "feedback_ids",
+        "purchase_count",
+        "distinct_purchase_dates",
+        "recorded_steps",
+        "days_with_records",
+        "coverage",
+        "suggestion"
+      ]
+    },
+    "feedback": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "card_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "correctness",
+            "usefulness",
+            "suppress"
+          ]
+        },
+        "value": {
+          "type": "string",
+          "enum": [
+            "correct",
+            "incorrect",
+            "partial",
+            "useful",
+            "not_useful",
+            "stop"
+          ]
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "card",
+            "event",
+            "scenario"
+          ]
+        },
+        "event_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/evidence_ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attribution": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "self",
+                "shared",
+                "other",
+                "unknown"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "card_id",
+        "kind",
+        "value",
+        "scope",
+        "event_ref",
+        "attribution",
+        "note",
+        "created_at"
+      ]
+    },
+    "notification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "scenario_id": {
+          "type": "string",
+          "enum": [
+            "purchase_recurrence",
+            "recorded_steps"
+          ]
+        },
+        "card_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "scheduled_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "title": {
+          "const": "Your companion"
+        },
+        "body": {
+          "const": "An optional suggestion is ready to review."
+        }
+      },
+      "required": [
+        "id",
+        "scenario_id",
+        "card_id",
+        "scheduled_at",
+        "expires_at",
+        "title",
+        "body"
+      ]
+    },
+    "synthesis": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "disabled",
+            "scripted",
+            "live"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "idle",
+            "running",
+            "completed",
+            "skipped",
+            "failed"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "disabled",
+                "no_credentials",
+                "cloud_consent_required",
+                "live_not_approved",
+                "timeout",
+                "invalid_output",
+                "stale_context",
+                "internal_error"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "engine": {
+          "type": "string",
+          "enum": [
+            "deepagents"
+          ]
+        },
+        "drafts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 1000
+              },
+              "card_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+                }
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/evidence_ref"
+                }
+              }
+            },
+            "required": [
+              "id",
+              "text",
+              "card_ids",
+              "evidence"
+            ]
+          }
+        }
+      },
+      "required": [
+        "mode",
+        "status",
+        "reason",
+        "engine",
+        "drafts"
+      ]
+    },
+    "process": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "idle",
+            "running",
+            "completed",
+            "failed"
+          ]
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input_state_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ledger_status": {
+          "type": "string",
+          "enum": [
+            "idle",
+            "completed",
+            "failed"
+          ]
+        },
+        "synthesis": {
+          "$ref": "#/$defs/synthesis"
+        }
+      },
+      "required": [
+        "run_id",
+        "status",
+        "started_at",
+        "completed_at",
+        "input_state_revision",
+        "ledger_status",
+        "synthesis"
+      ]
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "evaluation_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "preferences": {
+          "$ref": "#/$defs/preferences"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source"
+          }
+        },
+        "observations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/observation"
+          }
+        },
+        "ledger": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ledger_card"
+          }
+        },
+        "feedback": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/feedback"
+          }
+        },
+        "notification_intents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/notification"
+          }
+        },
+        "process": {
+          "$ref": "#/$defs/process"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "data_epoch",
+        "revision",
+        "generated_at",
+        "evaluation_date",
+        "preferences",
+        "sources",
+        "observations",
+        "ledger",
+        "feedback",
+        "notification_intents",
+        "process",
+        "limitations"
+      ]
+    },
+    "source_update": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "enum": [
+            "demo",
+            "healthkit"
+          ]
+        },
+        "authorization_requested": {
+          "type": "boolean"
+        },
+        "read_access": {
+          "type": "string",
+          "enum": [
+            "not_applicable",
+            "unknown",
+            "samples_readable"
+          ]
+        },
+        "query_status": {
+          "type": "string",
+          "enum": [
+            "success",
+            "empty",
+            "error"
+          ]
+        },
+        "attempted_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "coverage_window": {
+          "$ref": "#/$defs/window"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "protected_data",
+                "unavailable",
+                "query_failed"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "source_id",
+        "authorization_requested",
+        "read_access",
+        "query_status",
+        "attempted_at",
+        "coverage_window",
+        "error_code"
+      ]
+    },
+    "observation_batch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "observations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/observation"
+          },
+          "maxItems": 500
+        },
+        "source_updates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source_update"
+          },
+          "maxItems": 2
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "observations",
+        "source_updates"
+      ]
+    },
+    "ingestion_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "accepted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ignored": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        }
+      },
+      "required": [
+        "schema_version",
+        "accepted",
+        "ignored",
+        "state"
+      ]
+    },
+    "preferences_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "preferences": {
+          "$ref": "#/$defs/preferences"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "preferences"
+      ]
+    },
+    "feedback_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "card_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "correctness",
+            "usefulness",
+            "suppress"
+          ]
+        },
+        "value": {
+          "type": "string",
+          "enum": [
+            "correct",
+            "incorrect",
+            "partial",
+            "useful",
+            "not_useful",
+            "stop"
+          ]
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "card",
+            "event",
+            "scenario"
+          ]
+        },
+        "event_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/evidence_ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attribution": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "self",
+                "shared",
+                "other",
+                "unknown"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "card_id",
+        "kind",
+        "value",
+        "scope",
+        "event_ref",
+        "attribution",
+        "note"
+      ]
+    },
+    "process_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "synthesis_mode": {
+          "type": "string",
+          "enum": [
+            "disabled",
+            "scripted",
+            "live"
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "synthesis_mode"
+      ]
+    },
+    "demo_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "seed",
+            "reset"
+          ]
+        },
+        "fixture_set": {
+          "const": "representative-v1"
+        },
+        "consent_demo": {
+          "const": true
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "action",
+        "fixture_set",
+        "consent_demo"
+      ]
+    },
+    "delete_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "confirm": {
+          "const": "delete_all"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "confirm"
+      ]
+    },
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "degraded"
+          ]
+        },
+        "service": {
+          "const": "local-companion"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "enum": [
+                  "persistence",
+                  "scenarios",
+                  "feedback",
+                  "demo",
+                  "healthkit",
+                  "plaid",
+                  "email",
+                  "synthesis"
+                ]
+              },
+              "version": {
+                "const": "1"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "available",
+                  "not_configured",
+                  "unsupported"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "version",
+              "status"
+            ]
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "service",
+        "capabilities"
+      ]
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "invalid_request",
+                "unsupported_version",
+                "revision_conflict",
+                "idempotency_conflict",
+                "epoch_mismatch",
+                "consent_required",
+                "not_configured",
+                "not_found",
+                "demo_conflict",
+                "busy",
+                "internal_error"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 1000
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "request_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                },
+                "required": [
+                  "field",
+                  "message"
+                ]
+              }
+            }
+          },
+          "required": [
+            "code",
+            "message",
+            "retryable",
+            "request_id",
+            "details"
+          ]
+        }
+      },
+      "required": [
+        "error"
+      ]
+    }
+  }
+}

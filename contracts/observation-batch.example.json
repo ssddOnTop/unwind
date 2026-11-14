@@ -1,0 +1,196 @@
+{
+  "schema_version": "1",
+  "request_id": "example-batch-1",
+  "data_epoch": "demo-epoch-1",
+  "observations": [
+    {
+      "id": "demo-purchase-1",
+      "revision": 1,
+      "source_id": "demo",
+      "mode": "fixture",
+      "operation": "upsert",
+      "kind": "purchase",
+      "local_date": "2026-10-22",
+      "timezone": "America/New_York",
+      "time_precision": "date",
+      "occurred_at": null,
+      "lifecycle": "posted",
+      "supersedes": null,
+      "household_attribution": "self",
+      "provenance": {
+        "adapter": "demo_fixture",
+        "adapter_version": "1",
+        "record_id": "synthetic-purchase-1",
+        "method": "synthetic",
+        "coverage": "partial"
+      },
+      "purchase": {
+        "category": "restaurant",
+        "merchant": "Synthetic Cafe",
+        "authorized_date": "2026-10-22",
+        "posted_date": "2026-10-22",
+        "is_refund": false
+      },
+      "activity": null
+    },
+    {
+      "id": "demo-purchase-2",
+      "revision": 1,
+      "source_id": "demo",
+      "mode": "fixture",
+      "operation": "upsert",
+      "kind": "purchase",
+      "local_date": "2026-10-30",
+      "timezone": "America/New_York",
+      "time_precision": "date",
+      "occurred_at": null,
+      "lifecycle": "posted",
+      "supersedes": null,
+      "household_attribution": "self",
+      "provenance": {
+        "adapter": "demo_fixture",
+        "adapter_version": "1",
+        "record_id": "synthetic-purchase-2",
+        "method": "synthetic",
+        "coverage": "partial"
+      },
+      "purchase": {
+        "category": "restaurant",
+        "merchant": "Synthetic Cafe",
+        "authorized_date": "2026-10-30",
+        "posted_date": "2026-10-30",
+        "is_refund": false
+      },
+      "activity": null
+    },
+    {
+      "id": "demo-purchase-3",
+      "revision": 1,
+      "source_id": "demo",
+      "mode": "fixture",
+      "operation": "upsert",
+      "kind": "purchase",
+      "local_date": "2026-11-10",
+      "timezone": "America/New_York",
+      "time_precision": "date",
+      "occurred_at": null,
+      "lifecycle": "posted",
+      "supersedes": null,
+      "household_attribution": "self",
+      "provenance": {
+        "adapter": "demo_fixture",
+        "adapter_version": "1",
+        "record_id": "synthetic-purchase-3",
+        "method": "synthetic",
+        "coverage": "partial"
+      },
+      "purchase": {
+        "category": "restaurant",
+        "merchant": "Synthetic Cafe",
+        "authorized_date": "2026-11-10",
+        "posted_date": "2026-11-10",
+        "is_refund": false
+      },
+      "activity": null
+    },
+    {
+      "id": "demo-steps-2026-11-08",
+      "revision": 1,
+      "source_id": "demo",
+      "mode": "fixture",
+      "operation": "upsert",
+      "kind": "activity",
+      "local_date": "2026-11-08",
+      "timezone": "America/New_York",
+      "time_precision": "date",
+      "occurred_at": null,
+      "lifecycle": "recorded",
+      "supersedes": null,
+      "household_attribution": "self",
+      "provenance": {
+        "adapter": "demo_fixture",
+        "adapter_version": "1",
+        "record_id": "synthetic-steps-1",
+        "method": "synthetic",
+        "coverage": "unknown"
+      },
+      "purchase": null,
+      "activity": {
+        "metric": "steps",
+        "value": 4200,
+        "unit": "count"
+      }
+    },
+    {
+      "id": "demo-steps-2026-11-10",
+      "revision": 1,
+      "source_id": "demo",
+      "mode": "fixture",
+      "operation": "upsert",
+      "kind": "activity",
+      "local_date": "2026-11-10",
+      "timezone": "America/New_York",
+      "time_precision": "date",
+      "occurred_at": null,
+      "lifecycle": "recorded",
+      "supersedes": null,
+      "household_attribution": "self",
+      "provenance": {
+        "adapter": "demo_fixture",
+        "adapter_version": "1",
+        "record_id": "synthetic-steps-2",
+        "method": "synthetic",
+        "coverage": "unknown"
+      },
+      "purchase": null,
+      "activity": {
+        "metric": "steps",
+        "value": 6100,
+        "unit": "count"
+      }
+    },
+    {
+      "id": "demo-steps-2026-11-13",
+      "revision": 1,
+      "source_id": "demo",
+      "mode": "fixture",
+      "operation": "upsert",
+      "kind": "activity",
+      "local_date": "2026-11-13",
+      "timezone": "America/New_York",
+      "time_precision": "date",
+      "occurred_at": null,
+      "lifecycle": "recorded",
+      "supersedes": null,
+      "household_attribution": "self",
+      "provenance": {
+        "adapter": "demo_fixture",
+        "adapter_version": "1",
+        "record_id": "synthetic-steps-3",
+        "method": "synthetic",
+        "coverage": "unknown"
+      },
+      "purchase": null,
+      "activity": {
+        "metric": "steps",
+        "value": 3500,
+        "unit": "count"
+      }
+    }
+  ],
+  "source_updates": [
+    {
+      "source_id": "demo",
+      "authorization_requested": false,
+      "read_access": "not_applicable",
+      "query_status": "success",
+      "attempted_at": "2026-11-14T12:00:00Z",
+      "coverage_window": {
+        "start_date": "2026-10-18",
+        "end_date": "2026-11-14",
+        "timezone": "America/New_York"
+      },
+      "error_code": null
+    }
+  ]
+}
