@@ -1,0 +1,411 @@
+{
+  "schema_version": "1",
+  "data_epoch": "demo-epoch-1",
+  "revision": 1,
+  "generated_at": "2026-11-14T12:00:00Z",
+  "evaluation_date": "2026-11-14",
+  "preferences": {
+    "food_suggestions": true,
+    "activity_suggestions": true,
+    "suppressed_scenario_ids": [],
+    "enabled_source_ids": [
+      "demo"
+    ],
+    "timezone": "America/New_York",
+    "notifications": {
+      "enabled": false,
+      "local_time": "18:00"
+    },
+    "no_kitchen": true,
+    "no_spending": true,
+    "movement_restriction": true,
+    "notes": "Synthetic demo preferences; keep suggestions free.",
+    "cloud_consent": false
+  },
+  "sources": [
+    {
+      "id": "demo",
+      "enabled": true,
+      "consent": "granted",
+      "capability": "available",
+      "status": "ready",
+      "authorization_requested": false,
+      "read_access": "not_applicable",
+      "last_attempt_at": "2026-11-14T12:00:00Z",
+      "last_success_at": "2026-11-14T12:00:00Z",
+      "coverage": "partial",
+      "coverage_window": {
+        "start_date": "2026-10-18",
+        "end_date": "2026-11-14",
+        "timezone": "America/New_York"
+      },
+      "reason": "Synthetic evidence only."
+    },
+    {
+      "id": "healthkit",
+      "enabled": false,
+      "consent": "not_requested",
+      "capability": "available",
+      "status": "disabled",
+      "authorization_requested": false,
+      "read_access": "unknown",
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "coverage": "unknown",
+      "coverage_window": null,
+      "reason": "Read-only adapter requires app consent and device permission; toolchain/device verification is blocked."
+    },
+    {
+      "id": "plaid",
+      "enabled": false,
+      "consent": "not_requested",
+      "capability": "not_configured",
+      "status": "not_configured",
+      "authorization_requested": false,
+      "read_access": "not_applicable",
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "coverage": "unknown",
+      "coverage_window": null,
+      "reason": "No provider keys; live connection not configured."
+    },
+    {
+      "id": "email",
+      "enabled": false,
+      "consent": "not_requested",
+      "capability": "not_configured",
+      "status": "not_configured",
+      "authorization_requested": false,
+      "read_access": "not_applicable",
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "coverage": "unknown",
+      "coverage_window": null,
+      "reason": "Live email is not configured and out of v1 scope."
+    }
+  ],
+  "observations": [
+    {
+      "id": "demo-purchase-1",
+      "revision": 1,
+      "source_id": "demo",
+      "mode": "fixture",
+      "operation": "upsert",
+      "kind": "purchase",
+      "local_date": "2026-10-22",
+      "timezone": "America/New_York",
+      "time_precision": "date",
+      "occurred_at": null,
+      "lifecycle": "posted",
+      "supersedes": null,
+      "household_attribution": "self",
+      "provenance": {
+        "adapter": "demo_fixture",
+        "adapter_version": "1",
+        "record_id": "synthetic-purchase-1",
+        "method": "synthetic",
+        "coverage": "partial"
+      },
+      "purchase": {
+        "category": "restaurant",
+        "merchant": "Synthetic Cafe",
+        "authorized_date": "2026-10-22",
+        "posted_date": "2026-10-22",
+        "is_refund": false
+      },
+      "activity": null
+    },
+    {
+      "id": "demo-purchase-2",
+      "revision": 1,
+      "source_id": "demo",
+      "mode": "fixture",
+      "operation": "upsert",
+      "kind": "purchase",
+      "local_date": "2026-10-30",
+      "timezone": "America/New_York",
+      "time_precision": "date",
+      "occurred_at": null,
+      "lifecycle": "posted",
+      "supersedes": null,
+      "household_attribution": "self",
+      "provenance": {
+        "adapter": "demo_fixture",
+        "adapter_version": "1",
+        "record_id": "synthetic-purchase-2",
+        "method": "synthetic",
+        "coverage": "partial"
+      },
+      "purchase": {
+        "category": "restaurant",
+        "merchant": "Synthetic Cafe",
+        "authorized_date": "2026-10-30",
+        "posted_date": "2026-10-30",
+        "is_refund": false
+      },
+      "activity": null
+    },
+    {
+      "id": "demo-purchase-3",
+      "revision": 1,
+      "source_id": "demo",
+      "mode": "fixture",
+      "operation": "upsert",
+      "kind": "purchase",
+      "local_date": "2026-11-10",
+      "timezone": "America/New_York",
+      "time_precision": "date",
+      "occurred_at": null,
+      "lifecycle": "posted",
+      "supersedes": null,
+      "household_attribution": "self",
+      "provenance": {
+        "adapter": "demo_fixture",
+        "adapter_version": "1",
+        "record_id": "synthetic-purchase-3",
+        "method": "synthetic",
+        "coverage": "partial"
+      },
+      "purchase": {
+        "category": "restaurant",
+        "merchant": "Synthetic Cafe",
+        "authorized_date": "2026-11-10",
+        "posted_date": "2026-11-10",
+        "is_refund": false
+      },
+      "activity": null
+    },
+    {
+      "id": "demo-steps-2026-11-08",
+      "revision": 1,
+      "source_id": "demo",
+      "mode": "fixture",
+      "operation": "upsert",
+      "kind": "activity",
+      "local_date": "2026-11-08",
+      "timezone": "America/New_York",
+      "time_precision": "date",
+      "occurred_at": null,
+      "lifecycle": "recorded",
+      "supersedes": null,
+      "household_attribution": "self",
+      "provenance": {
+        "adapter": "demo_fixture",
+        "adapter_version": "1",
+        "record_id": "synthetic-steps-1",
+        "method": "synthetic",
+        "coverage": "unknown"
+      },
+      "purchase": null,
+      "activity": {
+        "metric": "steps",
+        "value": 4200,
+        "unit": "count"
+      }
+    },
+    {
+      "id": "demo-steps-2026-11-10",
+      "revision": 1,
+      "source_id": "demo",
+      "mode": "fixture",
+      "operation": "upsert",
+      "kind": "activity",
+      "local_date": "2026-11-10",
+      "timezone": "America/New_York",
+      "time_precision": "date",
+      "occurred_at": null,
+      "lifecycle": "recorded",
+      "supersedes": null,
+      "household_attribution": "self",
+      "provenance": {
+        "adapter": "demo_fixture",
+        "adapter_version": "1",
+        "record_id": "synthetic-steps-2",
+        "method": "synthetic",
+        "coverage": "unknown"
+      },
+      "purchase": null,
+      "activity": {
+        "metric": "steps",
+        "value": 6100,
+        "unit": "count"
+      }
+    },
+    {
+      "id": "demo-steps-2026-11-13",
+      "revision": 1,
+      "source_id": "demo",
+      "mode": "fixture",
+      "operation": "upsert",
+      "kind": "activity",
+      "local_date": "2026-11-13",
+      "timezone": "America/New_York",
+      "time_precision": "date",
+      "occurred_at": null,
+      "lifecycle": "recorded",
+      "supersedes": null,
+      "household_attribution": "self",
+      "provenance": {
+        "adapter": "demo_fixture",
+        "adapter_version": "1",
+        "record_id": "synthetic-steps-3",
+        "method": "synthetic",
+        "coverage": "unknown"
+      },
+      "purchase": null,
+      "activity": {
+        "metric": "steps",
+        "value": 3500,
+        "unit": "count"
+      }
+    }
+  ],
+  "ledger": [
+    {
+      "id": "purchase_recurrence",
+      "scenario_id": "purchase_recurrence",
+      "rule_version": "1.0.0",
+      "revision": 1,
+      "mode": "fixture",
+      "status": "observed",
+      "title": "Recorded restaurant purchases",
+      "window": {
+        "start_date": "2026-10-18",
+        "end_date": "2026-11-14",
+        "timezone": "America/New_York"
+      },
+      "observed": "Between 2026-10-18 and 2026-11-14, synthetic connected records show 3 purchases at merchants categorized as restaurant, on 3 dates. This describes purchases, not meals or what you ate. Other purchases may be missing.",
+      "inferred": "These records meet the product recurrence rule; they do not establish a dietary habit.",
+      "limitations": [
+        "Purchases do not establish consumption, portions, or personal health risk."
+      ],
+      "evidence": [
+        {
+          "observation_id": "demo-purchase-1",
+          "revision": 1
+        },
+        {
+          "observation_id": "demo-purchase-2",
+          "revision": 1
+        },
+        {
+          "observation_id": "demo-purchase-3",
+          "revision": 1
+        }
+      ],
+      "feedback_ids": [],
+      "purchase_count": 3,
+      "distinct_purchase_dates": 3,
+      "recorded_steps": null,
+      "days_with_records": null,
+      "coverage": "partial",
+      "suggestion": {
+        "id": "purchase_recurrence.plan",
+        "text": "For one upcoming food purchase, consider planning an option that fits your budget and preferences ahead of time.",
+        "status": "eligible",
+        "reason": null,
+        "requires_kitchen": false,
+        "requires_spending": false,
+        "requires_movement": false
+      }
+    },
+    {
+      "id": "recorded_steps",
+      "scenario_id": "recorded_steps",
+      "rule_version": "1.0.0",
+      "revision": 1,
+      "mode": "fixture",
+      "status": "observed",
+      "title": "Recorded steps, not total activity",
+      "window": {
+        "start_date": "2026-11-07",
+        "end_date": "2026-11-13",
+        "timezone": "America/New_York"
+      },
+      "observed": "From 2026-11-07 through 2026-11-13, synthetic connected records contain 13800 steps on 3 of 7 dates. That does not mean those dates were fully tracked. Unrecorded activity is unknown.",
+      "inferred": null,
+      "limitations": [
+        "Missing dates are unknown, not zero.",
+        "Steps do not establish intensity, wear time, or inactivity."
+      ],
+      "evidence": [
+        {
+          "observation_id": "demo-steps-2026-11-08",
+          "revision": 1
+        },
+        {
+          "observation_id": "demo-steps-2026-11-10",
+          "revision": 1
+        },
+        {
+          "observation_id": "demo-steps-2026-11-13",
+          "revision": 1
+        }
+      ],
+      "feedback_ids": [],
+      "purchase_count": null,
+      "distinct_purchase_dates": null,
+      "recorded_steps": 13800,
+      "days_with_records": 3,
+      "coverage": "unknown",
+      "suggestion": {
+        "id": "recorded_steps.movement",
+        "text": "If it is comfortable and fits your usual activity, consider five minutes of movement you enjoy after an existing daily routine.",
+        "status": "suppressed",
+        "reason": "movement_restriction",
+        "requires_kitchen": false,
+        "requires_spending": false,
+        "requires_movement": true
+      }
+    },
+    {
+      "id": "preference_filter",
+      "scenario_id": "preference_filter",
+      "rule_version": "1.0.0",
+      "revision": 1,
+      "mode": "fixture",
+      "status": "observed",
+      "title": "Your preferences apply immediately",
+      "window": {
+        "start_date": "2026-11-14",
+        "end_date": "2026-11-14",
+        "timezone": "America/New_York"
+      },
+      "observed": "You asked us to avoid movement suggestions. Recorded observations are unchanged; the movement suggestion is suppressed.",
+      "inferred": null,
+      "limitations": [
+        "Explicit preferences are not a diagnosis."
+      ],
+      "evidence": [],
+      "feedback_ids": [],
+      "purchase_count": null,
+      "distinct_purchase_dates": null,
+      "recorded_steps": null,
+      "days_with_records": null,
+      "coverage": "unknown",
+      "suggestion": null
+    }
+  ],
+  "feedback": [],
+  "notification_intents": [],
+  "process": {
+    "run_id": "demo-process-1",
+    "status": "completed",
+    "started_at": "2026-11-14T12:00:00Z",
+    "completed_at": "2026-11-14T12:00:00Z",
+    "input_state_revision": 1,
+    "ledger_status": "completed",
+    "synthesis": {
+      "mode": "live",
+      "status": "skipped",
+      "reason": "no_credentials",
+      "engine": "deepagents",
+      "drafts": []
+    }
+  },
+  "limitations": [
+    "All example observations and preferences are synthetic.",
+    "No diagnoses, obesity predictions, intake estimates, or clinical thresholds.",
+    "HealthKit real-device access and the iOS build are not verified."
+  ]
+}

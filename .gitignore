@@ -32,6 +32,8 @@
 !/fe/Core/Tests/
 !/fe/Core/Tests/**/
 !/fe/Core/Tests/**/*.swift
+!/fe/Core/Tests/CompanionCoreTests/Fixtures/state.example.json
+!/fe/Core/Tests/CompanionCoreTests/Fixtures/observation-batch.example.json
 !/fe/UITests/
 !/fe/UITests/**/
 !/fe/UITests/**/*.swift
@@ -48,8 +50,11 @@
 
 # Reviewed public schemas and explicitly synthetic fixtures.
 !/contracts/
-!/contracts/*.json
-!/contracts/*.md
+!/contracts/state.schema.json
+!/contracts/state.example.json
+!/contracts/observation-batch.example.json
+!/contracts/scenarios.json
+!/contracts/v1.md
 !/scripts/
 !/scripts/*.py
 !/scripts/*.sh
