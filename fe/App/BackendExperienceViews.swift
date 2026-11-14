@@ -173,8 +173,16 @@ struct BackendVisitView: View {
 struct PatternSummaryView: View {
     @ObservedObject var model: AppModel
     let value: PatternOverview
+    var separateListRows = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        if separateListRows {
+            // Each link must be its own List row, not several links in one cell.
+            rows
+        } else {
+            VStack(alignment: .leading, spacing: 12) { rows }
+        }
+    }
+    @ViewBuilder private var rows: some View {
             if value.status == "unavailable" || value.status == "running" {
                 Text("AI review unavailable — deterministic findings remain available.").font(.caption).foregroundStyle(.secondary)
             }
@@ -194,7 +202,6 @@ struct PatternSummaryView: View {
             if value.status != "not_analyzed", value.findings.isEmpty {
                 Text("No comparison patterns flagged in the available coverage. This is not a clean bill of health.")
             }
-        }
     }
 }
 
@@ -235,5 +242,15 @@ private struct PatternFindingDetail: View {
                 }.disabled(model.busy)
             } else { Text("This pattern is no longer available. Refresh the overview.") }
         }.navigationTitle(finding?.title ?? "Pattern")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(verbatim: finding?.title ?? "Pattern")
+                        .font(.headline)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("pattern.finding.title")
+                }
+            }
     }
 }

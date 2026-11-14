@@ -134,7 +134,7 @@ struct LedgerView: View {
         NavigationStack {
             List {
                 if let patterns = model.patternOverview, patterns.status != "not_analyzed" {
-                    Section("Saved pattern review") { PatternSummaryView(model: model, value: patterns) }
+                    Section("Saved pattern review") { PatternSummaryView(model: model, value: patterns, separateListRows: true) }
                 }
                 if let value = model.experience {
                     ForEach(value.inference_history.reversed(), id: \.id) { entry in
