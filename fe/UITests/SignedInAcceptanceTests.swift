@@ -48,6 +48,89 @@ final class SignedInAcceptanceTests: XCTestCase {
     }
 }
 
+/// Explicitly authorized presentation only: never continues, submits, or changes linked accounts.
+final class AuthorizedManagePresentationTests: XCTestCase {
+    /// Recovery only for an interrupted authorized exit; never opens a new provider session.
+    @MainActor func testFinishAuthorizedExitConfirmation() throws {
+        guard ProcessInfo.processInfo.environment["COMPANION_AUTHORIZE_FINISH_EXIT"] == "YES" else {
+            throw XCTSkip("Only run after inspecting the interrupted provider exit confirmation")
+        }
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        XCTAssertEqual(app.state, .runningForeground)
+        let exit = app.buttons["Yes, exit"]
+        XCTAssertTrue(exit.isHittable); exit.tap()
+        let today = app.tabBars.buttons["Today"]
+        XCTAssertTrue(today.waitForExistence(timeout: 10)); XCTAssertTrue(today.isHittable)
+        let bank = XCTAttachment(screenshot: app.screenshot())
+        bank.name = "confirmed-provider-cancel-private"; bank.lifetime = .keepAlways; add(bank)
+        today.tap()
+        let home = XCTAttachment(screenshot: app.screenshot())
+        home.name = "confirmed-provider-cancel-home-private"; home.lifetime = .keepAlways; add(home)
+    }
+    @MainActor func testNativeManagePresentationAndCancel() throws {
+        guard ProcessInfo.processInfo.environment["COMPANION_AUTHORIZE_MANAGE_CANCEL"] == "YES" else {
+            throw XCTSkip("Requires fresh authorization to open existing Manage accounts and cancel")
+        }
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        // Do not launch/activate over someone else's active provider flow.
+        XCTAssertEqual(app.state, .runningForeground)
+        XCTAssertTrue(app.tabBars.buttons["Today"].isHittable, "Stop if another sheet or Link flow is active")
+        func capture(_ name: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        app.tabBars.buttons["Today"].tap()
+        capture("manage-cancel-home-before-private")
+        let info = app.buttons["info.Your observation"]
+        if info.isHittable {
+            info.tap(); capture("home-observation-info-private")
+            let done = app.buttons["info.dismiss.Your observation"]
+            XCTAssertTrue(done.waitForExistence(timeout: 5)); done.tap()
+        }
+        app.tabBars.buttons["Settings"].tap()
+        let back = app.navigationBars.buttons["Settings"]
+        if back.isHittable { back.tap() }
+        let banks = app.buttons["settings.bankAccounts"]
+        for _ in 0..<6 { if banks.isHittable { break }; app.swipeDown() }
+        XCTAssertTrue(banks.isHittable)
+        capture("manage-cancel-settings-private"); banks.tap()
+        XCTAssertTrue(app.buttons["banking.add"].waitForExistence(timeout: 15))
+        let connections = app.buttons.matching(NSPredicate(format: "label ENDSWITH %@", "Connected"))
+        XCTAssertEqual(connections.count, 2)
+        let row = connections.element(boundBy: 0)
+        XCTAssertTrue(row.isHittable); row.tap()
+        let manage = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Manage accounts: "))
+        XCTAssertEqual(manage.count, 1, "Only the explicitly expanded bank may expose Manage")
+        let action = manage.element(boundBy: 0)
+        XCTAssertTrue(action.isHittable && action.isEnabled)
+        XCTAssertEqual(app.switches.count, 0)
+        capture("manage-cancel-bank-before-private")
+        action.tap() // Exactly one presentation request. No retries, Continue, consent, or submission.
+        let close = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Close", "Exit"))
+        XCTAssertTrue(close.firstMatch.waitForExistence(timeout: 30), "Stop for human inspection if provider exit is not discoverable")
+        capture("native-manage-sdk-presented-private")
+        let tree = XCTAttachment(string: app.debugDescription)
+        tree.name = "native-manage-accessibility-private"; tree.lifetime = .keepAlways; add(tree)
+        XCTAssertEqual(close.count, 1, "Never guess among provider actions")
+        XCTAssertTrue(close.element(boundBy: 0).isHittable)
+        close.element(boundBy: 0).tap()
+        capture("native-manage-after-close-private")
+        // Verified native SDK exit confirmation; this discards the unsubmitted flow only.
+        let confirmExit = app.buttons["Yes, exit"]
+        if confirmExit.waitForExistence(timeout: 5) {
+            XCTAssertTrue(confirmExit.isHittable); confirmExit.tap()
+        }
+        XCTAssertTrue(app.tabBars.buttons["Today"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.tabBars.buttons["Today"].isHittable)
+        capture("manage-cancel-bank-after-private")
+        XCTAssertEqual(connections.count, 2)
+        app.tabBars.buttons["Today"].tap()
+        capture("manage-cancel-home-after-private")
+    }
+}
+
 /// Opt-in live operation. Never include this in unattended acceptance runs.
 final class AuthorizedSingleBankSyncTests: XCTestCase {
     @MainActor private func capture(_ name: String, app: XCUIApplication) {
