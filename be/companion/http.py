@@ -77,9 +77,11 @@ class Boundary:
                 requests[("POST", "/connections/plaid")] = "request"
             if self.experience_profile:
                 requests[("POST", "/experience/v1/answers")] = "answer_request"
+                requests[('POST', '/patterns/v1/analyze')] = 'pattern_request'
+                requests[('POST', '/patterns/v1/clarify')] = 'pattern_clarify'
             if self.banking_profile:
                 requests[('POST','/banking/v1/actions')] = 'banking_request'
-            reads = {"/health", "/state"} | ({"/experience/v1"} if self.experience_profile else set()) | ({'/banking/v1'} if self.banking_profile else set())
+            reads = {"/health", "/state"} | ({"/experience/v1", '/patterns/v1'} if self.experience_profile else set()) | ({'/banking/v1'} if self.banking_profile else set())
             if scope.get("query_string") and scope["path"] in {*reads, *(r[1] for r in requests)}:
                 raise DomainError()
             chunks, size = [], 0
@@ -112,7 +114,11 @@ class Boundary:
                     request_id = body["request_id"]
                 if headers.get(b"content-type", b"").split(b";")[0].strip().lower() != b"application/json":
                     raise DomainError()
-                if route == ('POST','/banking/v1/actions'):
+                if route in {('POST','/patterns/v1/analyze'),('POST','/patterns/v1/clarify')}:
+                    from .patterns import AnalyzeRequest, ClarifyRequest
+                    try: (AnalyzeRequest if route[1].endswith('/analyze') else ClarifyRequest).model_validate(body)
+                    except Exception: raise DomainError() from None
+                elif route == ('POST','/banking/v1/actions'):
                     from .banking_contracts import validate_banking
                     validate_banking('request',body)
                 elif route == ("POST", "/connections/plaid"):
@@ -251,6 +257,26 @@ def create_app(data_dir: Path | None = None, *, replacements=None, scheduler=Non
     if experience_profile:
         from .experience_contracts import Experience, AnswerRequest, ExperienceError
         experience_errors = {status: {"model": ExperienceError} for status in errors}
+
+        from .patterns import AnalyzeRequest, ClarifyRequest, PatternOverview
+
+        def patterns():
+            coordinator = getattr(service, 'pattern_coordinator', None)
+            if coordinator is None:
+                raise DomainError('invalid_request', 503, 'Normalized PostgreSQL pattern storage is unavailable.')
+            return coordinator
+
+        @app.get('/patterns/v1', response_model=PatternOverview, responses=experience_errors)
+        async def pattern_overview():
+            return await patterns().get()
+
+        @app.post('/patterns/v1/analyze', response_model=PatternOverview, responses=experience_errors)
+        async def analyze_patterns(body: AnalyzeRequest):
+            return await patterns().analyze(body.request_id)
+
+        @app.post('/patterns/v1/clarify', response_model=PatternOverview, responses=experience_errors)
+        async def clarify_pattern(body: ClarifyRequest):
+            return await patterns().clarify(body)
 
         @app.get("/experience/v1", response_model=Experience, responses=experience_errors)
         async def experience():

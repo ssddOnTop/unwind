@@ -68,6 +68,7 @@
 !/contracts/experience.schema.json
 !/contracts/banking.md
 !/contracts/banking.schema.json
+!/contracts/patterns.schema.json
 !/scripts/
 !/scripts/*.py
 !/scripts/*.sh

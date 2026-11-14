@@ -88,7 +88,8 @@ class _Gateway:
         if plaid_profile:
             self.routes.add(("POST", "/connections/plaid"))
         if experience_profile:
-            self.routes.update({("GET", "/experience/v1"), ("POST", "/experience/v1/answers")})
+            self.routes.update({("GET", "/experience/v1"), ("POST", "/experience/v1/answers"),
+                ('GET','/patterns/v1'), ('POST','/patterns/v1/analyze'), ('POST','/patterns/v1/clarify')})
         if banking_profile:
             self.routes.update({('GET','/banking/v1'),('POST','/banking/v1/actions')})
         if webhook_receiver is not None:
@@ -287,6 +288,9 @@ def create_authenticated_app(auth_root: Path, *, auth_config: AuthConfig | None 
             child = service_factory(path)
             if inspect.isawaitable(child):
                 child = await child
+        if postgres_runtime is not None and experience_profile:
+            from .pattern_store import PatternCoordinator
+            child.state.service.pattern_coordinator = PatternCoordinator(child.state.service, replacements['persistence'])
         # Reject accidentally shared application/service before starting it.
         if child in children or child.state.service in services:
             raise AccountError()

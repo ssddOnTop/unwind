@@ -66,6 +66,7 @@ class PostgresPersistenceExtension:
                     if operation != "commit":
                         raise ValueError("Unsupported persistence operation")
                     await self._ownership(payload['document'])
+                    await self._retain_patterns()
                     if payload.get('erase_receipts'):
                         await self.conn.execute("DELETE FROM companion_private.receipts WHERE account_id=%s", (self.account_id,))
                     for route in payload.get('erase_receipt_routes',[]):
@@ -88,6 +89,18 @@ class PostgresPersistenceExtension:
                 raise
             except Exception:
                 raise PostgresUnavailable() from None
+
+    async def _retain_patterns(self):
+        ready=await (await self.conn.execute("SELECT to_regclass('companion_private.pattern_batches') IS NOT NULL")).fetchone()
+        if not ready[0]: return
+        changed=False
+        for table,field in [('health_samples','end_at'),('pattern_transactions','event_at'),('pattern_batches','end_at')]:
+            cursor=await self.conn.execute('DELETE FROM companion_private.'+table+' WHERE account_id=%s AND '+field+" < now()-interval '190 days'",(self.account_id,))
+            changed |= cursor.rowcount>0
+        if changed:
+            await self.conn.execute('DELETE FROM companion_private.pattern_runs WHERE account_id=%s',(self.account_id,))
+        else:
+            await self.conn.execute("DELETE FROM companion_private.pattern_runs WHERE account_id=%s AND analyzed_at < now()-interval '190 days'",(self.account_id,))
 
     @staticmethod
     def contexts(doc):
@@ -134,6 +147,11 @@ class PostgresPersistenceExtension:
                 await self._erase_item_jobs(identifier)
             await self.conn.execute("""UPDATE companion_private.webhook_jobs SET account_id=%s,epoch=%s,owner_generation=%s
                 WHERE environment='sandbox' AND item_id=%s AND account_id IS NULL AND expires_at>now()""",(self.account_id,epoch,generation,identifier))
+        if epoch_changed:
+            ready=await (await self.conn.execute("SELECT to_regclass('companion_private.pattern_batches') IS NOT NULL")).fetchone()
+            if ready[0]:
+                await self.conn.execute('DELETE FROM companion_private.pattern_runs WHERE account_id=%s',(self.account_id,))
+                await self.conn.execute('DELETE FROM companion_private.pattern_batches WHERE account_id=%s',(self.account_id,))
         if changed_any or epoch_changed:
             await self.conn.execute('UPDATE companion_private.accounts SET generation=generation+1 WHERE account_id=%s',(self.account_id,))
 

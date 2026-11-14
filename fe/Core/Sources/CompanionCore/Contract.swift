@@ -2303,6 +2303,303 @@ public struct ExperienceInferenceEntry: Codable, Equatable, Sendable {
     }
 }
 
+public struct PatternAggregate: Codable, Equatable, Sendable {
+    public var sample_count_bucket: String
+    public var recent: PatternPeriod
+    public var baseline: PatternPeriod
+    public init(sample_count_bucket: String, recent: PatternPeriod, baseline: PatternPeriod) {
+        self.sample_count_bucket = sample_count_bucket
+        self.recent = recent
+        self.baseline = baseline
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case sample_count_bucket, recent, baseline
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sample_count_bucket = try c.decode(String.self, forKey: .sample_count_bucket)
+        do { let value = sample_count_bucket;
+            guard ["none", "under100", "100to999", "1000plus"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .sample_count_bucket, in: c, debugDescription: "Invalid contract value") }
+        }
+        recent = try c.decode(PatternPeriod.self, forKey: .recent)
+        baseline = try c.decode(PatternPeriod.self, forKey: .baseline)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(sample_count_bucket, forKey: .sample_count_bucket)
+        try c.encode(recent, forKey: .recent)
+        try c.encode(baseline, forKey: .baseline)
+    }
+}
+
+public struct PatternFinding: Codable, Equatable, Sendable {
+    public var concern_id: String
+    public var title: String
+    public var explanation: String
+    public var evidence_codes: [String]
+    public var confidence: String
+    public var attribution: String
+    public var evidence_summary: String
+    public init(concern_id: String, title: String, explanation: String, evidence_codes: [String], confidence: String, attribution: String, evidence_summary: String) {
+        self.concern_id = concern_id
+        self.title = title
+        self.explanation = explanation
+        self.evidence_codes = evidence_codes
+        self.confidence = confidence
+        self.attribution = attribution
+        self.evidence_summary = evidence_summary
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case concern_id, title, explanation, evidence_codes, confidence, attribution, evidence_summary
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        concern_id = try c.decode(String.self, forKey: .concern_id)
+        do { let value = concern_id;
+            guard ["activity", "sleep", "food_service"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .concern_id, in: c, debugDescription: "Invalid contract value") }
+        }
+        title = try c.decode(String.self, forKey: .title)
+        explanation = try c.decode(String.self, forKey: .explanation)
+        evidence_codes = try c.decode([String].self, forKey: .evidence_codes)
+        do { let value = evidence_codes;
+            guard value.allSatisfy({ ["steps_comparison", "sleep_comparison", "purchase_frequency"].contains($0) }) else { throw DecodingError.dataCorruptedError(forKey: .evidence_codes, in: c, debugDescription: "Invalid contract value") }
+        }
+        confidence = try c.decode(String.self, forKey: .confidence)
+        do { let value = confidence;
+            guard ["limited", "moderate"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .confidence, in: c, debugDescription: "Invalid contract value") }
+        }
+        attribution = try c.decode(String.self, forKey: .attribution)
+        do { let value = attribution;
+            guard ["unconfirmed", "for_me", "not_for_me", "unsure"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .attribution, in: c, debugDescription: "Invalid contract value") }
+        }
+        evidence_summary = try c.decode(String.self, forKey: .evidence_summary)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(concern_id, forKey: .concern_id)
+        try c.encode(title, forKey: .title)
+        try c.encode(explanation, forKey: .explanation)
+        try c.encode(evidence_codes, forKey: .evidence_codes)
+        try c.encode(confidence, forKey: .confidence)
+        try c.encode(attribution, forKey: .attribution)
+        try c.encode(evidence_summary, forKey: .evidence_summary)
+    }
+}
+
+public struct PatternPeriod: Codable, Equatable, Sendable {
+    public var label: String
+    public var steps_average_bucket: Int?
+    public var sleep_hours_bucket: Double?
+    public var food_service_per_week_bucket: Int
+    public var workouts_per_week_bucket: Int
+    public var missing_steps: Bool
+    public var missing_sleep: Bool
+    public var missing_transactions: Bool
+    public init(label: String, steps_average_bucket: Int?, sleep_hours_bucket: Double?, food_service_per_week_bucket: Int, workouts_per_week_bucket: Int, missing_steps: Bool, missing_sleep: Bool, missing_transactions: Bool) {
+        self.label = label
+        self.steps_average_bucket = steps_average_bucket
+        self.sleep_hours_bucket = sleep_hours_bucket
+        self.food_service_per_week_bucket = food_service_per_week_bucket
+        self.workouts_per_week_bucket = workouts_per_week_bucket
+        self.missing_steps = missing_steps
+        self.missing_sleep = missing_sleep
+        self.missing_transactions = missing_transactions
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case label, steps_average_bucket, sleep_hours_bucket, food_service_per_week_bucket, workouts_per_week_bucket, missing_steps, missing_sleep, missing_transactions
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        label = try c.decode(String.self, forKey: .label)
+        do { let value = label;
+            guard ["recent4weeks", "baseline"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .label, in: c, debugDescription: "Invalid contract value") }
+        }
+        steps_average_bucket = try c.decodeIfPresent(Int.self, forKey: .steps_average_bucket)
+        sleep_hours_bucket = try c.decodeIfPresent(Double.self, forKey: .sleep_hours_bucket)
+        food_service_per_week_bucket = try c.decode(Int.self, forKey: .food_service_per_week_bucket)
+        workouts_per_week_bucket = try c.decode(Int.self, forKey: .workouts_per_week_bucket)
+        missing_steps = try c.decode(Bool.self, forKey: .missing_steps)
+        missing_sleep = try c.decode(Bool.self, forKey: .missing_sleep)
+        missing_transactions = try c.decode(Bool.self, forKey: .missing_transactions)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(label, forKey: .label)
+        try c.encode(steps_average_bucket, forKey: .steps_average_bucket)
+        try c.encode(sleep_hours_bucket, forKey: .sleep_hours_bucket)
+        try c.encode(food_service_per_week_bucket, forKey: .food_service_per_week_bucket)
+        try c.encode(workouts_per_week_bucket, forKey: .workouts_per_week_bucket)
+        try c.encode(missing_steps, forKey: .missing_steps)
+        try c.encode(missing_sleep, forKey: .missing_sleep)
+        try c.encode(missing_transactions, forKey: .missing_transactions)
+    }
+}
+
+public struct PatternOverview: Codable, Equatable, Sendable {
+    public var schema_version: String
+    public var status: String
+    public var analyzed_at: String?
+    public var run_id: String?
+    public var engine: String
+    public var is_demo: Bool
+    public var can_analyze: Bool
+    public var source_label: String
+    public var doctor_brief: String
+    public var privacy_notice: String
+    public var evidence: PatternAggregate?
+    public var findings: [PatternFinding]
+    public init(schema_version: String, status: String, analyzed_at: String?, run_id: String?, engine: String, is_demo: Bool, can_analyze: Bool, source_label: String, doctor_brief: String, privacy_notice: String, evidence: PatternAggregate?, findings: [PatternFinding]) {
+        self.schema_version = schema_version
+        self.status = status
+        self.analyzed_at = analyzed_at
+        self.run_id = run_id
+        self.engine = engine
+        self.is_demo = is_demo
+        self.can_analyze = can_analyze
+        self.source_label = source_label
+        self.doctor_brief = doctor_brief
+        self.privacy_notice = privacy_notice
+        self.evidence = evidence
+        self.findings = findings
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schema_version, status, analyzed_at, run_id, engine, is_demo, can_analyze, source_label, doctor_brief, privacy_notice, evidence, findings
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema_version = try c.decode(String.self, forKey: .schema_version)
+        do { let value = schema_version;
+            guard value == "1" else { throw DecodingError.dataCorruptedError(forKey: .schema_version, in: c, debugDescription: "Invalid contract value") }
+        }
+        status = try c.decode(String.self, forKey: .status)
+        do { let value = status;
+            guard ["not_analyzed", "running", "complete", "unavailable"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .status, in: c, debugDescription: "Invalid contract value") }
+        }
+        analyzed_at = try c.decodeIfPresent(String.self, forKey: .analyzed_at)
+        run_id = try c.decodeIfPresent(String.self, forKey: .run_id)
+        engine = try c.decode(String.self, forKey: .engine)
+        do { let value = engine;
+            guard ["deterministic", "LLMassisted"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .engine, in: c, debugDescription: "Invalid contract value") }
+        }
+        is_demo = try c.decode(Bool.self, forKey: .is_demo)
+        can_analyze = try c.decode(Bool.self, forKey: .can_analyze)
+        source_label = try c.decode(String.self, forKey: .source_label)
+        doctor_brief = try c.decode(String.self, forKey: .doctor_brief)
+        privacy_notice = try c.decode(String.self, forKey: .privacy_notice)
+        evidence = try c.decodeIfPresent(PatternAggregate.self, forKey: .evidence)
+        findings = try c.decode([PatternFinding].self, forKey: .findings)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schema_version, forKey: .schema_version)
+        try c.encode(status, forKey: .status)
+        try c.encode(analyzed_at, forKey: .analyzed_at)
+        try c.encode(run_id, forKey: .run_id)
+        try c.encode(engine, forKey: .engine)
+        try c.encode(is_demo, forKey: .is_demo)
+        try c.encode(can_analyze, forKey: .can_analyze)
+        try c.encode(source_label, forKey: .source_label)
+        try c.encode(doctor_brief, forKey: .doctor_brief)
+        try c.encode(privacy_notice, forKey: .privacy_notice)
+        try c.encode(evidence, forKey: .evidence)
+        try c.encode(findings, forKey: .findings)
+    }
+}
+
+public struct PatternAnalyzeRequest: Codable, Equatable, Sendable {
+    public var schema_version: String
+    public var request_id: String
+    public init(schema_version: String, request_id: String) {
+        self.schema_version = schema_version
+        self.request_id = request_id
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schema_version, request_id
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema_version = try c.decode(String.self, forKey: .schema_version)
+        do { let value = schema_version;
+            guard value == "1" else { throw DecodingError.dataCorruptedError(forKey: .schema_version, in: c, debugDescription: "Invalid contract value") }
+        }
+        request_id = try c.decode(String.self, forKey: .request_id)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schema_version, forKey: .schema_version)
+        try c.encode(request_id, forKey: .request_id)
+    }
+}
+
+public struct PatternClarifyRequest: Codable, Equatable, Sendable {
+    public var schema_version: String
+    public var run_id: String
+    public var concern_id: String
+    public var attribution: String
+    public init(schema_version: String, run_id: String, concern_id: String, attribution: String) {
+        self.schema_version = schema_version
+        self.run_id = run_id
+        self.concern_id = concern_id
+        self.attribution = attribution
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schema_version, run_id, concern_id, attribution
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema_version = try c.decode(String.self, forKey: .schema_version)
+        do { let value = schema_version;
+            guard value == "1" else { throw DecodingError.dataCorruptedError(forKey: .schema_version, in: c, debugDescription: "Invalid contract value") }
+        }
+        run_id = try c.decode(String.self, forKey: .run_id)
+        concern_id = try c.decode(String.self, forKey: .concern_id)
+        do { let value = concern_id;
+            guard ["activity", "sleep", "food_service"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .concern_id, in: c, debugDescription: "Invalid contract value") }
+        }
+        attribution = try c.decode(String.self, forKey: .attribution)
+        do { let value = attribution;
+            guard ["for_me", "not_for_me", "unsure"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .attribution, in: c, debugDescription: "Invalid contract value") }
+        }
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schema_version, forKey: .schema_version)
+        try c.encode(run_id, forKey: .run_id)
+        try c.encode(concern_id, forKey: .concern_id)
+        try c.encode(attribution, forKey: .attribution)
+    }
+}
+
 public struct PreferencesNotifications: Codable, Equatable, Sendable {
     public var enabled: Bool
     public var local_time: String

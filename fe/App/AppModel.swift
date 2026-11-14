@@ -7,6 +7,10 @@ import CompanionCore
 @MainActor final class AppModel: ObservableObject {
     @Published private(set) var snapshot = LocalSnapshot()
     @Published private(set) var experience: ExperienceV1?
+    @Published private(set) var patternOverview: PatternOverview?
+    @Published private(set) var patternBusy = false
+    @Published private(set) var patternMessage: String?
+    private var patternRequestID: String?
     @Published private(set) var busy = false
     @Published var message: String?
     @Published private(set) var connected = false
@@ -47,7 +51,7 @@ import CompanionCore
         plaidUpdates = plaid?.objectWillChange.sink { [weak self] _ in Task { @MainActor in self?.objectWillChange.send() } }
     }
     func hideForAdmission() {
-        admissionBlocked = true; connected = false; experience = nil; snapshot = LocalSnapshot()
+        admissionBlocked = true; connected = false; experience = nil; patternOverview = nil; patternRequestID = nil; snapshot = LocalSnapshot()
         health.cancelAll(); reminders.cancelAll(); plaid?.pauseForAdmission(); banking.pauseForAdmission()
     }
     func allowAdmittedUpdates() { admissionBlocked = false; banking.admissionRestored() }
@@ -58,7 +62,7 @@ import CompanionCore
         health.cancelAll()
         if cancelReminders { reminders.cancelAll() } else { reminders.suspendCallbacks() }
         client.invalidateSession()
-        snapshot = LocalSnapshot(); experience = nil; message = nil; connected = false
+        snapshot = LocalSnapshot(); experience = nil; patternOverview = nil; patternRequestID = nil; patternMessage = nil; message = nil; connected = false
     }
     private func publish() {
         guard active, !admissionBlocked else { return }
@@ -69,6 +73,7 @@ import CompanionCore
             experience = nil; reminders.cancelAll()
         }
         if epoch != nil && epoch != snapshot.state?.data_epoch {
+            patternOverview = nil; patternRequestID = nil
             plaid?.cancel("Records were reset. Reconnect explicitly if needed."); banking.cancelForLifecycle()
         }
     }
@@ -84,12 +89,38 @@ import CompanionCore
             }
             guard active, !admissionBlocked else { return }
             experience = value; connected = true
+            patternOverview = try? await client.patterns()
+            guard active, !admissionBlocked else { patternOverview = nil; return }
             try await reminders.reconcile(state: state, locallyBlocked: hasPending)
             notificationPermission = reminders.permission
         } catch {
             guard active else { return }
             experience = nil; message = "Your overview couldn’t be loaded. Try refreshing."
         }
+    }
+    func analyzePatterns() async {
+        guard active, !admissionBlocked, !busy, !patternBusy, !hasPending else { return }
+        patternBusy = true; busy = true; patternMessage = nil
+        defer { patternBusy = false; busy = false }
+        if patternRequestID == nil { patternRequestID = UUID().uuidString }
+        do {
+            let value = try await client.patterns(requestID: patternRequestID)
+            guard active, !admissionBlocked else { return }
+            patternOverview = value; patternRequestID = nil
+        } catch {
+            guard active, !admissionBlocked else { return }
+            // Keep the same request ID for an ambiguous transport retry.
+            patternMessage = "Pattern review couldn’t be loaded. Retry safely with the same request."
+        }
+    }
+    func clarifyPattern(_ concernID: String, attribution: String) async {
+        guard active, !admissionBlocked, !busy, let run = patternOverview?.run_id else { return }
+        busy = true; defer { busy = false }
+        do {
+            let value = try await client.clarifyPattern(runID: run, concernID: concernID, attribution: attribution)
+            guard active, !admissionBlocked else { return }
+            patternOverview = value
+        } catch { patternMessage = "Context wasn’t saved. Refresh and try again." }
     }
     private func perform(preferReceivedExperience: Bool = false, _ action: (CompanionClient) async throws -> Void) async {
         guard active, !admissionBlocked, !busy else { return }
@@ -103,6 +134,9 @@ import CompanionCore
             if !hasPending {
                 if preferReceivedExperience, let received = client.experienceSnapshot { experience = received }
                 else { experience = try await client.refreshExperience() }
+                let patterns = try? await client.patterns()
+                guard active, !admissionBlocked else { return }
+                patternOverview = patterns
             }
             guard active else { return }
             connected = true
@@ -146,7 +180,7 @@ import CompanionCore
         await perform(preferReceivedExperience: true) { client in try await submit(request, path: "/experience/v1/answers", client: client) }
     }
     func deleteData() async {
-        banking.cancelForLifecycle(); plaid?.cancel("Deletion requested. Connection work stopped."); health.cancelAll(); reminders.cancelAll(); experience = nil
+        banking.cancelForLifecycle(); plaid?.cancel("Deletion requested. Connection work stopped."); health.cancelAll(); reminders.cancelAll(); experience = nil; patternOverview = nil; patternRequestID = nil
         await perform { client in
             guard let current = client.snapshot.state else { throw ClientFailure.noState }
             try await submit(DeleteRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: current.data_epoch, confirm: "delete_all"), path: "/data", method: "DELETE", replacingQueue: true, client: client)

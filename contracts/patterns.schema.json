@@ -1,0 +1,340 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "Aggregate": {
+      "additionalProperties": false,
+      "properties": {
+        "sample_count_bucket": {
+          "enum": [
+            "none",
+            "under100",
+            "100to999",
+            "1000plus"
+          ],
+          "title": "Sample Count Bucket",
+          "type": "string"
+        },
+        "recent": {
+          "$ref": "#/$defs/Period"
+        },
+        "baseline": {
+          "$ref": "#/$defs/Period"
+        }
+      },
+      "required": [
+        "sample_count_bucket",
+        "recent",
+        "baseline"
+      ],
+      "title": "Aggregate",
+      "type": "object"
+    },
+    "Finding": {
+      "additionalProperties": false,
+      "properties": {
+        "concern_id": {
+          "enum": [
+            "activity",
+            "sleep",
+            "food_service"
+          ],
+          "title": "Concern Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "explanation": {
+          "title": "Explanation",
+          "type": "string"
+        },
+        "evidence_codes": {
+          "items": {
+            "enum": [
+              "steps_comparison",
+              "sleep_comparison",
+              "purchase_frequency"
+            ],
+            "type": "string"
+          },
+          "title": "Evidence Codes",
+          "type": "array"
+        },
+        "confidence": {
+          "enum": [
+            "limited",
+            "moderate"
+          ],
+          "title": "Confidence",
+          "type": "string"
+        },
+        "attribution": {
+          "default": "unconfirmed",
+          "enum": [
+            "unconfirmed",
+            "for_me",
+            "not_for_me",
+            "unsure"
+          ],
+          "title": "Attribution",
+          "type": "string"
+        },
+        "evidence_summary": {
+          "title": "Evidence Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "concern_id",
+        "title",
+        "explanation",
+        "evidence_codes",
+        "confidence",
+        "evidence_summary"
+      ],
+      "title": "Finding",
+      "type": "object"
+    },
+    "Period": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "enum": [
+            "recent4weeks",
+            "baseline"
+          ],
+          "title": "Label",
+          "type": "string"
+        },
+        "steps_average_bucket": {
+          "anyOf": [
+            {
+              "maximum": 50000,
+              "minimum": 0,
+              "multipleOf": 1000,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Steps Average Bucket"
+        },
+        "sleep_hours_bucket": {
+          "anyOf": [
+            {
+              "maximum": 24,
+              "minimum": 0,
+              "multipleOf": 0.5,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Sleep Hours Bucket"
+        },
+        "food_service_per_week_bucket": {
+          "maximum": 14,
+          "minimum": 0,
+          "title": "Food Service Per Week Bucket",
+          "type": "integer"
+        },
+        "workouts_per_week_bucket": {
+          "maximum": 14,
+          "minimum": 0,
+          "title": "Workouts Per Week Bucket",
+          "type": "integer"
+        },
+        "missing_steps": {
+          "title": "Missing Steps",
+          "type": "boolean"
+        },
+        "missing_sleep": {
+          "title": "Missing Sleep",
+          "type": "boolean"
+        },
+        "missing_transactions": {
+          "title": "Missing Transactions",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "label",
+        "steps_average_bucket",
+        "sleep_hours_bucket",
+        "food_service_per_week_bucket",
+        "workouts_per_week_bucket",
+        "missing_steps",
+        "missing_sleep",
+        "missing_transactions"
+      ],
+      "title": "Period",
+      "type": "object"
+    },
+    "Overview": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1",
+          "default": "1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "not_analyzed",
+            "running",
+            "complete",
+            "unavailable"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "analyzed_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Analyzed At"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Run Id"
+        },
+        "engine": {
+          "enum": [
+            "deterministic",
+            "LLMassisted"
+          ],
+          "title": "Engine",
+          "type": "string"
+        },
+        "is_demo": {
+          "title": "Is Demo",
+          "type": "boolean"
+        },
+        "can_analyze": {
+          "title": "Can Analyze",
+          "type": "boolean"
+        },
+        "source_label": {
+          "title": "Source Label",
+          "type": "string"
+        },
+        "doctor_brief": {
+          "title": "Doctor Brief",
+          "type": "string"
+        },
+        "privacy_notice": {
+          "default": "Only a coarse pattern summary is sent for AI review, not identities, merchants or raw records. Aggregates can still be sensitive. Missing data is unknown, not zero. These are observations, not diagnoses or causes.",
+          "title": "Privacy Notice",
+          "type": "string"
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Aggregate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/Finding"
+          },
+          "title": "Findings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "status",
+        "analyzed_at",
+        "run_id",
+        "engine",
+        "is_demo",
+        "can_analyze",
+        "source_label",
+        "doctor_brief",
+        "evidence",
+        "findings"
+      ],
+      "title": "PatternOverview",
+      "type": "object"
+    },
+    "Request": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id"
+      ],
+      "title": "AnalyzeRequest",
+      "type": "object"
+    },
+    "ClarifyRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "concern_id": {
+          "enum": [
+            "activity",
+            "sleep",
+            "food_service"
+          ],
+          "title": "Concern Id",
+          "type": "string"
+        },
+        "attribution": {
+          "enum": [
+            "for_me",
+            "not_for_me",
+            "unsure"
+          ],
+          "title": "Attribution",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "run_id",
+        "concern_id",
+        "attribution"
+      ],
+      "title": "ClarifyRequest",
+      "type": "object"
+    }
+  }
+}

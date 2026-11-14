@@ -46,6 +46,8 @@ import Combine
             var value = try Wire.decode(ExperienceV1.self, Data(contentsOf: file)); value.data_epoch = state.data_epoch; value.revision = state.revision
             return HTTPResult(status: 200, body: try Wire.encode(value))
         }
+        // Legacy-controller tests do not opt into the additive normalized-data profile.
+        if request.url?.path == "/patterns/v1" { throw ClientFailure.invalidEndpoint }
         let object = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
         let action = object["action"] as! String
         if action == unauthorizedAction, unauthorizedOnce || unauthorizedAlways { unauthorizedOnce = false; return HTTPResult(status: 401, body: Data()) }
