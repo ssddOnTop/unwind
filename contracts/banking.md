@@ -4,7 +4,7 @@ Frozen 2026-11-14. Native UI renders server fields and sends actions; no account
 
 ## Activation and exact interface
 
-Explicit `--banking` / `banking_profile=True` opts into multi-Item Sandbox management and implies the Sandbox state profile. It composes with `--auth` and PostgreSQL. Without it the legacy profiles are unchanged. With it legacy `/connections/plaid` mutations return a sanitized 409 rather than overwriting multi-bank state; use the versioned banking actions instead. No public seed or public-token shortcut is added. Authenticated banking routes require the same verified issuer+subject boundary as every other data route.
+Explicit `--banking` / `banking_profile=True` opts into multi-Item Sandbox management and implies the Sandbox state profile. It composes with `--auth` and PostgreSQL. Without it the legacy profiles are unchanged. With it legacy `/connections/plaid` mutations return a sanitized 409 rather than overwriting multi-bank state; already committed keyed receipts can still replay their exact historical response. Use the versioned banking actions for new work. Once private format v2 is written, startup without this profile fails closed rather than attempting a single-Item downgrade. No public seed or public-token shortcut is added. Authenticated banking routes require the same verified issuer+subject boundary as every other data route.
 
 - GET `/banking/v1`: no body/query; returns the schema root `$defs.banking` with `result=null`.
 - POST `/banking/v1/actions`: discriminated `$defs.request` by `action`; returns the same root with typed nullable `$defs.result`.

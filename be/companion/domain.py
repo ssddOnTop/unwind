@@ -79,12 +79,12 @@ def consent(state, source_id):
     return source
 
 
-def preference_update(state, preferences):
+def preference_update(state, preferences, allow_plaid=False):
     zone(preferences["timezone"])
     for field in ("enabled_source_ids", "suppressed_scenario_ids"):
         if len(preferences[field]) != len(set(preferences[field])):
             raise DomainError()
-    if {"plaid", "email"} & set(preferences["enabled_source_ids"]):
+    if "email" in preferences["enabled_source_ids"] or ("plaid" in preferences["enabled_source_ids"] and not allow_plaid):
         raise DomainError("not_configured", 409)
     state["preferences"] = deepcopy(preferences)
     for source in state["sources"]:

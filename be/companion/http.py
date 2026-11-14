@@ -28,8 +28,11 @@ def envelope(code, message, request_id=None):
 
 class Boundary:
     """Bound bytes before buffering; reject malformed/unknown JSON without echoing private inputs."""
-    def __init__(self, app):
+    def __init__(self, app, plaid_profile=False, experience_profile=False, banking_profile=False):
         self.app = app
+        self.plaid_profile = plaid_profile
+        self.experience_profile = experience_profile
+        self.banking_profile = banking_profile
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -47,7 +50,15 @@ class Boundary:
             if host not in {"127.0.0.1", "localhost"}:
                 raise DomainError("invalid_request", 400, "Only local loopback hosts are supported.")
             route = (scope["method"], scope["path"])
-            if scope.get("query_string") and scope["path"] in {"/health", "/state", *(r[1] for r in REQUESTS)}:
+            requests = dict(REQUESTS)
+            if self.plaid_profile:
+                requests[("POST", "/connections/plaid")] = "request"
+            if self.experience_profile:
+                requests[("POST", "/experience/v1/answers")] = "answer_request"
+            if self.banking_profile:
+                requests[('POST','/banking/v1/actions')] = 'banking_request'
+            reads = {"/health", "/state"} | ({"/experience/v1"} if self.experience_profile else set()) | ({'/banking/v1'} if self.banking_profile else set())
+            if scope.get("query_string") and scope["path"] in {*reads, *(r[1] for r in requests)}:
                 raise DomainError()
             chunks, size = [], 0
             while True:
@@ -62,7 +73,7 @@ class Boundary:
                 if not message.get("more_body"):
                     break
             raw = b"".join(chunks)
-            if route in REQUESTS:
+            if route in requests:
                 try:
                     def no_duplicates(pairs):
                         result = {}
@@ -79,8 +90,18 @@ class Boundary:
                     request_id = body["request_id"]
                 if headers.get(b"content-type", b"").split(b";")[0].strip().lower() != b"application/json":
                     raise DomainError()
-                validate(REQUESTS[route], body)
-            elif scope["path"] in {"/health", "/state"} and raw:
+                if route == ('POST','/banking/v1/actions'):
+                    from .banking_contracts import validate_banking
+                    validate_banking('request',body)
+                elif route == ("POST", "/connections/plaid"):
+                    from .plaid_contracts import validate_profile
+                    validate_profile("request", body)
+                elif route == ("POST", "/experience/v1/answers"):
+                    from .experience_contracts import validate_experience
+                    validate_experience("answer_request", body)
+                else:
+                    validate(requests[route], body)
+            elif scope["path"] in reads and raw:
                 raise DomainError()
             scope.setdefault("state", {})["request_id"] = request_id
             delivered = False
@@ -101,8 +122,14 @@ class Boundary:
 
 
 def create_app(data_dir: Path | None = None, *, replacements=None, scheduler=None, clock=None,
-               synthesis_timeout=30, housekeeping_interval=60):
-    service = build_service(data_dir or ROOT / "be" / ".data", replacements, scheduler, clock, synthesis_timeout)
+               synthesis_timeout=30, housekeeping_interval=60, plaid_profile=False, experience_profile=False,
+               webhook_url=None, account_id=None, plaid_owner_check=None, banking_profile=False, banking_claim_item=None):
+    plaid_profile = plaid_profile or banking_profile
+    service = build_service(data_dir or ROOT / "be" / ".data", replacements, scheduler, clock, synthesis_timeout, plaid_profile, experience_profile, webhook_url, account_id, plaid_owner_check, banking_profile, banking_claim_item)
+    state_model, ingestion_model = State, IngestionResponse
+    if plaid_profile:
+        from .plaid_contracts import PlaidState, PlaidIngestionResponse
+        state_model, ingestion_model = PlaidState, PlaidIngestionResponse
     daily = DailyCoordinator(service, clock=clock or utcnow)
     @asynccontextmanager
     async def lifespan(app):
@@ -112,6 +139,8 @@ def create_app(data_dir: Path | None = None, *, replacements=None, scheduler=Non
             while not stopping.is_set():
                 try:
                     await service.housekeep()
+                    if service.plaid_coordinator:
+                        await service.plaid_coordinator.daily_sync()
                     await daily.tick()
                 except Exception:
                     # No private records or exception payloads in ordinary logs.
@@ -136,7 +165,7 @@ def create_app(data_dir: Path | None = None, *, replacements=None, scheduler=Non
                   redoc_url=None, swagger_ui_oauth2_redirect_url=None)
     app.state.service = service
     app.state.housekeeping_failed = False
-    app.add_middleware(Boundary)
+    app.add_middleware(Boundary, plaid_profile=plaid_profile, experience_profile=experience_profile, banking_profile=banking_profile)
     errors = {status: {"model": ErrorResponse} for status in (400, 404, 409, 413, 422, 500)}
 
     @app.exception_handler(DomainError)
@@ -159,34 +188,62 @@ def create_app(data_dir: Path | None = None, *, replacements=None, scheduler=Non
     @app.get("/health", response_model=Health, responses=errors)
     async def health():
         return {"schema_version": "1", "status": "degraded" if app.state.housekeeping_failed or service.required_failure else "ok",
-                "service": "local-companion", "capabilities": service.registry.metadata()}
+                "service": "local-companion", "capabilities": [c for c in service.registry.metadata() if c["id"] not in {'experience','banking'}]}
 
-    @app.get("/state", response_model=State, responses=errors)
+    @app.get("/state", response_model=state_model, responses=errors)
     async def state():
         return await service.state()
 
-    @app.post("/observations", response_model=IngestionResponse, responses=errors)
+    @app.post("/observations", response_model=ingestion_model, responses=errors)
     async def observations(body: ObservationBatch):
         return await service.mutate("/observations", body.model_dump())
 
-    @app.post("/feedback", response_model=State, responses=errors)
+    @app.post("/feedback", response_model=state_model, responses=errors)
     async def feedback(body: FeedbackRequest):
         return await service.mutate("/feedback", body.model_dump())
 
-    @app.put("/preferences", response_model=State, responses=errors)
+    @app.put("/preferences", response_model=state_model, responses=errors)
     async def preferences(body: PreferencesRequest):
         return await service.mutate("/preferences", body.model_dump())
 
-    @app.post("/process", response_model=State, responses=errors)
+    @app.post("/process", response_model=state_model, responses=errors)
     async def process(body: ProcessRequest):
         return await service.mutate("/process", body.model_dump())
 
-    @app.post("/demo", response_model=State, responses=errors)
+    @app.post("/demo", response_model=state_model, responses=errors)
     async def demo(body: DemoRequest):
         return await service.mutate("/demo", body.model_dump())
 
-    @app.delete("/data", response_model=State, responses=errors)
+    @app.delete("/data", response_model=state_model, responses=errors)
     async def delete(body: DeleteRequest):
         return await service.mutate("/data", body.model_dump())
+
+    if plaid_profile:
+        from .plaid_contracts import PlaidRequest, PlaidResponse
+        @app.post("/connections/plaid", response_model=PlaidResponse, responses=errors)
+        async def plaid(body: PlaidRequest):
+            return await service.mutate("/connections/plaid", body.model_dump())
+
+    if experience_profile:
+        from .experience_contracts import Experience, AnswerRequest, ExperienceError
+        experience_errors = {status: {"model": ExperienceError} for status in errors}
+
+        @app.get("/experience/v1", response_model=Experience, responses=experience_errors)
+        async def experience():
+            return await service.experience_coordinator.get()
+
+        @app.post("/experience/v1/answers", response_model=Experience, responses=experience_errors)
+        async def answer(body: AnswerRequest):
+            return await service.experience_coordinator.answer(body.model_dump())
+
+    if banking_profile:
+        from .banking_contracts import Banking, BankingRequest, BankingError
+        banking_errors = {status: {'model': BankingError} for status in errors}
+        @app.get('/banking/v1',response_model=Banking,responses=banking_errors)
+        async def banking():
+            return await service.banking_coordinator.get()
+        @app.post('/banking/v1/actions',response_model=Banking,responses=banking_errors)
+        async def banking_action(body: BankingRequest):
+            return await service.banking_coordinator.action(body.model_dump())
 
     return app

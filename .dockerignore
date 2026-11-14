@@ -1,0 +1,30 @@
+# Build context is an allowlist, independent of git tracking.
+**
+!Dockerfile
+!.dockerignore
+!be/
+!be/pyproject.toml
+!be/uv.lock
+!be/companion/
+!be/companion/**/
+!be/companion/**/*.py
+!contracts/
+!contracts/state.schema.json
+!contracts/scenarios.json
+!contracts/state.example.json
+!contracts/observation-batch.example.json
+!contracts/plaid.schema.json
+!contracts/experience.schema.json
+!contracts/banking.schema.json
+# Never admit generated or private content even under a source directory.
+**/__pycache__/**
+**/.venv*/**
+**/evidence/**
+**/tests/**
+**/fixtures/**
+**/.env*
+**/*.crt
+**/*.pem
+**/*.key
+**/*.sqlite*
+**/*.db*

@@ -2,26 +2,64 @@
 from __future__ import annotations
 
 import os
+import re
+from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import httpx
     from langchain_core.language_models import BaseChatModel
 
-_BASE_URLS = {
-    "openrouter": "https://openrouter.ai/api/v1",
-    "requesty": "https://router.requesty.ai/v1",
-}
-_KEY_NAMES = {"openrouter": "OPENROUTER_API_KEY", "requesty": "REQUESTY_API_KEY"}
+_BASE_URL = "https://openrouter.ai/api/v1"
+_FREE_VARIANT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*:free")
+
+
+def _free_model_name(model: str) -> bool:
+    return model == "openrouter/free" or _FREE_VARIANT.fullmatch(model) is not None
+
+
+def _load_catalog() -> dict:
+    """Public metadata only: never send a key to the catalog endpoint."""
+    import httpx
+
+    try:
+        with httpx.Client(timeout=5.0, trust_env=False, follow_redirects=False) as client:
+            response = client.get(_BASE_URL + "/models")
+            response.raise_for_status()
+            return response.json()
+    except (httpx.HTTPError, ValueError):
+        raise ValueError("Free model catalog validation unavailable.") from None
+
+
+def _validate_free_model(model: str) -> None:
+    # This named router is documented to select only free models and has no fee.
+    if model == "openrouter/free":
+        return
+    if not _free_model_name(model):
+        raise ValueError("Only free OpenRouter models are permitted.")
+    catalog = _load_catalog()
+    for item in catalog.get("data", []):
+        if item.get("id") != model:
+            continue
+        pricing = item.get("pricing", {})
+        try:
+            zero = (all(key in pricing for key in ("prompt", "completion"))
+                    and all(Decimal(str(value)) == 0 for value in pricing.values()))
+        except (InvalidOperation, ValueError, TypeError):
+            zero = False
+        if zero and "tools" in item.get("supported_parameters", []):
+            return
+        break
+    raise ValueError("Model is not catalog-verified as zero-priced with tools.")
 
 
 def _configuration() -> tuple[str, str, str] | None:
-    """No implicit provider/model, arbitrary URLs, or front-end key parameters."""
+    """Free OpenRouter only; Requesty keys, paid IDs and fallbacks stay unused."""
     provider = os.environ.get("COMPANION_LLM_PROVIDER", "").strip().lower()
     model = os.environ.get("COMPANION_LLM_MODEL", "").strip()
-    if provider not in _BASE_URLS or not model or len(model) > 200:
+    if provider != "openrouter" or len(model) > 200 or not _free_model_name(model):
         return None
-    key = os.environ.get(_KEY_NAMES[provider], "").strip()
+    key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if not key:
         return None
     return provider, model, key
@@ -59,7 +97,8 @@ def create_chat_model(
         return None
     from langchain_openai import ChatOpenAI
 
-    provider, model, key = config
+    _, model, key = config
+    _validate_free_model(model)
     options = {}
     if http_client is not None:
         options["http_client"] = http_client
@@ -68,12 +107,21 @@ def create_chat_model(
     return ChatOpenAI(
         model=model,
         api_key=key,
-        base_url=_BASE_URLS[provider],
+        base_url=_BASE_URL,
         use_responses_api=False,
         timeout=10.0,
         max_retries=0,
         max_tokens=250,
         streaming=False,
         callbacks=[],
+        extra_body={
+            "provider": {
+                "max_price": {"prompt": 0, "completion": 0, "request": 0, "image": 0},
+                "allow_fallbacks": False,
+                "require_parameters": True,
+            },
+            "plugins": [],
+            "reasoning": {"enabled": False},
+        },
         **options,
     )

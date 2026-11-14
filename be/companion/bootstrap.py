@@ -34,7 +34,7 @@ class UnavailableSynthesis:
         return synthesis(mode, "failed", "internal_error")
 
 
-def build_service(data_dir: Path, replacements=None, scheduler=None, clock=None, synthesis_timeout=30):
+def build_service(data_dir: Path, replacements=None, scheduler=None, clock=None, synthesis_timeout=30, plaid_profile=False, experience_profile=False, webhook_url=None, account_id=None, plaid_owner_check=None, banking_profile=False, banking_claim_item=None):
     replacements = replacements or {}
     registry = Registry()
     implementations = {
@@ -51,8 +51,32 @@ def build_service(data_dir: Path, replacements=None, scheduler=None, clock=None,
             return UnavailableSynthesis(data_dir / "checkpoints.sqlite")
         return SynthesisExtension(data_dir / "checkpoints.sqlite")
     implementations["synthesis"] = synthesis_factory
+    if plaid_profile:
+        from .connections.plaid import PlaidSandboxClient, SandboxCredentials
+        from .extensions.plaid import PlaidExtension
+        implementations["plaid"] = lambda: PlaidExtension(data_dir, PlaidSandboxClient(SandboxCredentials.from_environment()), webhook_url=webhook_url, client_user_id=account_id, ownership_check=plaid_owner_check)
+    if banking_profile:
+        from .extensions.banking import BankingExtension
+        from .connections.plaid import PlaidSandboxClient, SandboxCredentials
+        implementations['banking'] = lambda: BankingExtension(data_dir, PlaidSandboxClient(SandboxCredentials.from_environment()), webhook_url=webhook_url, client_user_id=account_id, ownership_check=plaid_owner_check, claim_item=banking_claim_item)
+    if experience_profile:
+        from .extensions.experience import ExperienceExtension
+        implementations["experience"] = ExperienceExtension
     for capability, factory in implementations.items():
         extension = replacements.get(capability)
         registry.register(extension if extension is not None else factory())
     kwargs = {"clock": clock} if clock else {}
-    return CompanionService(registry, scheduler or NotificationScheduler(), synthesis_timeout=synthesis_timeout, **kwargs)
+    service = CompanionService(registry, scheduler or NotificationScheduler(), synthesis_timeout=synthesis_timeout, **kwargs)
+    if plaid_profile:
+        from .plaid_service import PlaidCoordinator
+        from .plaid_contracts import validate_profile
+        service.plaid_coordinator = PlaidCoordinator(service)
+        service.state_validator = lambda s: validate_profile("state", s)
+    if banking_profile:
+        from .banking_service import BankingCoordinator
+        service.banking_coordinator = BankingCoordinator(service)
+        service.plaid_coordinator = service.banking_coordinator
+    if experience_profile:
+        from .experience_service import ExperienceCoordinator
+        service.experience_coordinator = ExperienceCoordinator(service)
+    return service
