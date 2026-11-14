@@ -1,0 +1,95 @@
+{
+  "schema_version": "1",
+  "data_epoch": "banking-example-epoch",
+  "revision": 12,
+  "generated_at": "2026-11-14T12:00:00.123Z",
+  "environment": "sandbox",
+  "status": "ready",
+  "selection_notice": "Keep saved history. Stop future imports. Exclude new insights.",
+  "connections": [
+    {
+      "id": "connection-opaque",
+      "label": "Server bank label",
+      "institution_name": "Server institution",
+      "status": "connected",
+      "can_manage": true,
+      "can_disconnect": true,
+      "last_inventory_at": "2026-11-14T12:00:00Z",
+      "last_sync_at": null,
+      "accounts": [
+        {
+          "id": "account-opaque",
+          "name": "Server checking",
+          "official_name": "Server official name",
+          "mask": "0007",
+          "type": "depository",
+          "subtype": "checking",
+          "availability": "available",
+          "enabled": false,
+          "can_enable": true,
+          "import_status": "disabled",
+          "last_sync_at": null
+        },
+        {
+          "id": "account-other",
+          "name": "Server future account",
+          "official_name": null,
+          "mask": null,
+          "type": "future-type",
+          "subtype": "future-subtype",
+          "availability": "available",
+          "enabled": true,
+          "can_enable": true,
+          "import_status": "ready",
+          "last_sync_at": "2026-11-14T12:00:00+00:00"
+        }
+      ],
+      "groups": [
+        {
+          "id": "group-opaque",
+          "label": "Server-defined group",
+          "account_ids": [
+            "account-other",
+            "account-opaque"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "connection-retained",
+      "label": "Retained server bank",
+      "institution_name": null,
+      "status": "disconnected",
+      "can_manage": false,
+      "can_disconnect": false,
+      "last_inventory_at": null,
+      "last_sync_at": null,
+      "accounts": [
+        {
+          "id": "account-retained",
+          "name": "Retained account",
+          "official_name": null,
+          "mask": "0012",
+          "type": "loan",
+          "subtype": null,
+          "availability": "disconnected",
+          "enabled": false,
+          "can_enable": false,
+          "import_status": "disabled",
+          "last_sync_at": null
+        }
+      ],
+      "groups": []
+    }
+  ],
+  "result": {
+    "status": "partial",
+    "message": "Server result message",
+    "link_session_id": null,
+    "link_token": null,
+    "expiration": null,
+    "added": 0,
+    "modified": null,
+    "removed": null
+  }
+}

@@ -1,104 +1,179 @@
 import Foundation
 import SwiftUI
+import Combine
 import CompanionCore
 
+/// Account-scoped native infrastructure. All Home/visit/answer authority comes from /experience/v1.
 @MainActor final class AppModel: ObservableObject {
     @Published private(set) var snapshot = LocalSnapshot()
+    @Published private(set) var experience: ExperienceV1?
     @Published private(set) var busy = false
     @Published var message: String?
     @Published private(set) var connected = false
     @Published private(set) var notificationPermission = "Not checked"
-    private let client: CompanionClient?
+    /// Explicit dependency for legacy compatibility tests only; runtime uses banking v1.
+    let plaid: PlaidController?
+    let banking: BankingController
+    private var bankingUpdates: AnyCancellable?
+    private let client: CompanionClient
     private let health = HealthStepsAdapter()
-    private let reminders = LocalReminders()
-    var state: CompanionCore.State? { snapshot.hidesCachedData ? nil : snapshot.state }
+    private let reminders: LocalReminders
+    private var active = true
+    private var admissionBlocked = false
+    private var plaidUpdates: AnyCancellable?
+    private var refreshTask: Task<Void, Never>?
+    var state: CompanionCore.State? { active && !admissionBlocked && !snapshot.hidesCachedData ? snapshot.state : nil }
     var hasPending: Bool { !snapshot.outbox.isEmpty }
 
-    init() {
-        do {
-            let directory = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("LocalCompanion", isDirectory: true)
-            let client = try CompanionClient(storage: ProtectedStorage(directory: directory))
-            self.client = client; snapshot = client.snapshot
-        } catch {
-            client = nil
-            message = "Local protected storage is unavailable. Unlock your device and relaunch. No cached records or pending writes were overwritten."
+    init(client: CompanionClient, accountNamespace: String, legacyController: PlaidController? = nil) {
+        self.client = client
+        reminders = LocalReminders(accountNamespace: accountNamespace)
+        // Do not publish disk snapshots before a current authenticated fetch succeeds.
+        plaid = legacyController
+        banking = BankingController(client: client)
+        plaid?.stateChanged = { [weak self] in
+            guard let self, self.active, !self.admissionBlocked else { return }
+            self.publish()
+            self.refreshTask?.cancel()
+            self.refreshTask = Task { [weak self] in await self?.reloadExperience() }
         }
+        banking.stateChanged = { [weak self] in
+            guard let self, self.active, !self.admissionBlocked else { return }
+            self.publish()
+            self.refreshTask?.cancel()
+            self.refreshTask = Task { [weak self] in await self?.reloadExperience() }
+        }
+        bankingUpdates = banking.objectWillChange.sink { [weak self] _ in Task { @MainActor in self?.objectWillChange.send() } }
+        plaidUpdates = plaid?.objectWillChange.sink { [weak self] _ in Task { @MainActor in self?.objectWillChange.send() } }
+    }
+    func hideForAdmission() {
+        admissionBlocked = true; connected = false; experience = nil; snapshot = LocalSnapshot()
+        health.cancelAll(); reminders.cancelAll(); plaid?.pauseForAdmission(); banking.pauseForAdmission()
+    }
+    func allowAdmittedUpdates() { admissionBlocked = false; banking.admissionRestored() }
+    func invalidateForSignOut(cancelReminders: Bool = true) {
+        active = false; banking.invalidateSession()
+        refreshTask?.cancel(); refreshTask = nil
+        plaid?.cancel("Signed out. Connection work stopped.")
+        health.cancelAll()
+        if cancelReminders { reminders.cancelAll() } else { reminders.suspendCallbacks() }
+        client.invalidateSession()
+        snapshot = LocalSnapshot(); experience = nil; message = nil; connected = false
     }
     private func publish() {
-        guard let client else { return }
-        let previousEpoch = snapshot.state?.data_epoch
+        guard active, !admissionBlocked else { return }
+        let epoch = snapshot.state?.data_epoch
         snapshot = client.snapshot
-        if previousEpoch != snapshot.state?.data_epoch || hasPending { reminders.cancelAll() }
-        if previousEpoch != nil && previousEpoch != snapshot.state?.data_epoch {
-            message = "Server data epoch changed. Earlier cached records and pending requests were cleared, never relabeled."
+        let olderExperience = experience.map { $0.data_epoch != snapshot.state?.data_epoch || $0.revision < (snapshot.state?.revision ?? 0) } ?? false
+        if epoch != snapshot.state?.data_epoch || hasPending || olderExperience {
+            experience = nil; reminders.cancelAll()
+        }
+        if epoch != nil && epoch != snapshot.state?.data_epoch {
+            plaid?.cancel("Records were reset. Reconnect explicitly if needed."); banking.cancelForLifecycle()
         }
     }
-    private func perform(network: Bool = true, _ action: (CompanionClient) async throws -> Void) async {
-        guard !busy, let client else { return }
-        busy = true; message = nil
-        defer { busy = false }
+    private func reloadExperience() async {
+        guard active, !admissionBlocked, !hasPending else { return }
         do {
-            try await action(client); publish(); if network { connected = true }
+            var value = try await client.refreshExperience()
+            guard active, !admissionBlocked else { return }
+            if plaid == nil, client.bankingSnapshot == nil, !banking.working {
+                await banking.refresh(notify: false)
+                guard active, !admissionBlocked else { return }
+                publish(); value = try await client.refreshExperience()
+            }
+            guard active, !admissionBlocked else { return }
+            experience = value; connected = true
             try await reminders.reconcile(state: state, locallyBlocked: hasPending)
             notificationPermission = reminders.permission
         } catch {
+            guard active else { return }
+            experience = nil; message = "Your overview couldn’t be loaded. Try refreshing."
+        }
+    }
+    private func perform(preferReceivedExperience: Bool = false, _ action: (CompanionClient) async throws -> Void) async {
+        guard active, !admissionBlocked, !busy else { return }
+        busy = true; message = nil
+        defer { busy = false }
+        do {
+            try await action(client)
+            guard active else { return }
             publish()
-            if network { connected = false }
-            if error is URLError { message = "Backend unavailable. Saved requests keep their original IDs and epoch. Retry sync when the local service is back." }
-            else if case ClientFailure.rejected(let code, _) = error { message = "Server rejected the request (\(code)). Refresh and review; requests are never retagged. Discard blocked pending changes before making a new edit." }
-            else if case ClientFailure.pendingChanges = error { message = "Sync or explicitly discard pending changes before editing preferences or querying HealthKit." }
-            else if case ClientFailure.expiredRequest = error { message = "Pending requests exceeded the 90-day receipt window and were cleared. Review the refreshed state before making new changes." }
-            else { message = "Action could not complete safely. Refresh and review the current state; no new request identity was invented." }
-            // Safe default when offline/uncertain: no stale reminder survives a failed reconciliation.
-            reminders.cancelAll()
+            if !hasPending, plaid == nil { await banking.refresh(notify: false); publish() }
+            if !hasPending {
+                if preferReceivedExperience, let received = client.experienceSnapshot { experience = received }
+                else { experience = try await client.refreshExperience() }
+            }
+            guard active else { return }
+            connected = true
+            try await reminders.reconcile(state: state, locallyBlocked: hasPending)
+            notificationPermission = reminders.permission
+        } catch {
+            guard active else { return }
+            publish(); experience = nil; connected = false; reminders.cancelAll()
+            if case ClientFailure.rejected(let code, _) = error, ["stale_experience", "obsolete_pattern"].contains(code) {
+                do {
+                    try client.discardObsoleteAnswers(); try await client.refresh()
+                    let current = try await client.refreshExperience()
+                    guard active else { return }
+                    publish(); experience = current; connected = true
+                } catch {}
+                message = "This question changed. Review the current question before answering again."
+            } else if case AuthenticationFailure.unavailable = error {
+                message = "The secure service is temporarily unavailable. Try again without changing accounts."
+            } else if error is AuthenticationFailure {
+                experience = nil; snapshot = LocalSnapshot()
+                message = "Sign in again to access your records."
+            } else if error is URLError {
+                message = "We couldn’t reach your service. Your unsent changes remain saved for this account."
+            } else if case ClientFailure.pendingChanges = error {
+                message = "Some changes are waiting to save. Review them in Settings before making another change."
+            } else { message = "That action couldn’t finish safely. Refresh and try again." }
         }
     }
     func refresh() async { await perform { try await $0.synchronize() } }
-    func discardPending() async {
-        await perform { client in try client.discardPending(); try await client.refresh() }
+    func discardPending() async { await perform { try $0.discardPending(); try await $0.refresh() } }
+    private func submit<T: Encodable>(_ value: T, path: String, method: String = "POST", replacingQueue: Bool = false, client: CompanionClient) async throws {
+        guard active else { throw AuthenticationFailure.locked }
+        try client.enqueue(PendingMutation(path: path, method: method, request: value), replacingQueue: replacingQueue)
+        publish(); reminders.cancelAll(); try await client.synchronize()
     }
-    private func submit<T: Encodable>(_ request: T, path: String, method: String = "POST", replacingQueue: Bool = false, client: CompanionClient) async throws {
-        try client.enqueue(PendingMutation(path: path, method: method, request: request), replacingQueue: replacingQueue)
-        publish(); reminders.cancelAll()
-        try await client.synchronize()
-    }
-    func demo(action: String) async {
-        await perform { client in
-            guard let state = client.snapshot.state else { throw ClientFailure.noState }
-            let request = DemoRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: state.data_epoch, action: action, fixture_set: "representative-v1", consent_demo: true)
-            try await submit(request, path: "/demo", replacingQueue: action == "reset", client: client)
-        }
+    func answerExperience(_ answer: String) async {
+        guard let shown = experience, let question = shown.clarification,
+              question.can_answer, question.options.contains(where: { $0.value == answer }) else { return }
+        let request = ExperienceAnswerRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: shown.data_epoch,
+            expected_revision: shown.revision, clarification_key: question.key, answer: answer)
+        await perform(preferReceivedExperience: true) { client in try await submit(request, path: "/experience/v1/answers", client: client) }
     }
     func deleteData() async {
-        reminders.cancelAll()
+        banking.cancelForLifecycle(); plaid?.cancel("Deletion requested. Connection work stopped."); health.cancelAll(); reminders.cancelAll(); experience = nil
         await perform { client in
-            guard let state = client.snapshot.state else { throw ClientFailure.noState }
-            try await submit(DeleteRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: state.data_epoch, confirm: "delete_all"), path: "/data", method: "DELETE", replacingQueue: true, client: client)
+            guard let current = client.snapshot.state else { throw ClientFailure.noState }
+            try await submit(DeleteRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: current.data_epoch, confirm: "delete_all"), path: "/data", method: "DELETE", replacingQueue: true, client: client)
         }
     }
-    func process(scripted: Bool) async {
+    func process() async { await process(mode: "disabled") }
+    func processLive() async { await process(mode: "live") }
+    private func process(mode: String) async {
         await perform { client in
-            guard client.snapshot.outbox.isEmpty else { throw ClientFailure.pendingChanges }
-            guard let state = client.snapshot.state else { throw ClientFailure.noState }
-            try await submit(ProcessRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: state.data_epoch, synthesis_mode: scripted ? "scripted" : "disabled"), path: "/process", client: client)
+            guard client.snapshot.outbox.isEmpty, let current = client.snapshot.state else { throw ClientFailure.pendingChanges }
+            if mode == "live" && (!current.preferences.cloud_consent || current.observations.contains(where: { $0.mode == "live" })) { throw ClientFailure.rejected("consent_required", false) }
+            try await submit(ProcessRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: current.data_epoch, synthesis_mode: mode), path: "/process", client: client)
         }
     }
     func feedback(cardID: String, kind: String, value: String, scope: String = "card", event: EvidenceRef? = nil, attribution: String? = nil, note: String = "", expectedEpoch: String? = nil, expectedCardRevision: Int? = nil) async {
         await perform { client in
-            guard let state = client.snapshot.state else { throw ClientFailure.noState }
-            if let expectedEpoch, expectedEpoch != state.data_epoch { throw ClientFailure.rejected("stale_feedback_form", false) }
-            if let expectedCardRevision, state.ledger.first(where: { $0.id == cardID })?.revision != expectedCardRevision { throw ClientFailure.rejected("stale_feedback_form", false) }
-            let request = FeedbackRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: state.data_epoch, card_id: cardID, kind: kind, value: value, scope: scope, event_ref: event, attribution: attribution, note: String(note.prefix(1000)))
-            try await submit(request, path: "/feedback", client: client)
+            guard let current = client.snapshot.state else { throw ClientFailure.noState }
+            if let expectedEpoch, expectedEpoch != current.data_epoch { throw ClientFailure.rejected("stale_feedback_form", false) }
+            if let expectedCardRevision, current.ledger.first(where: { $0.id == cardID })?.revision != expectedCardRevision { throw ClientFailure.rejected("stale_feedback_form", false) }
+            try await submit(FeedbackRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: current.data_epoch, card_id: cardID, kind: kind, value: value, scope: scope, event_ref: event, attribution: attribution, note: String(note.prefix(1000))), path: "/feedback", client: client)
         }
     }
     func savePreferences(_ preferences: Preferences, epoch: String, revision: Int) async {
         await perform { client in
             guard client.snapshot.outbox.isEmpty else { throw ClientFailure.pendingChanges }
             try await client.refresh()
-            guard let current = client.snapshot.state, current.data_epoch == epoch, current.revision == revision else {
-                throw ClientFailure.rejected("stale_preference_form", false)
-            }
+            guard let current = client.snapshot.state, current.data_epoch == epoch, current.revision == revision else { throw ClientFailure.rejected("stale_preference_form", false) }
             try await submit(PreferencesRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: epoch, preferences: preferences), path: "/preferences", method: "PUT", client: client)
         }
     }
@@ -106,19 +181,51 @@ import CompanionCore
         await perform { client in
             guard client.snapshot.outbox.isEmpty else { throw ClientFailure.pendingChanges }
             try await client.refresh()
-            guard var state = client.snapshot.state else { throw ClientFailure.noState }
+            guard var current = client.snapshot.state else { throw ClientFailure.noState }
             if connect {
-                var p = state.preferences
-                if !p.enabled_source_ids.contains("healthkit") { p.enabled_source_ids.append("healthkit") }
-                try await submit(PreferencesRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: state.data_epoch, preferences: p), path: "/preferences", method: "PUT", client: client)
-                state = client.snapshot.state!
+                var preferences = current.preferences
+                if !preferences.enabled_source_ids.contains("healthkit") { preferences.enabled_source_ids.append("healthkit") }
+                try await submit(PreferencesRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: current.data_epoch, preferences: preferences), path: "/preferences", method: "PUT", client: client)
+                guard active, let refreshed = client.snapshot.state else { throw AuthenticationFailure.locked }; current = refreshed
             }
-            guard state.sources.contains(where: { $0.id == "healthkit" && $0.enabled && $0.consent == "granted" }) else { throw ClientFailure.rejected("consent_required", false) }
-            let batch = await health.collect(state: state, requestAuthorization: connect)
+            guard current.sources.contains(where: { $0.id == "healthkit" && $0.enabled && $0.consent == "granted" }) else { throw ClientFailure.rejected("consent_required", false) }
+            let batch = try await health.collect(state: current, requestAuthorization: connect)
+            guard active else { throw AuthenticationFailure.locked }
             try await submit(batch, path: "/observations", client: client)
         }
     }
     func requestNotifications() async {
-        await perform(network: false) { _ in try await reminders.requestPermission() }
+        guard active else { return }
+        do { try await reminders.requestPermission(); guard active else { reminders.cancelAll(); return }; notificationPermission = reminders.permission }
+        catch { message = "Reminder permission couldn’t be checked." }
+    }
+    private func updatePreferences(_ edit: (inout Preferences) -> Void) async {
+        await perform { client in
+            guard client.snapshot.outbox.isEmpty else { throw ClientFailure.pendingChanges }
+            try await client.refresh(); guard let current = client.snapshot.state else { throw ClientFailure.noState }
+            var preferences = current.preferences; edit(&preferences)
+            try await submit(PreferencesRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: current.data_epoch, preferences: preferences), path: "/preferences", method: "PUT", client: client)
+        }
+    }
+    func disconnectHealth() async { health.cancelAll(); await updatePreferences { $0.enabled_source_ids.removeAll { $0 == "healthkit" } } }
+    func setCloudConsent(_ enabled: Bool) async { await updatePreferences { $0.cloud_consent = enabled } }
+    func enableReminders() async { await requestNotifications(); guard active, ["Authorized", "Provisional", "Temporary"].contains(notificationPermission) else { return }; await updatePreferences { $0.notifications.enabled = true } }
+    func stopReminders() async { reminders.cancelAll(); await updatePreferences { $0.notifications.enabled = false } }
+
+    var bankHasConsent: Bool { state?.sources.contains { $0.id == "plaid" && $0.consent == "granted" } ?? false }
+    var bankCanDisconnect: Bool { bankHasConsent || (state?.sources.contains { $0.id == "plaid" && $0.status == "error" } ?? false) }
+    var healthHasConsent: Bool { state?.sources.contains { $0.id == "healthkit" && $0.enabled && $0.consent == "granted" } ?? false }
+    var bankConnection: ExperienceConnection {
+        let source = state?.sources.first { $0.id == "plaid" }
+        let status: ExperienceConnectionState = plaid?.working == true ? .working : (source?.status == "error" || plaid?.lastIssue != nil) ? .needsAttention : !bankHasConsent ? .notConnected : !connected ? .accessNotConfirmed : (source?.status == "ready" || source?.status == "syncing" || source?.last_success_at != nil) ? .connected : .accessNotConfirmed
+        return ExperienceConnection(kind: .bank, state: status, isSandbox: true, error: plaid?.lastIssue)
+    }
+    var healthConnection: ExperienceConnection {
+        let source = state?.sources.first { $0.id == "healthkit" }
+        let status: ExperienceConnectionState = !healthHasConsent ? .notConnected : source?.status == "error" ? .needsAttention : (!connected || source?.read_access != "samples_readable") ? .accessNotConfirmed : .connected
+        return ExperienceConnection(kind: .appleHealth, state: status)
+    }
+    var reminderConnection: ExperienceConnection {
+        ExperienceConnection(kind: .reminders, state: ["Authorized", "Provisional", "Temporary"].contains(notificationPermission) ? .connected : .notConnected, error: notificationPermission == "Denied in iOS Settings" ? "Reminders are off in iOS Settings." : nil)
     }
 }

@@ -27,7 +27,7 @@ public struct PendingMutation: Codable, Equatable, Sendable, Identifiable {
     public var blocksDisplay: Bool { path == "/data" || (path == "/demo" && (try? Wire.decode(DemoRequest.self, body).action) == "reset") }
     public init<T: Encodable>(path: String, method: String = "POST", request: T, now: Date = Date()) throws {
         let body = try Wire.encode(request)
-        let methods = ["/observations": "POST", "/feedback": "POST", "/preferences": "PUT", "/process": "POST", "/demo": "POST", "/data": "DELETE"]
+        let methods = ["/observations": "POST", "/feedback": "POST", "/preferences": "PUT", "/process": "POST", "/demo": "POST", "/data": "DELETE", "/experience/v1/answers": "POST"]
         guard methods[path] == method, body.count <= 1_048_576 else { throw ClientFailure.rejected("invalid_request", false) }
         // Round-trip through exact required-key/enum decoders before persisting a request.
         switch path {
@@ -37,6 +37,7 @@ public struct PendingMutation: Codable, Equatable, Sendable, Identifiable {
         case "/process": _ = try Wire.decode(ProcessRequest.self, body)
         case "/demo": _ = try Wire.decode(DemoRequest.self, body)
         case "/data": _ = try Wire.decode(DeleteRequest.self, body)
+        case "/experience/v1/answers": _ = try Wire.decode(ExperienceAnswerRequest.self, body)
         default: throw ClientFailure.rejected("invalid_request", false)
         }
         guard let json = try JSONSerialization.jsonObject(with: body) as? [String: Any],
@@ -90,10 +91,22 @@ public struct ProtectedStorage: Sendable {
 public struct HTTPResult: Sendable {
     public let status: Int
     public let body: Data
-    public init(status: Int, body: Data) { self.status = status; self.body = body }
+    public let contentType: String?
+    public init(status: Int, body: Data, contentType: String? = nil) { self.status = status; self.body = body; self.contentType = contentType }
 }
 public protocol HTTPTransport: Sendable {
     func send(_ request: URLRequest) async throws -> HTTPResult
+}
+/// A preview/test boundary enforced at transport, not merely by disabled controls.
+public struct ReadOnlyTransport: HTTPTransport {
+    private let base: any HTTPTransport
+    public init(base: any HTTPTransport) { self.base = base }
+    public func send(_ request: URLRequest) async throws -> HTTPResult {
+        guard (request.httpMethod ?? "GET") == "GET", request.url?.path == "/state" else {
+            throw ClientFailure.rejected("read_only_preview", false)
+        }
+        return try await base.send(request)
+    }
 }
 private final class NoRedirects: NSObject, URLSessionTaskDelegate, Sendable {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
@@ -104,6 +117,7 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
     private let session: URLSession
     public init() {
         let config = URLSessionConfiguration.ephemeral
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.urlCache = nil; config.httpCookieStorage = nil
         config.httpShouldSetCookies = false; config.urlCredentialStorage = nil
         config.timeoutIntervalForRequest = 35; config.timeoutIntervalForResource = 40
@@ -112,7 +126,7 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
     public func send(_ request: URLRequest) async throws -> HTTPResult {
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw ClientFailure.invalidResponse }
-        return HTTPResult(status: response.statusCode, body: data)
+        return HTTPResult(status: response.statusCode, body: data, contentType: response.value(forHTTPHeaderField: "Content-Type"))
     }
 }
 
@@ -125,14 +139,41 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
     private let transport: any HTTPTransport
     private let baseURL: URL
     private let retryDelay: UInt64
-    public init(storage: ProtectedStorage, transport: any HTTPTransport = URLSessionTransport(), baseURL: URL = URL(string: "http://127.0.0.1:8000")!, retryDelay: UInt64 = 500_000_000) throws {
-        guard baseURL.scheme == "http", baseURL.host == "127.0.0.1", baseURL.port == 8000,
+    public private(set) var experienceSnapshot: ExperienceV1?
+    /// Inventory and credential-bearing replies are never part of LocalSnapshot.
+    public private(set) var bankingSnapshot: BankingOverview?
+    private var bankingGeneration = 0
+    private var bankingFlight: UUID?
+    public func clearBankingSnapshot() { bankingSnapshot = nil }
+    public func invalidateBankingWork() {
+        bankingGeneration += 1; bankingFlight = nil; bankingSnapshot = nil
+    }
+    private var sessionActive = true
+    private let sessionValidator: @MainActor @Sendable () throws -> Void
+    private var plaidGeneration = 0
+    private var plaidFlight: UUID?
+    public func invalidatePlaidWork() { plaidGeneration += 1; plaidFlight = nil }
+    public init(storage: ProtectedStorage, transport: any HTTPTransport = URLSessionTransport(), baseURL: URL = URL(string: "http://127.0.0.1:8000")!, allowedPort: Int = 8000, retryDelay: UInt64 = 500_000_000, sessionValidator: @escaping @MainActor @Sendable () throws -> Void = {}) throws {
+        guard (1...65535).contains(allowedPort), baseURL.scheme == "http", baseURL.host == "127.0.0.1", baseURL.port == allowedPort,
               baseURL.user == nil, baseURL.password == nil, baseURL.query == nil, baseURL.fragment == nil,
               baseURL.path.isEmpty || baseURL.path == "/" else { throw ClientFailure.invalidEndpoint }
-        self.storage = storage; self.transport = transport; self.baseURL = baseURL; self.retryDelay = retryDelay
+        self.storage = storage; self.transport = transport; self.baseURL = baseURL; self.retryDelay = retryDelay; self.sessionValidator = sessionValidator
+        try sessionValidator()
         snapshot = try storage.load()
     }
-    private func persist(_ next: LocalSnapshot) throws { try storage.save(next); snapshot = next }
+    public func invalidateSession() {
+        sessionActive = false; invalidatePlaidWork(); invalidateBankingWork(); snapshot = LocalSnapshot(); experienceSnapshot = nil
+    }
+    private func validateSession() throws {
+        guard sessionActive else { throw AuthenticationFailure.locked }
+        try sessionValidator()
+    }
+    private func persist(_ next: LocalSnapshot) throws {
+        try validateSession()
+        if snapshot.state?.data_epoch != next.state?.data_epoch { invalidateBankingWork() }
+        if snapshot.state?.data_epoch != next.state?.data_epoch || (experienceSnapshot?.revision ?? -1) < (next.state?.revision ?? 0) { experienceSnapshot = nil }
+        try storage.save(next); snapshot = next
+    }
     private func request(path: String, method: String = "GET", body: Data? = nil) -> URLRequest {
         var r = URLRequest(url: baseURL.appendingPathComponent(String(path.dropFirst())))
         r.httpMethod = method; r.httpBody = body
@@ -141,23 +182,177 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
         return r
     }
     private func send(_ r: URLRequest) async throws -> Data {
+        try validateSession()
         let response = try await transport.send(r)
+        try validateSession()
         if response.status == 200 { return response.body }
         let envelope = try Wire.decode(APIErrorEnvelope.self, response.body)
         throw ClientFailure.rejected(envelope.error.code, envelope.error.retryable)
     }
     private func fetch() async throws {
         let incoming = try Wire.decode(State.self, await send(request(path: "/state")))
+        if snapshot.state?.data_epoch != incoming.data_epoch { invalidatePlaidWork() }
         var next = snapshot; next.accept(incoming); try persist(next)
+    }
+    private func bankingResponse(_ outgoing: URLRequest, current: BankingVersion) async throws -> BankingOverview {
+        try validateSession()
+        let response = try await transport.send(outgoing)
+        try validateSession()
+        if response.status == 404 && outgoing.httpMethod == "GET" { throw BankingTransportFailure.profileUnavailable }
+        return try BankingResponse.decode(response.body, statusCode: response.status, current: current)
+    }
+    private func fetchBanking() async throws -> BankingOverview {
+        try validateSession(); bankingSnapshot = nil
+        guard let state = snapshot.state else { throw ClientFailure.noState }
+        let generation = bankingGeneration
+        let version = BankingVersion(data_epoch: state.data_epoch, revision: state.revision)
+        let value = try await bankingResponse(request(path: "/banking/v1"), current: version)
+        guard value.result == nil else { throw ClientFailure.invalidResponse }
+        if value.revision > (snapshot.state?.revision ?? -1) { try await fetch() }
+        try validateSession()
+        guard generation == bankingGeneration, snapshot.state?.data_epoch == value.data_epoch,
+              value.revision == snapshot.state?.revision else { throw BankingFailure.staleResponse }
+        bankingSnapshot = value
+        return value
+    }
+    public func refreshBanking() async throws -> BankingOverview {
+        try validateSession()
+        guard !busy, bankingFlight == nil else { throw ClientFailure.busy }
+        guard snapshot.outbox.isEmpty else { bankingSnapshot = nil; throw ClientFailure.pendingChanges }
+        return try await fetchBanking()
+    }
+    /// One logical action, one immutable body and request ID. Nothing is queued or cached.
+    /// Auth 401 replay is handled by the admitted transport; a one-use exchange is otherwise
+    /// never automatically retried on an ambiguous transport/internal failure.
+    public func banking(_ action: BankingRequest) async throws -> BankingOverview {
+        try validateSession()
+        guard !busy, bankingFlight == nil else { throw ClientFailure.busy }
+        guard snapshot.outbox.isEmpty else { throw ClientFailure.pendingChanges }
+        guard let state = snapshot.state, let current = bankingSnapshot,
+              current.version == action.version, state.data_epoch == action.version.data_epoch,
+              state.revision == action.version.revision else { throw BankingTransportFailure.staleAction }
+        let generation = bankingGeneration, flight = UUID()
+        bankingFlight = flight
+        defer { if bankingFlight == flight { bankingFlight = nil } }
+        func check() throws {
+            try Task.checkCancellation(); try validateSession()
+            guard generation == bankingGeneration, snapshot.state?.data_epoch == action.version.data_epoch,
+                  snapshot.outbox.isEmpty else { throw BankingTransportFailure.interrupted }
+        }
+        let body = try action.body()
+        let outgoing = request(path: "/banking/v1/actions", method: "POST", body: body)
+        var acknowledged: BankingOverview?
+        for attempt in 0..<3 {
+            try check()
+            do {
+                acknowledged = try await bankingResponse(outgoing, current: action.version)
+                break
+            } catch {
+                try check()
+                if let rejected = error as? BankingAPIError {
+                    if action.action.name == "exchange", rejected.code == .internal_error || (rejected.retryable && rejected.code != .busy) {
+                        throw BankingTransportFailure.ambiguousExchange
+                    }
+                    guard [.busy, .internal_error].contains(rejected.code), rejected.retryable, attempt < 2 else { throw error }
+                } else if error is URLError {
+                    if action.action.name == "exchange" { throw BankingTransportFailure.ambiguousExchange }
+                    guard attempt < 2 else { throw error }
+                } else { throw error }
+                try await Task.sleep(nanoseconds: retryDelay * UInt64(1 << attempt))
+            }
+        }
+        try check()
+        guard let acknowledged, acknowledged.result != nil else { throw ClientFailure.invalidResponse }
+        // A receipt acknowledges an action, not the current inventory. GET State and inventory
+        // before publishing; an old receipt cannot resurrect a removed account or old selection.
+        try await fetch(); try check()
+        _ = try await fetchBanking(); try check()
+        return acknowledged
+    }
+    /// Memory-only, bounded retries. Each call is one logical action with one stable identity.
+    /// A caller must carry the Link-origin epoch into exchange, never substitute the current one.
+    public func plaid(_ action: PlaidAction, epoch: String, requestID: String = UUID().uuidString) async throws -> PlaidReply {
+        guard !busy, plaidFlight == nil else { throw ClientFailure.busy }
+        guard snapshot.outbox.isEmpty else { throw ClientFailure.pendingChanges }
+        guard snapshot.state?.data_epoch == epoch else { throw PlaidFailure.staleWork }
+        if action.name == "exchange" || action.name == "sync" {
+            guard snapshot.state?.sources.contains(where: { $0.id == "plaid" && $0.enabled && $0.consent == "granted" }) == true else { throw ClientFailure.rejected("consent_required", false) }
+        }
+        let generation = plaidGeneration, flight = UUID()
+        plaidFlight = flight
+        defer { if plaidFlight == flight { plaidFlight = nil } }
+        func check() throws {
+            try Task.checkCancellation()
+            guard generation == plaidGeneration, snapshot.state?.data_epoch == epoch,
+                  snapshot.outbox.isEmpty else { throw PlaidFailure.staleWork }
+        }
+        let body = try action.body(epoch: epoch, requestID: requestID)
+        let outgoing = request(path: "/connections/plaid", method: "POST", body: body)
+        var response: Data?
+        for attempt in 0..<3 {
+            try check()
+            do { response = try await send(outgoing); break }
+            catch {
+                try check()
+                // Never repeat an exchange with an ambiguous transport outcome. Reconnect via fresh Link.
+                if action.name == "exchange" {
+                    if error is URLError { throw PlaidFailure.ambiguousExchange }
+                    if case ClientFailure.rejected(let code, let retryable) = error, retryable && code != "busy" {
+                        throw PlaidFailure.ambiguousExchange
+                    }
+                }
+                let retry: Bool
+                if case ClientFailure.rejected(_, let retryable) = error { retry = retryable }
+                else { retry = error is URLError }
+                guard retry, attempt < 2 else { throw error }
+                try await Task.sleep(nanoseconds: retryDelay * UInt64(1 << attempt))
+            }
+        }
+        try check()
+        guard let response else { throw ClientFailure.invalidResponse }
+        let reply = try PlaidReply.decode(response, action: action, requestID: requestID, epoch: epoch)
+        // Revalidate against current server state before accepting a replay or exposing a Link token.
+        let fresh = try Wire.decode(State.self, await send(request(path: "/state")))
+        try check()
+        if fresh.data_epoch != epoch {
+            invalidatePlaidWork()
+            var next = snapshot; next.accept(fresh); try persist(next)
+            throw PlaidFailure.staleWork
+        }
+        var next = snapshot; next.accept(reply.state); next.accept(fresh); try persist(next)
+        if action.name != "disconnect" {
+            guard fresh.sources.contains(where: { $0.id == "plaid" && $0.enabled && $0.consent == "granted" }) else {
+                invalidatePlaidWork(); throw PlaidFailure.staleWork
+            }
+        }
+        return reply
+    }
+    public func refreshExperience() async throws -> ExperienceV1 {
+        let incoming = try Wire.decode(ExperienceV1.self, await send(request(path: "/experience/v1")))
+        try validateSession()
+        guard incoming.data_epoch == snapshot.state?.data_epoch else {
+            experienceSnapshot = nil; throw ClientFailure.rejected("stale_experience", false)
+        }
+        if let existing = experienceSnapshot, existing.data_epoch == incoming.data_epoch, existing.revision >= (snapshot.state?.revision ?? 0), existing.revision > incoming.revision { return existing }
+        guard incoming.revision >= (snapshot.state?.revision ?? 0) else { throw ClientFailure.rejected("stale_experience", false) }
+        experienceSnapshot = incoming
+        return incoming
+    }
+    public func discardObsoleteAnswers() throws {
+        var next = snapshot
+        next.outbox.removeAll { $0.path == "/experience/v1/answers" && ["stale_experience", "obsolete_pattern"].contains($0.blockedCode ?? "") }
+        try persist(next)
     }
     public func refresh() async throws {
         guard !busy else { throw ClientFailure.busy }; busy = true; defer { busy = false }
         try await fetch()
     }
     public func enqueue(_ mutation: PendingMutation, replacingQueue: Bool = false) throws {
+        try validateSession()
         guard !busy else { throw ClientFailure.busy }
         guard let state = snapshot.state else { throw ClientFailure.noState }
         guard mutation.epoch == state.data_epoch else { throw ClientFailure.rejected("epoch_mismatch", false) }
+        if mutation.blocksDisplay { invalidatePlaidWork() }
         var next = snapshot
         if replacingQueue { next.outbox.removeAll() }
         if let existing = next.outbox.first(where: { $0.id == mutation.id }) {
@@ -189,12 +384,17 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
                     if let failure = error as? ClientFailure {
                         if case .rejected(_, let retryable) = failure { retry = retryable } else { retry = false }
                     } else { retry = error is URLError }
+                    // Auth/service gates do not poison an otherwise valid queued mutation.
+                    // A later admitted retry must retain the original body/identity unchanged.
+                    if error is AuthenticationFailure { throw error }
                     if !retry {
+                        try validateSession()
                         var next = snapshot
                         let code: String
                         if case ClientFailure.rejected(let rejectedCode, _) = error { code = rejectedCode }
                         else { code = "invalid_response" }
-                        next.outbox[0].blockedCode = code
+                        guard let index = next.outbox.firstIndex(where: { $0.id == item.id }) else { throw error }
+                        next.outbox[index].blockedCode = code
                         try persist(next)
                         throw error
                     }
@@ -203,14 +403,29 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
                 }
             }
             guard let result else { throw ClientFailure.invalidResponse }
-            let returned: State
-            if item.path == "/observations" { returned = try Wire.decode(IngestionResponse.self, result).state }
-            else { returned = try Wire.decode(State.self, result) }
+            try validateSession()
             var next = snapshot
+            var receivedExperience: ExperienceV1?
             next.outbox.removeAll { $0.id == item.id }
-            next.accept(returned); try persist(next)
+            if item.path == "/experience/v1/answers" {
+                let returned = try Wire.decode(ExperienceV1.self, result)
+                guard returned.data_epoch == item.epoch else { throw ClientFailure.rejected("stale_experience", false) }
+                // Preserve the server response only after current state confirms it is not an old receipt.
+                receivedExperience = returned
+            } else {
+                let returned: State
+                if item.path == "/observations" { returned = try Wire.decode(IngestionResponse.self, result).state }
+                else { returned = try Wire.decode(State.self, result) }
+                next.accept(returned)
+            }
+            try persist(next)
             // A replay may return an old receipt; GET gives the current committed projection.
             try await fetch()
+            if let receivedExperience, receivedExperience.data_epoch == snapshot.state?.data_epoch,
+               receivedExperience.revision >= (snapshot.state?.revision ?? 0),
+               receivedExperience.revision >= (experienceSnapshot?.revision ?? 0) {
+                experienceSnapshot = receivedExperience
+            }
         }
     }
 }

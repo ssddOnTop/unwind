@@ -1,0 +1,492 @@
+[
+  {
+    "schema_version": "1",
+    "request_id": "plaid-1",
+    "data_epoch": "sandbox-epoch-1",
+    "action": "link_token",
+    "consent_sandbox": true
+  },
+  {
+    "schema_version": "1",
+    "request_id": "plaid-1",
+    "data_epoch": "sandbox-epoch-1",
+    "action": "link_token",
+    "environment": "sandbox",
+    "result": {
+      "link_token": "link-sandbox-example-not-usable",
+      "expiration": "2026-11-14T14:00:00Z"
+    },
+    "state": {
+      "schema_version": "1",
+      "data_epoch": "sandbox-epoch-1",
+      "revision": 1,
+      "generated_at": "2026-11-14T10:00:00Z",
+      "evaluation_date": "2026-11-14",
+      "preferences": {
+        "food_suggestions": true,
+        "activity_suggestions": true,
+        "suppressed_scenario_ids": [],
+        "enabled_source_ids": [
+          "plaid"
+        ],
+        "timezone": "America/New_York",
+        "notifications": {
+          "enabled": false,
+          "local_time": "18:00"
+        },
+        "no_kitchen": false,
+        "no_spending": false,
+        "movement_restriction": false,
+        "notes": "",
+        "cloud_consent": false
+      },
+      "sources": [
+        {
+          "id": "demo",
+          "enabled": false,
+          "consent": "not_requested",
+          "capability": "available",
+          "status": "disabled",
+          "authorization_requested": false,
+          "read_access": "not_applicable",
+          "last_attempt_at": null,
+          "last_success_at": null,
+          "coverage": "unknown",
+          "coverage_window": null,
+          "reason": null
+        },
+        {
+          "id": "healthkit",
+          "enabled": false,
+          "consent": "not_requested",
+          "capability": "available",
+          "status": "disabled",
+          "authorization_requested": false,
+          "read_access": "unknown",
+          "last_attempt_at": null,
+          "last_success_at": null,
+          "coverage": "unknown",
+          "coverage_window": null,
+          "reason": null
+        },
+        {
+          "id": "plaid",
+          "enabled": true,
+          "consent": "granted",
+          "capability": "available",
+          "status": "empty",
+          "authorization_requested": true,
+          "read_access": "not_applicable",
+          "last_attempt_at": null,
+          "last_success_at": null,
+          "coverage": "unknown",
+          "coverage_window": null,
+          "reason": "Awaiting Link completion."
+        },
+        {
+          "id": "email",
+          "enabled": false,
+          "consent": "not_requested",
+          "capability": "not_configured",
+          "status": "not_configured",
+          "authorization_requested": false,
+          "read_access": "not_applicable",
+          "last_attempt_at": null,
+          "last_success_at": null,
+          "coverage": "unknown",
+          "coverage_window": null,
+          "reason": null
+        }
+      ],
+      "observations": [],
+      "ledger": [],
+      "feedback": [],
+      "notification_intents": [],
+      "process": {
+        "run_id": null,
+        "status": "idle",
+        "started_at": null,
+        "completed_at": null,
+        "input_state_revision": 0,
+        "ledger_status": "idle",
+        "synthesis": {
+          "mode": "disabled",
+          "status": "idle",
+          "reason": null,
+          "engine": "deepagents",
+          "drafts": []
+        }
+      },
+      "limitations": [
+        "Synthetic Plaid Sandbox evidence only."
+      ]
+    }
+  },
+  {
+    "schema_version": "1",
+    "request_id": "plaid-2",
+    "data_epoch": "sandbox-epoch-1",
+    "action": "exchange",
+    "public_token": "public-sandbox-example-not-usable"
+  },
+  {
+    "schema_version": "1",
+    "request_id": "plaid-2",
+    "data_epoch": "sandbox-epoch-1",
+    "action": "exchange",
+    "environment": "sandbox",
+    "result": {
+      "status": "connected"
+    },
+    "state": {
+      "schema_version": "1",
+      "data_epoch": "sandbox-epoch-1",
+      "revision": 2,
+      "generated_at": "2026-11-14T10:00:00Z",
+      "evaluation_date": "2026-11-14",
+      "preferences": {
+        "food_suggestions": true,
+        "activity_suggestions": true,
+        "suppressed_scenario_ids": [],
+        "enabled_source_ids": [
+          "plaid"
+        ],
+        "timezone": "America/New_York",
+        "notifications": {
+          "enabled": false,
+          "local_time": "18:00"
+        },
+        "no_kitchen": false,
+        "no_spending": false,
+        "movement_restriction": false,
+        "notes": "",
+        "cloud_consent": false
+      },
+      "sources": [
+        {
+          "id": "demo",
+          "enabled": false,
+          "consent": "not_requested",
+          "capability": "available",
+          "status": "disabled",
+          "authorization_requested": false,
+          "read_access": "not_applicable",
+          "last_attempt_at": null,
+          "last_success_at": null,
+          "coverage": "unknown",
+          "coverage_window": null,
+          "reason": null
+        },
+        {
+          "id": "healthkit",
+          "enabled": false,
+          "consent": "not_requested",
+          "capability": "available",
+          "status": "disabled",
+          "authorization_requested": false,
+          "read_access": "unknown",
+          "last_attempt_at": null,
+          "last_success_at": null,
+          "coverage": "unknown",
+          "coverage_window": null,
+          "reason": null
+        },
+        {
+          "id": "plaid",
+          "enabled": true,
+          "consent": "granted",
+          "capability": "available",
+          "status": "syncing",
+          "authorization_requested": true,
+          "read_access": "not_applicable",
+          "last_attempt_at": null,
+          "last_success_at": null,
+          "coverage": "unknown",
+          "coverage_window": null,
+          "reason": null
+        },
+        {
+          "id": "email",
+          "enabled": false,
+          "consent": "not_requested",
+          "capability": "not_configured",
+          "status": "not_configured",
+          "authorization_requested": false,
+          "read_access": "not_applicable",
+          "last_attempt_at": null,
+          "last_success_at": null,
+          "coverage": "unknown",
+          "coverage_window": null,
+          "reason": null
+        }
+      ],
+      "observations": [],
+      "ledger": [],
+      "feedback": [],
+      "notification_intents": [],
+      "process": {
+        "run_id": null,
+        "status": "idle",
+        "started_at": null,
+        "completed_at": null,
+        "input_state_revision": 0,
+        "ledger_status": "idle",
+        "synthesis": {
+          "mode": "disabled",
+          "status": "idle",
+          "reason": null,
+          "engine": "deepagents",
+          "drafts": []
+        }
+      },
+      "limitations": [
+        "Synthetic Plaid Sandbox evidence only."
+      ]
+    }
+  },
+  {
+    "schema_version": "1",
+    "request_id": "plaid-3",
+    "data_epoch": "sandbox-epoch-1",
+    "action": "sync"
+  },
+  {
+    "schema_version": "1",
+    "request_id": "plaid-3",
+    "data_epoch": "sandbox-epoch-1",
+    "action": "sync",
+    "environment": "sandbox",
+    "result": {
+      "status": "waiting",
+      "added": 0,
+      "modified": 0,
+      "removed": 0,
+      "skipped": 0,
+      "retry_after_seconds": 2
+    },
+    "state": {
+      "schema_version": "1",
+      "data_epoch": "sandbox-epoch-1",
+      "revision": 3,
+      "generated_at": "2026-11-14T10:00:00Z",
+      "evaluation_date": "2026-11-14",
+      "preferences": {
+        "food_suggestions": true,
+        "activity_suggestions": true,
+        "suppressed_scenario_ids": [],
+        "enabled_source_ids": [
+          "plaid"
+        ],
+        "timezone": "America/New_York",
+        "notifications": {
+          "enabled": false,
+          "local_time": "18:00"
+        },
+        "no_kitchen": false,
+        "no_spending": false,
+        "movement_restriction": false,
+        "notes": "",
+        "cloud_consent": false
+      },
+      "sources": [
+        {
+          "id": "demo",
+          "enabled": false,
+          "consent": "not_requested",
+          "capability": "available",
+          "status": "disabled",
+          "authorization_requested": false,
+          "read_access": "not_applicable",
+          "last_attempt_at": null,
+          "last_success_at": null,
+          "coverage": "unknown",
+          "coverage_window": null,
+          "reason": null
+        },
+        {
+          "id": "healthkit",
+          "enabled": false,
+          "consent": "not_requested",
+          "capability": "available",
+          "status": "disabled",
+          "authorization_requested": false,
+          "read_access": "unknown",
+          "last_attempt_at": null,
+          "last_success_at": null,
+          "coverage": "unknown",
+          "coverage_window": null,
+          "reason": null
+        },
+        {
+          "id": "plaid",
+          "enabled": true,
+          "consent": "granted",
+          "capability": "available",
+          "status": "syncing",
+          "authorization_requested": true,
+          "read_access": "not_applicable",
+          "last_attempt_at": null,
+          "last_success_at": null,
+          "coverage": "unknown",
+          "coverage_window": null,
+          "reason": null
+        },
+        {
+          "id": "email",
+          "enabled": false,
+          "consent": "not_requested",
+          "capability": "not_configured",
+          "status": "not_configured",
+          "authorization_requested": false,
+          "read_access": "not_applicable",
+          "last_attempt_at": null,
+          "last_success_at": null,
+          "coverage": "unknown",
+          "coverage_window": null,
+          "reason": null
+        }
+      ],
+      "observations": [],
+      "ledger": [],
+      "feedback": [],
+      "notification_intents": [],
+      "process": {
+        "run_id": null,
+        "status": "idle",
+        "started_at": null,
+        "completed_at": null,
+        "input_state_revision": 0,
+        "ledger_status": "idle",
+        "synthesis": {
+          "mode": "disabled",
+          "status": "idle",
+          "reason": null,
+          "engine": "deepagents",
+          "drafts": []
+        }
+      },
+      "limitations": [
+        "Synthetic Plaid Sandbox evidence only."
+      ]
+    }
+  },
+  {
+    "schema_version": "1",
+    "request_id": "plaid-4",
+    "data_epoch": "sandbox-epoch-1",
+    "action": "disconnect"
+  },
+  {
+    "schema_version": "1",
+    "request_id": "plaid-4",
+    "data_epoch": "sandbox-epoch-1",
+    "action": "disconnect",
+    "environment": "sandbox",
+    "result": {
+      "status": "disconnected"
+    },
+    "state": {
+      "schema_version": "1",
+      "data_epoch": "sandbox-epoch-1",
+      "revision": 4,
+      "generated_at": "2026-11-14T10:00:00Z",
+      "evaluation_date": "2026-11-14",
+      "preferences": {
+        "food_suggestions": true,
+        "activity_suggestions": true,
+        "suppressed_scenario_ids": [],
+        "enabled_source_ids": [],
+        "timezone": "America/New_York",
+        "notifications": {
+          "enabled": false,
+          "local_time": "18:00"
+        },
+        "no_kitchen": false,
+        "no_spending": false,
+        "movement_restriction": false,
+        "notes": "",
+        "cloud_consent": false
+      },
+      "sources": [
+        {
+          "id": "demo",
+          "enabled": false,
+          "consent": "not_requested",
+          "capability": "available",
+          "status": "disabled",
+          "authorization_requested": false,
+          "read_access": "not_applicable",
+          "last_attempt_at": null,
+          "last_success_at": null,
+          "coverage": "unknown",
+          "coverage_window": null,
+          "reason": null
+        },
+        {
+          "id": "healthkit",
+          "enabled": false,
+          "consent": "not_requested",
+          "capability": "available",
+          "status": "disabled",
+          "authorization_requested": false,
+          "read_access": "unknown",
+          "last_attempt_at": null,
+          "last_success_at": null,
+          "coverage": "unknown",
+          "coverage_window": null,
+          "reason": null
+        },
+        {
+          "id": "plaid",
+          "enabled": false,
+          "consent": "revoked",
+          "capability": "available",
+          "status": "disabled",
+          "authorization_requested": true,
+          "read_access": "not_applicable",
+          "last_attempt_at": null,
+          "last_success_at": null,
+          "coverage": "unknown",
+          "coverage_window": null,
+          "reason": null
+        },
+        {
+          "id": "email",
+          "enabled": false,
+          "consent": "not_requested",
+          "capability": "not_configured",
+          "status": "not_configured",
+          "authorization_requested": false,
+          "read_access": "not_applicable",
+          "last_attempt_at": null,
+          "last_success_at": null,
+          "coverage": "unknown",
+          "coverage_window": null,
+          "reason": null
+        }
+      ],
+      "observations": [],
+      "ledger": [],
+      "feedback": [],
+      "notification_intents": [],
+      "process": {
+        "run_id": null,
+        "status": "idle",
+        "started_at": null,
+        "completed_at": null,
+        "input_state_revision": 0,
+        "ledger_status": "idle",
+        "synthesis": {
+          "mode": "disabled",
+          "status": "idle",
+          "reason": null,
+          "engine": "deepagents",
+          "drafts": []
+        }
+      },
+      "limitations": [
+        "Synthetic Plaid Sandbox evidence only."
+      ]
+    }
+  }
+]

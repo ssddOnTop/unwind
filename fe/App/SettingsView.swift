@@ -3,83 +3,117 @@ import CompanionCore
 
 struct SettingsView: View {
     @ObservedObject var model: AppModel
+    @Binding var bankAccountsPresented: Bool
+    let healthActions: ConnectionActions
+    let manageAccount: () -> Void
+    let signOut: () -> Void
+    @SwiftUI.State private var confirmSignOut = false
     @SwiftUI.State private var editing = false
-    @SwiftUI.State private var confirmHealth = false
-    @SwiftUI.State private var confirmDelete = false
-    @SwiftUI.State private var confirmReset = false
-    @SwiftUI.State private var confirmDiscard = false
+    @SwiftUI.State private var cloudConsent = false
     var body: some View {
         NavigationStack {
             List {
-                Section("Persistent preferences") {
-                    Text("Constraints and suppression are stored by the local backend, independently of AI. Refresh before editing; stale forms are rejected rather than silently replayed.")
-                    Button("Refresh and edit preferences") {
-                        Task { await model.refresh(); if model.connected && !model.hasPending { editing = true } }
-                    }.disabled(model.state == nil || model.hasPending)
+                if let message = model.message {
+                    Section { Text(message); Button("Try again") { Task { await model.refresh() } } }
                 }
-                Section("Sources") {
-                    ForEach(model.state?.sources ?? [], id: \.id) { source in
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(source.id.capitalized).font(.headline)
-                            Text("\(source.status) · capability \(source.capability)")
-                            Text("App consent: \(source.consent) · enabled: \(source.enabled ? "yes" : "no")")
-                            Text("Read access: \(source.read_access) · authorization requested: \(source.authorization_requested ? "yes" : "no")")
-                            Text("Coverage: \(source.coverage)")
-                            Text("Last attempt: \(source.last_attempt_at ?? "Unknown")\nLast success: \(source.last_success_at ?? "Unknown")").font(.caption)
-                            if let reason = source.reason { Text(reason).font(.caption).foregroundStyle(.secondary) }
-                        }
+                Section {
+                    Button("Bank accounts") { bankAccountsPresented = true }
+                        .accessibilityIdentifier("settings.bankAccounts")
+                    Text("Manage banks and choose which accounts can provide new records.").font(.caption).foregroundStyle(.secondary)
+                }
+                Section("Apple Health") {
+                    ConnectionRow(connection: model.healthConnection, actions: healthActions)
+                }
+                if model.healthHasConsent {
+                    Section { Button("Update step records") { Task { await model.healthSync(connect: false) } }.disabled(model.busy || model.hasPending) }
+                }
+                Section {
+                    ConnectionRow(connection: model.reminderConnection,
+                        actions: ConnectionActions(connect: { Task { await model.enableReminders() } },
+                            disconnect: model.state?.preferences.notifications.enabled == true ? { Task { await model.stopReminders() } } : nil))
+                    if model.state?.preferences.notifications.enabled == true {
+                        Text("Reminders are on").font(.subheadline)
+                    } else if model.reminderConnection.state == .connected {
+                        Button("Turn on reminders") { Task { await model.enableReminders() } }
                     }
+                } header: {
+                    HStack { Text("Reminders"); Spacer(); AccessibleInfoPopover(title: "Reminders", message: "Optional, generic reminders. Turning them off cancels reminders from this app; iOS permission can be changed in iOS Settings. Delivery is never guaranteed.") }
                 }
-                Section("Foreground HealthKit") {
-                    Text("Only daily step totals for seven completed local dates are queried. Enabling consents to sending normalized totals to your local backend. Apple's read permission is separate. No background collection or health writes.")
-                    Text("An empty query means unknown—not denied access, zero activity, or deleted samples. Phone/watch reconciliation and device behavior still require real-device validation.").font(.caption)
-                    Button("Enable sync and request HealthKit access") { confirmHealth = true }
-                        .disabled(model.state == nil || model.hasPending)
-                    Button("Read and sync daily steps now") { Task { await model.healthSync(connect: false) } }
-                        .disabled(model.hasPending || !(model.state?.sources.contains { $0.id == "healthkit" && $0.enabled && $0.consent == "granted" } ?? false))
-                    Text("Disconnect in Edit preferences. Revoking app consent stops use; historical server evidence remains until retention or Delete all data.").font(.caption)
+                CloudConsentSection(isEnabled: model.state?.preferences.cloud_consent ?? false, isBusy: model.busy || model.hasPending || model.state == nil,
+                    onChange: { value in if value { cloudConsent = true } else { Task { await model.setCloudConsent(false) } } })
+                Section {
+                    Button("Preferences") { Task { await model.refresh(); if model.state != nil && !model.hasPending { editing = true } } }
+                        .accessibilityIdentifier("Refresh and edit preferences")
+                    NavigationLink("Your data") { DataControlsView(model: model) }
+                    NavigationLink("Suggestion tools") { SuggestionToolsView(model: model) }
+                    Button("Manage account", action: manageAccount)
+                    Button("Sign out", role: .destructive) { confirmSignOut = true }
+                    HStack { Text("Your signed-in account"); Spacer(); AccessibleInfoPopover(title: "Your privacy", message: "Sign-in is required. Connections remain optional and separate from cloud consent. This app stores normalized records locally with file protection and backup exclusion. Bank connections currently use synthetic Sandbox data. No provider keys or iCloud writes are used here.") }
                 }
-                Section("Optional local reminders") {
-                    Text("iOS permission: \(model.notificationPermission)")
-                    Text("Enable scheduling and choose time in preferences, then grant iOS permission separately. Only generic text appears on the lock screen. Scheduling is not proof of delivery.")
-                    Text("iOS may defer or suppress delivery. Expired requests are removed on foreground sync; exact expiry while the app is terminated is not guaranteed.").font(.caption)
-                    Button("Request iOS reminder permission") { Task { await model.requestNotifications() } }
-                }
-                Section("Offline queue") {
-                    Text("\(model.snapshot.outbox.count) pending request(s)")
-                    Button("Retry sync") { Task { await model.refresh() } }
-                    Button("Discard pending changes", role: .destructive) { confirmDiscard = true }.disabled(!model.hasPending)
-                    Text("Requests preserve exact bodies, IDs and epochs across restart. Old-epoch requests are discarded, never relabeled. No personal payload is logged.").font(.caption)
-                }
-                Section("Local prototype") {
-                    Text("http://127.0.0.1:8000 · no authentication")
-                    Text("Simulator-to-Mac topology. On a physical device, loopback points to the device itself. No LAN endpoint configuration is offered in this prototype.").font(.caption)
-                    Text("Provider keys and model configuration belong only on the backend. Plaid and email are not configured. No iCloud writes.").font(.caption)
-                }
-                Section("Data controls") {
-                    Button("Reset synthetic demo", role: .destructive) { confirmReset = true }.disabled(model.state == nil)
-                    Button("Delete all application data", role: .destructive) { confirmDelete = true }.disabled(model.snapshot.state == nil)
-                    Text("Delete rotates the server epoch and clears this client's cached records, pending mutations and notifications after confirmation. This never deletes records from Apple's Health app. An offline delete is pending, not completed.").font(.caption)
-                }
-            }.disabled(model.busy).navigationTitle("Settings")
+            }.navigationTitle("Settings").accessibilityIdentifier("app.settings")
+                .navigationDestination(isPresented: $bankAccountsPresented) { BankingScreen(controller: model.banking) }
+                .confirmationDialog("Sign out?", isPresented: $confirmSignOut, titleVisibility: .visible) {
+                    Button("Sign out and clear this device", role: .destructive, action: signOut)
+                    Button("Cancel", role: .cancel) {}
+                } message: { Text("Clears local records and unsent changes before signing out. Server records stay in your account unless you delete them first.") }
                 .sheet(isPresented: $editing) { if let state = model.state { PreferencesForm(model: model, state: state) } }
-                .confirmationDialog("Consent to local-backend sync of daily step totals and request Apple's separate read permission?", isPresented: $confirmHealth, titleVisibility: .visible) {
-                    Button("Enable and request access") { Task { await model.healthSync(connect: true) } }
+                .confirmationDialog("Allow cloud suggestions?", isPresented: $cloudConsent, titleVisibility: .visible) {
+                    Button("Allow eligible records to be shared") { Task { await model.setCloudConsent(true) } }
                     Button("Cancel", role: .cancel) {}
-                }
-                .confirmationDialog("Delete all backend application data? Pending local writes will be discarded. This cannot be undone.", isPresented: $confirmDelete, titleVisibility: .visible) {
-                    Button("Delete all application data", role: .destructive) { Task { await model.deleteData() } }
-                    Button("Cancel", role: .cancel) {}
-                }
-                .confirmationDialog("Replace the synthetic demo and clear its feedback/preferences? The backend refuses reset when live data or consent exists.", isPresented: $confirmReset, titleVisibility: .visible) {
-                    Button("Reset demo", role: .destructive) { Task { await model.demo(action: "reset") } }
-                    Button("Cancel", role: .cancel) {}
-                }
-                .confirmationDialog("Discard saved pending requests? A previously sent request may already have committed; refresh will show server truth.", isPresented: $confirmDiscard, titleVisibility: .visible) {
-                    Button("Discard pending changes", role: .destructive) { Task { await model.discardPending() } }
-                    Button("Cancel", role: .cancel) {}
-                }
+                } message: { Text("Eligible server-provided records may be sent to an external AI service for optional wording. This does not authorize live Apple Health sharing. You can turn this off here anytime.") }
         }
+    }
+}
+
+private struct SuggestionToolsView: View {
+    @ObservedObject var model: AppModel
+    @SwiftUI.State private var cloud = false
+    var body: some View {
+        List {
+            Section("Update observations") {
+                Button("Update observations") { Task { await model.process() } }.accessibilityIdentifier("Recompute on backend (no AI)")
+                Button("Create cloud suggestions") { cloud = true }
+                    .disabled(!(model.state?.preferences.cloud_consent ?? false) || (model.state?.observations.contains { $0.mode == "live" } ?? true))
+                AccessibleInfoPopover(title: "Suggestions", message: "Observations use deterministic rules. Optional cloud wording uses a backend-configured free model, never paid fallback. If unavailable or rate limited, the observations remain available. Cloud consent is separate in Settings.")
+                if let synthesis = model.state?.process.synthesis {
+                    if synthesis.status == "running" { ProgressView("Preparing suggestions…") }
+                    if let reason = synthesis.reason { Text(reason).font(.caption) }
+                }
+            }.disabled(model.busy || model.hasPending || model.state == nil)
+        }.navigationTitle("Suggestion tools")
+            .confirmationDialog("Create optional cloud wording?", isPresented: $cloud, titleVisibility: .visible) {
+                Button("Create suggestions") { Task { await model.processLive() } }
+                Button("Cancel", role: .cancel) {}
+            } message: { Text("Only consented sample records may be sent. Your observations remain available if the service cannot respond.") }
+    }
+}
+
+private struct DataControlsView: View {
+    @ObservedObject var model: AppModel
+    @SwiftUI.State private var delete = false
+    @SwiftUI.State private var discard = false
+    var body: some View {
+        List {
+            if model.hasPending {
+                Section("Changes waiting to save") {
+                    Text("Some changes are saved on this device and haven’t reached the service yet.")
+                    Button("Try saving again") { Task { await model.refresh() } }
+                    Button("Discard unsent changes", role: .destructive) { discard = true }
+                }
+            }
+            Section {
+                Button("Delete all data", role: .destructive) { delete = true }.accessibilityIdentifier("Delete all application data").disabled(model.state == nil)
+                Text("Deleting removes this app’s records and connections, not records in Apple Health. Unconfirmed remote bank cleanup will be reported.").font(.caption)
+            }
+        }.navigationTitle("Your data")
+            .confirmationDialog("Delete all app data?", isPresented: $delete, titleVisibility: .visible) {
+                Button("Delete all data", role: .destructive) { Task { await model.deleteData() } }.accessibilityIdentifier("Delete all application data")
+                Button("Cancel", role: .cancel) {}
+            } message: { Text("Records, connections and unsent changes will be removed. This cannot be undone. If offline, deletion remains pending until confirmed.") }
+            .confirmationDialog("Discard unsent changes?", isPresented: $discard, titleVisibility: .visible) {
+                Button("Discard changes", role: .destructive) { Task { await model.discardPending() } }
+                Button("Cancel", role: .cancel) {}
+            }
     }
 }
 
@@ -118,15 +152,14 @@ struct PreferencesForm: View {
                     Toggle("No spending", isOn: $draft.no_spending)
                     Toggle("Movement restriction", isOn: $draft.movement_restriction)
                 }
-                Section("Durable suppression") {
+                Section("Suggestions to pause") {
                     Toggle("Stop purchase suggestions", isOn: suppressed("purchase_recurrence"))
                     Toggle("Stop step suggestions", isOn: suppressed("recorded_steps"))
-                    Toggle("Suppress preference scenario", isOn: suppressed("preference_filter"))
+                    Toggle("Pause preference-based suggestions", isOn: suppressed("preference_filter"))
                 }
                 Section("Sources") {
-                    Toggle("Use synthetic demo evidence", isOn: enabled("demo"))
                     if baseline.preferences.enabled_source_ids.contains("healthkit") { Toggle("Keep HealthKit sync enabled", isOn: enabled("healthkit")) }
-                    Text("New HealthKit consent is requested separately in Settings. Plaid/email are unavailable.").font(.caption)
+                    Text("New HealthKit consent is requested separately. Use the Plaid Sandbox section to connect or revoke bank consent; editing this form cannot establish a bank connection. Email remains unavailable.").font(.caption)
                 }
                 Section("Local time and reminders") {
                     TextField("IANA timezone", text: $draft.timezone).textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -134,19 +167,17 @@ struct PreferencesForm: View {
                     TextField("Local time (HH:mm)", text: $draft.notifications.local_time).keyboardType(.numbersAndPunctuation)
                     Text("OS permission is separate. The backend decides eligibility and scheduling; the client only reconciles its desired set.").font(.caption)
                 }
-                Section("Explicit context") {
+                Section("Optional context") {
                     TextField("Optional note; no private records", text: $draft.notes, axis: .vertical)
                         .onChange(of: draft.notes) { _, new in if new.count > 1000 { draft.notes = String(new.prefix(1000)) } }
                     Text("Notes are context, not automatic medical rules.").font(.caption)
-                    Toggle("Allow fixture-only cloud synthesis", isOn: $draft.cloud_consent)
-                    Text("Default off. Requires backend-only provider setup; v1 does not authorize cloud transmission of live HealthKit evidence.").font(.caption)
                 }
-                Button("Save complete preferences") {
+                Button("Save preferences") {
                     Task {
                         await model.savePreferences(draft, epoch: baseline.data_epoch, revision: baseline.revision)
                         dismiss()
                     }
-                }.disabled(!valid || model.busy)
+                }.accessibilityIdentifier("Save complete preferences").disabled(!valid || model.busy)
             }.navigationTitle("Preferences").toolbar { Button("Cancel") { dismiss() } }
         }
     }

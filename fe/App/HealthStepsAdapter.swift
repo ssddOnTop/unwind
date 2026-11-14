@@ -5,10 +5,20 @@ import CompanionCore
 
 @MainActor final class HealthStepsAdapter {
     private let store = HKHealthStore()
+    private var generation = 0
+    private var queries: [UUID: HKQuery] = [:]
+    private var continuations: [UUID: CheckedContinuation<Int?, Error>] = [:]
+    func cancelAll() {
+        generation += 1
+        for query in queries.values { store.stop(query) }; queries.removeAll()
+        let pending = continuations.values; continuations.removeAll()
+        for continuation in pending { continuation.resume(throwing: CancellationError()) }
+    }
     private let steps = HKQuantityType.quantityType(forIdentifier: .stepCount)!
 
     /// Only called by an explicit foreground button. No HealthKit writes or background delivery.
-    func collect(state: CompanionCore.State, requestAuthorization: Bool) async -> ObservationBatch {
+    func collect(state: CompanionCore.State, requestAuthorization: Bool) async throws -> ObservationBatch {
+        let capturedGeneration = generation
         let zone = TimeZone(identifier: state.preferences.timezone) ?? .current
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = zone
         let today = calendar.startOfDay(for: Date())
@@ -30,7 +40,10 @@ import CompanionCore
                     // Completion never establishes read permission; only nonempty query results are readable.
                     try await store.requestAuthorization(toShare: [], read: [steps])
                 }
+                guard capturedGeneration == generation else { throw CancellationError() }
                 for dayOffset in 0..<7 {
+                    try Task.checkCancellation()
+                    guard capturedGeneration == generation else { throw CancellationError() }
                     let day = calendar.date(byAdding: .day, value: dayOffset, to: start)!
                     let next = calendar.date(byAdding: .day, value: 1, to: day)!
                     let value = try await dailyTotal(start: day, end: next)
@@ -38,29 +51,35 @@ import CompanionCore
                     if let o = DailySteps.observation(value: value, date: formatter.string(from: day), timezone: zone.identifier, existing: state.observations) { observations.append(o) }
                 }
             } catch {
+                if error is CancellationError || generation != capturedGeneration { throw CancellationError() }
                 // No raw HealthKit errors, samples, or personal counts enter logs.
                 failure = UIApplication.shared.isProtectedDataAvailable ? "query_failed" : "protected_data"
                 observations.removeAll(); readable = false
             }
         }
+        guard capturedGeneration == generation else { throw CancellationError() }
         let update = DailySteps.update(readable: readable, requested: requested, window: window, attemptedAt: ISO8601DateFormatter().string(from: Date()), error: failure)
         return ObservationBatch(schema_version: "1", request_id: UUID().uuidString, data_epoch: state.data_epoch, observations: observations, source_updates: [update])
     }
 
     private func dailyTotal(start: Date, end: Date) async throws -> Int? {
-        try await withCheckedThrowingContinuation { continuation in
+        let id = UUID()
+        return try await withCheckedThrowingContinuation { continuation in
+            continuations[id] = continuation
             let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
-            // HealthKit cumulative statistics, not separate phone/watch totals or raw-sample summation.
-            let query = HKStatisticsQuery(quantityType: steps, quantitySamplePredicate: predicate, options: .cumulativeSum) { _, result, error in
-                if let error { continuation.resume(throwing: error); return }
-                guard let quantity = result?.sumQuantity() else { continuation.resume(returning: nil); return }
-                let count = quantity.doubleValue(for: .count())
-                guard count.isFinite, count >= 0, count < Double(Int.max) else {
-                    continuation.resume(throwing: ClientFailure.invalidResponse); return
+            let query = HKStatisticsQuery(quantityType: steps, quantitySamplePredicate: predicate, options: .cumulativeSum) { [weak self] _, result, error in
+                let outcome: Result<Int?, Error>
+                if let error { outcome = .failure(error) }
+                else if let quantity = result?.sumQuantity() {
+                    let count = quantity.doubleValue(for: .count())
+                    outcome = count.isFinite && count >= 0 && count < Double(Int.max) ? .success(Int(count.rounded())) : .failure(ClientFailure.invalidResponse)
+                } else { outcome = .success(nil) }
+                Task { @MainActor [weak self] in
+                    guard let self, let continuation = self.continuations.removeValue(forKey: id) else { return }
+                    self.queries.removeValue(forKey: id); continuation.resume(with: outcome)
                 }
-                continuation.resume(returning: Int(count.rounded()))
             }
-            store.execute(query)
+            queries[id] = query; store.execute(query)
         }
     }
 }

@@ -2,7 +2,9 @@
 """Process-local documented Apple paths only. Never changes system setup/licenses."""
 import json, os, pathlib, subprocess, sys
 root = pathlib.Path(__file__).resolve().parents[1]
-evidence = root/'evidence'
+evidence = (root/'evidence'/os.environ.get('FE_EVIDENCE_SUBDIR', '')).resolve()
+if not evidence.is_relative_to((root/'evidence').resolve()):
+    raise SystemExit('Evidence must stay under fe/evidence')
 dev = pathlib.Path(os.environ.get('DEVELOPER_DIR', '/Applications/Xcode.app/Contents/Developer'))
 if dev.suffix == '.app':
     dev = dev / 'Contents/Developer'
@@ -11,6 +13,7 @@ env = {k:v for k,v in os.environ.items() if not k.startswith('DYLD_')}
 for key, rel in [('HOME','home'),('CFFIXED_USER_HOME','home'),('TMPDIR','tmp'),('CLANG_MODULE_CACHE_PATH','modules'),('SWIFT_MODULECACHE_PATH','modules'),('XDG_CACHE_HOME','cache')]:
     path=evidence/rel; path.mkdir(parents=True,exist_ok=True); env[key]=str(path)
 env['DEVELOPER_DIR']=str(dev)
+env['COMPANION_EVIDENCE_DIR']=str(evidence)
 env['PATH']=str(bin)+':/usr/bin:/bin:/usr/sbin:/sbin'
 env['SDKROOT']=str(dev/'Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk')
 def run(label, cmd, extra=None):
@@ -57,30 +60,14 @@ if mode=='test-standalone':
     if code: sys.exit(code)
     sys.exit(run('standalone-tests-run',[out/'CoreTests'],extra))
 if mode=='ios':
+    # LinkKit is an official binary SwiftPM dependency; use the normal project to
+    # resolve/embed it rather than a compiler search-path or architecture workaround.
     results=[]
-    for name,platform,target in [('device','iPhoneOS','arm64-apple-ios17.0'),('simulator','iPhoneSimulator','arm64-apple-ios17.0-simulator')]:
-        sdk=dev/f'Platforms/{platform}.platform/Developer/SDKs/{platform}.sdk'
-        out=evidence/name; out.mkdir(exist_ok=True)
-        common=[bin/'swiftc','-sdk',sdk,'-target',target,'-module-cache-path',evidence/'modules','-swift-version','6']
-        core=sorted((root/'Core/Sources/CompanionCore').glob('*.swift'))
-        app=sorted((root/'App').glob('*.swift'))
-        extra={'SDKROOT':str(sdk)}
-        result=run(name+'-core',common+['-parse-as-library','-module-name','CompanionCore','-emit-module','-emit-module-path',out/'CompanionCore.swiftmodule','-emit-object','-whole-module-optimization','-o',out/'CompanionCore.o']+core,extra); results.append(result)
-        if result: continue
-        results.append(run(name+'-typecheck',common+['-I',out,'-typecheck']+app,extra))
-        results.append(run(name+'-objects',common+['-I',out,'-emit-object','-whole-module-optimization','-o',out/'CompanionApp.o']+app,extra))
-        # Direct Apple compiler/linker path, no enforcement bypass; artifacts remain unsigned.
-        linked=run(name+'-link',common+['-I',out,'-o',out/'LocalCompanion',out/'CompanionCore.o']+app,extra)
-        results.append(linked)
-        if linked == 0:
-            import shutil, plistlib
-            bundle=out/'LocalCompanion.app'; bundle.mkdir(exist_ok=True)
-            shutil.copy2(out/'LocalCompanion',bundle/'LocalCompanion')
-            info=plistlib.loads((root/'App/Info.plist').read_bytes())
-            info.update({'CFBundleExecutable':'LocalCompanion','CFBundleIdentifier':'org.localcompanion.prototype','CFBundleName':'LocalCompanion','MinimumOSVersion':'17.0','CFBundleSupportedPlatforms':[platform]})
-            (bundle/'Info.plist').write_bytes(plistlib.dumps(info))
-            shutil.make_archive(str(out/'LocalCompanion-unvalidated'), 'zip', out, 'LocalCompanion.app')
-            run(name+'-platform',[bin/'llvm-objdump','--macho','--private-headers',out/'LocalCompanion'],extra)
+    for name,platform,sdk,destination in [('device','iPhoneOS','iphoneos','generic/platform=iOS'),('simulator','iPhoneSimulator','iphonesimulator','generic/platform=iOS Simulator')]:
+        args=[dev/'usr/bin/xcodebuild','-project',root/'LocalCompanion.xcodeproj','-scheme','LocalCompanion','-configuration','Debug','-sdk',sdk,'-destination',destination,'-derivedDataPath',evidence/(name+'-DerivedData'),'-clonedSourcePackagesDirPath',evidence/'SourcePackages','-packageCachePath',evidence/'PackageCache']
+        if name == 'device': args += ['CODE_SIGNING_ALLOWED=NO']
+        args += ['build']
+        results.append(run(name+'-project-build',args,{'SDKROOT':str(dev/f'Platforms/{platform}.platform/Developer/SDKs/{platform}.sdk')}))
     sys.exit(1 if any(results) else 0)
 if mode=='decode-backend':
     executable=evidence/'decode-backend'

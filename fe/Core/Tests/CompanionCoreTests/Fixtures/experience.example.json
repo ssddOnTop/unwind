@@ -1,0 +1,57 @@
+{
+  "schema_version": "1",
+  "data_epoch": "experience-example-epoch",
+  "revision": 1,
+  "generated_at": "2026-11-14T12:00:00Z",
+  "evaluation_date": "2026-11-14",
+  "timezone": "America/New_York",
+  "is_demo": false,
+  "provenance": "none",
+  "home": {
+    "status": "insufficient",
+    "headline": "Not enough information yet",
+    "detail": "Connect a source when you are ready.",
+    "info": [
+      "Missing records do not tell us how you are doing."
+    ],
+    "sample_label": null,
+    "primary_action": {
+      "kind": "connect",
+      "label": "Connect a source",
+      "detail": null,
+      "card_id": null,
+      "suggestion_id": null
+    }
+  },
+  "concern": {
+    "status": "not_reviewed",
+    "title": "Not enough information yet",
+    "summary": "No current pattern review is available.",
+    "evidence_count": null,
+    "distinct_dates": null,
+    "span_days": null,
+    "first_date": null,
+    "last_date": null
+  },
+  "clarification": null,
+  "visit": {
+    "status": "insufficient_information",
+    "record_review": "not_reviewed",
+    "title": "Not enough information yet",
+    "caption": "No current pattern review is available.",
+    "reason_for_discussion": "An optional general wellbeing conversation can use the available records without assuming a personal habit.",
+    "doctor_starting_point": "Primary care or family medicine is an optional starting point for a nonurgent wellbeing discussion. A purchase pattern does not establish a need for medical care.",
+    "scope_notice": "Conversation preparation, not a diagnosis or symptom assessment.",
+    "observed_information": [],
+    "inferred_habits": [],
+    "confirmed_context": [],
+    "user_reported_preferences": [],
+    "uncertainties": [
+      "Missing records are unknown, not a health assessment."
+    ],
+    "questions": [
+      "What context would help us discuss my wellbeing?"
+    ],
+    "brief": "Visit preparation\nNo current, verified record summary is included.\nNothing has been sent to a doctor."
+  }
+}
