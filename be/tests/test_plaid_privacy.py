@@ -78,7 +78,10 @@ def test_profile_all_existing_state_routes_and_forged_observations(tmp_path):
 
 def test_demo_to_plaid_exits_fixed_clock_and_does_not_merge_purchase_sources(tmp_path):
     provider=Provider(); clock=[NOW+timedelta(hours=18)]
-    with TestClient(app_for(tmp_path,provider,clock=lambda:clock[0]),base_url='http://127.0.0.1') as c:
+    from sample_data import enable_test_fixtures
+    app = app_for(tmp_path,provider,clock=lambda:clock[0])
+    enable_test_fixtures(app.state.service)
+    with TestClient(app,base_url='http://127.0.0.1') as c:
         s=get_state(c)
         r=c.post('/demo',json={'schema_version':'1','request_id':'demo','data_epoch':s['data_epoch'],'action':'seed','fixture_set':'representative-v1','consent_demo':True})
         assert r.status_code==200 and r.json()['ledger'][0]['purchase_count']==3

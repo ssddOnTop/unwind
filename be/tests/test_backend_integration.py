@@ -20,6 +20,15 @@ from sample_data import create_app
 from test_backend import NOW, ControlledSynthesis, batch, feedback, prefs, request, revision, seed, state
 
 
+@pytest.fixture(autouse=True)
+def scripted_models_for_integration(monkeypatch):
+    # Exercise the real SDK graph/checkpoint lifecycle with test-only models.
+    # Restore the production rejection stub after each test.
+    from companion.extensions import synthesis as module
+    from scripted_models import _scripted_models
+    monkeypatch.setattr(module, "_scripted_models", _scripted_models)
+
+
 @pytest.fixture
 def client(tmp_path):
     with TestClient(create_app(tmp_path, replacements={"synthesis": UnavailableSynthesis()}, clock=lambda: NOW), base_url="http://127.0.0.1") as c:

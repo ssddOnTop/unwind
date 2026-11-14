@@ -110,7 +110,7 @@ class ScenariosExtension:
                         candidate.update(status="unavailable", reason="correctness_feedback")
         pref.update(status="observed", window={"start_date": today.isoformat(), "end_date": today.isoformat(), "timezone": p["timezone"]})
         if p["movement_restriction"]:
-            pref["observed"] = "You asked us to avoid movement suggestions. Recorded observations are unchanged."
+            pref["observed"] = "You asked us to avoid movement suggestions. Recorded observations are unchanged; the movement suggestion is suppressed."
         else:
             pref["observed"] = "Your explicit preferences apply immediately. Recorded observations are unchanged."
         if not any(c["suggestion"] and c["suggestion"]["status"] == "eligible" for c in cards[:2]):

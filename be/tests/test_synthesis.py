@@ -950,7 +950,7 @@ def test_sandbox_import_trust_and_public_upload_rejection(checkpoint):
     import httpx
     from companion.connections.plaid import PlaidSandboxClient, SandboxCredentials
     from companion.extensions.plaid import PlaidExtension
-    from companion.http import create_app
+    from sample_data import create_app
 
     async def provider(request):
         assert request.url.host == "sandbox.plaid.com"
@@ -1024,7 +1024,7 @@ def test_sandbox_import_trust_and_public_upload_rejection(checkpoint):
 
 
 def test_bootstrap_process_and_delete_integration(checkpoint):
-    from companion.bootstrap import build_service
+    from sample_data import build_service
 
     async def exercise():
         service = build_service(checkpoint.parent)
