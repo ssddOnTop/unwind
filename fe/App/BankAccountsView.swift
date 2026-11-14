@@ -138,6 +138,8 @@ struct BankAccountsView: View {
                 HStack(spacing: 16) { manageButtons(connection, overview: overview) }
                 VStack(alignment: .leading, spacing: 12) { manageButtons(connection, overview: overview) }
             }
+            Text(verbatim: "Plaid-linked accounts for " + connection.displayName + ": " + String(connection.accounts.filter { $0.enabled && $0.availability == .available }.count))
+                .accessibilityIdentifier("banking.linkedReadiness." + connection.id)
             Button("Disconnect bank", role: .destructive) {
                 confirmation = Confirmation(
                     title: "Disconnect bank?",
@@ -163,31 +165,10 @@ struct BankAccountsView: View {
     }
 
     private func groupControl(_ group: BankingGroup, connection: BankingConnection, overview: BankingOverview) -> some View {
-        HStack {
-            Text(verbatim: group.label).font(.subheadline)
-            Spacer()
-            Menu("Select") {
-                Button("Enable group") {
-                    emit(.selectGroup(connectionID: connection.id, groupID: group.id,
-                                      accountIDs: group.account_ids, enabled: true), overview)
-                }
-                Button("Remove group", role: .destructive) {
-                    emit(.selectGroup(connectionID: connection.id, groupID: group.id,
-                                      accountIDs: group.account_ids, enabled: false), overview)
-                }
-            }
-            .disabled(controlsDisabled || !connection.can_manage || group.account_ids.isEmpty)
-            .accessibilityLabel(Text(verbatim: "Select accounts in " + group.label))
-        }
+        Text(verbatim: group.label).font(.subheadline)
     }
 
     private func accountRow(_ account: BankingAccount, connection: BankingConnection, overview: BankingOverview) -> some View {
-        Toggle(isOn: Binding(
-            get: { account.enabled },
-            set: { enabled in
-                emit(.selectAccounts(connectionID: connection.id, accountIDs: [account.id], enabled: enabled), overview)
-            }
-        )) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(verbatim: account.displayName)
                 if let official = account.official_name, !official.isEmpty, official != account.displayName {
@@ -199,12 +180,11 @@ struct BankAccountsView: View {
                     Text(verbatim: "•• " + mask).font(.caption.monospacedDigit())
                         .accessibilityLabel(Text(verbatim: "Account ending in " + mask))
                 }
-                Text(verbatim: statusLabel(account.availability.rawValue) + " · " + statusLabel(account.import_status.rawValue))
+                Text(verbatim: (account.availability == .available ? "Linked through Plaid" : "Not shared / unavailable") + " · " + (account.import_status == .disabled ? "Imports stopped" : statusLabel(account.import_status.rawValue)))
                     .font(.caption).foregroundStyle(.secondary)
             }
-        }
-        .disabled(controlsDisabled || !connection.can_manage || (!account.enabled && !account.can_enable))
-        .accessibilityHint(account.enabled ? "Turn off to remove from future imports and new insights. Saved history stays." : "Turn on to enable imports.")
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("banking.account." + account.id)
     }
 
     private func emit(_ action: BankingAction, _ overview: BankingOverview) {

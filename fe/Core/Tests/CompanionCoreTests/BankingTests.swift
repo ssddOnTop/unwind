@@ -15,13 +15,13 @@ private let bankingInventoryExample = #"""
     {"id":"connection-opaque","label":"Server bank label","institution_name":"Server institution","status":"connected",
      "can_manage":true,"can_disconnect":true,"last_inventory_at":"2026-11-14T12:00:00Z","last_sync_at":null,
      "accounts":[
-       {"id":"account-opaque","name":"Server checking","official_name":"Server official name","mask":"0007","type":"depository","subtype":"checking","availability":"available","enabled":false,"can_enable":true,"import_status":"disabled","last_sync_at":null},
-       {"id":"account-other","name":"Server future account","official_name":null,"mask":null,"type":"future-type","subtype":"future-subtype","availability":"available","enabled":true,"can_enable":true,"import_status":"ready","last_sync_at":"2026-11-14T12:00:00+00:00"}
+       {"id":"account-opaque","name":"Server checking","official_name":"Server official name","mask":"0007","type":"depository","subtype":"checking","availability":"available","enabled":true,"import_status":"not_synced","last_sync_at":null},
+       {"id":"account-other","name":"Server future account","official_name":null,"mask":null,"type":"future-type","subtype":"future-subtype","availability":"available","enabled":true,"import_status":"ready","last_sync_at":"2026-11-14T12:00:00+00:00"}
      ],
      "groups":[{"id":"group-opaque","label":"Server-defined group","account_ids":["account-other","account-opaque"]}]},
     {"id":"connection-retained","label":"Retained server bank","institution_name":null,"status":"disconnected",
      "can_manage":false,"can_disconnect":false,"last_inventory_at":null,"last_sync_at":null,
-     "accounts":[{"id":"account-retained","name":"Retained account","official_name":null,"mask":"0012","type":"loan","subtype":null,"availability":"disconnected","enabled":false,"can_enable":false,"import_status":"disabled","last_sync_at":null}],"groups":[]}
+     "accounts":[{"id":"account-retained","name":"Retained account","official_name":null,"mask":"0012","type":"loan","subtype":null,"availability":"disconnected","enabled":false,"import_status":"disabled","last_sync_at":null}],"groups":[]}
   ],
   "result":{"status":"partial","message":"Server result message","link_session_id":null,"link_token":null,"expiration":null,"added":0,"modified":null,"removed":null}
 }
@@ -74,12 +74,11 @@ private func bankingAccountJSON() throws -> [String: Any] {
     #expect(value.connections[1].accounts[0].mask == "0012")
 }
 
-@Test func bankingPreservesAuthoritativeSelectionIncludingLegacyEnabledAccounts() throws {
+@Test func bankingPreservesServerOwnedLinkedAccountReadiness() throws {
     let bank = try bankingOverview().connections[0]
-    #expect(!bank.accounts[0].enabled)
-    #expect(bank.accounts[1].enabled) // No client-side override of a conservative legacy upgrade.
-    #expect(bank.accounts[0].can_enable)
-    #expect(bank.accounts[0].import_status == .disabled)
+    #expect(bank.accounts.allSatisfy { $0.enabled })
+    #expect(bank.accounts[0].import_status == .not_synced)
+    #expect(bank.accounts[1].import_status == .ready)
 }
 
 @Test func bankingFallbackUsesOnlyServerTextNeverOpaqueIDsOrInventedNames() throws {
@@ -173,7 +172,7 @@ private func bankingAccountJSON() throws -> [String: Any] {
         object[key] = wrong
         #expect(throws: (any Error).self) { try Wire.decode(BankingOverview.self, bankingData(object)) }
     }
-    for (key, wrong) in [("enabled", 1 as Any), ("can_enable", "true"), ("mask", 7),
+    for (key, wrong) in [("enabled", 1 as Any), ("mask", 7),
                          ("subtype", []), ("official_name", false), ("last_sync_at", 123)] {
         var object = try bankingAccountJSON()
         object[key] = wrong
@@ -296,9 +295,9 @@ private func bankingAccountJSON() throws -> [String: Any] {
     }
 }
 
-@Test func bankingSelectionMatchesFrozenMarkdownRequestExactly() throws {
-    let object = try bankingPayload(.selectAccounts(connectionID: "connection-opaque", accountIDs: ["account-opaque"], enabled: false))
-    let expected = try bankingJSON(#"{"schema_version":"1","request_id":"select-1","data_epoch":"banking-example-epoch","expected_revision":12,"action":"select_accounts","connection_id":"connection-opaque","account_ids":["account-opaque"],"enabled":false}"#)
+@Test func bankingManageMatchesMarkdownRequestExactly() throws {
+    let object = try bankingPayload(.updateLink(connectionID: "connection-opaque"))
+    let expected = try bankingJSON(#"{"schema_version":"1","request_id":"select-1","data_epoch":"banking-example-epoch","expected_revision":12,"action":"update_link","connection_id":"connection-opaque"}"#)
     #expect(object as NSDictionary == expected as NSDictionary)
 }
 
@@ -310,8 +309,6 @@ private func bankingAccountJSON() throws -> [String: Any] {
         (.updateLink(connectionID: "connection"), "update_link", ["connection_id"]),
         (.reconcile(connectionID: "connection", linkSessionID: "session"), "reconcile", ["connection_id", "link_session_id"]),
         (.cancelLink(linkSessionID: "session"), "cancel_link", ["link_session_id"]),
-        (.selectAccounts(connectionID: "connection", accountIDs: ["account"], enabled: true), "select_accounts", ["connection_id", "account_ids", "enabled"]),
-        (.selectGroup(connectionID: "connection", groupID: "group", accountIDs: ["account"], enabled: false), "select_group", ["connection_id", "group_id", "account_ids", "enabled"]),
         (.sync(connectionID: nil), "sync", ["connection_id"]),
         (.sync(connectionID: "connection"), "sync", ["connection_id"]),
         (.disconnect(connectionID: "connection"), "disconnect", ["connection_id"])
@@ -334,19 +331,12 @@ private func bankingAccountJSON() throws -> [String: Any] {
     #expect(try bankingPayload(.sync(connectionID: "one-bank"))["connection_id"] as? String == "one-bank")
 }
 
-@Test func bankingGroupSelectionSendsExactServerIDsInServerOrder() throws {
+@Test func bankingGroupsRemainReadOnlyServerMetadata() throws {
     let overview = try bankingOverview()
-    let connection = overview.connections[0]
-    let group = connection.groups[0] // Intentionally spans two subtypes; client must not regroup.
-    let event = BankingEvent(action: .selectGroup(connectionID: connection.id, groupID: group.id,
-                                                  accountIDs: group.account_ids, enabled: true), version: overview.version)
-    let payload = try #require(JSONSerialization.jsonObject(with: event.request(requestID: "selection").body()) as? [String: Any])
-    #expect(payload["account_ids"] as? [String] == ["account-other", "account-opaque"])
-    #expect(payload["connection_id"] as? String == connection.id)
-    #expect(payload["group_id"] as? String == group.id)
-    #expect(payload["expected_revision"] as? Int == overview.revision)
-    #expect(payload["name"] == nil && payload["label"] == nil && payload["user_id"] == nil)
-    #expect(!overview.connections[0].accounts[0].enabled) // Sending does not mutate authoritative state.
+    let group = overview.connections[0].groups[0]
+    #expect(group.account_ids == ["account-other", "account-opaque"])
+    #expect(group.label == "Server-defined group")
+    #expect(overview.connections[0].accounts.allSatisfy { $0.enabled })
 }
 
 @Test func bankingUpdateSuccessBuildsReconcileNeverExchange() throws {
@@ -362,7 +352,7 @@ private func bankingAccountJSON() throws -> [String: Any] {
 
 @Test func bankingRequestRetainsOriginalRevisionAndStableReplayBytes() throws {
     let version = try bankingOverview().version
-    let event = BankingEvent(action: .selectAccounts(connectionID: "connection-opaque", accountIDs: ["account-opaque"], enabled: false), version: version)
+    let event = BankingEvent(action: .updateLink(connectionID: "connection-opaque"), version: version)
     let request = event.request(requestID: "stable-retry")
     #expect(try request.body() == request.body())
     #expect(request.version == version)
@@ -378,11 +368,6 @@ private func bankingAccountJSON() throws -> [String: Any] {
         .exchange(linkSessionID: "session", publicToken: "public-production-test"),
         .exchange(linkSessionID: "session", publicToken: "public-sandbox-"),
         .exchange(linkSessionID: "session", publicToken: "public-sandbox-" + String(repeating: "x", count: 2048)),
-        .selectAccounts(connectionID: "connection", accountIDs: [], enabled: true),
-        .selectAccounts(connectionID: "connection", accountIDs: ["same", "same"], enabled: true),
-        .selectAccounts(connectionID: "connection", accountIDs: ["bad id"], enabled: true),
-        .selectGroup(connectionID: "connection", groupID: "bad id", accountIDs: ["account"], enabled: true),
-        .selectGroup(connectionID: "connection", groupID: "group", accountIDs: (0...1000).map { "a\($0)" }, enabled: true)
     ]
     for action in invalid { #expect(throws: BankingFailure.invalidRequest) { try bankingPayload(action) } }
     for version in [BankingVersion(data_epoch: "", revision: 0), .init(data_epoch: "epoch", revision: -1)] {

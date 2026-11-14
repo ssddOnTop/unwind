@@ -69,19 +69,26 @@ final class AuthorizedSingleBankSyncTests: XCTestCase {
         for _ in 0..<6 { if banks.isHittable { break }; app.swipeDown() }
         XCTAssertTrue(banks.isHittable); banks.tap()
         XCTAssertTrue(app.buttons["banking.add"].waitForExistence(timeout: 15))
-        let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ AND label ENDSWITH %@", bank + ",", "Connected")).firstMatch
+        let rows = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ AND label ENDSWITH %@", bank + ",", "Connected"))
+        XCTAssertEqual(rows.count, 1, "Bank display name must uniquely identify one connection; never choose the first ambiguous match")
+        guard rows.count == 1 else { return }
+        let row = rows.element(boundBy: 0)
         for _ in 0..<6 { if row.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(row.isHittable); row.tap()
-        // Scroll lazy rows into the accessibility tree without touching any toggles.
-        app.swipeUp()
-        // Read current selection; never toggle anything. Fail closed if it differs from consent.
-        // SwiftUI exposes both a labeled wrapper and its nested UISwitch; count leaves only.
-        let selected = app.switches.allElementsBoundByIndex.filter {
-            $0.descendants(matching: .switch).count == 0 && ($0.value as? String) == "1"
-        }
-        XCTAssertEqual(selected.count, 2, "Expected the two previously user-enabled accounts")
-        capture("pre-single-sync-selection-private", app: app)
-        let update = app.buttons["Update imports: " + bank]
+        // Read server-owned linked readiness; there are no local selection controls.
+        let readiness = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Plaid-linked accounts for " + bank + ": "))
+        for _ in 0..<6 { if readiness.count == 1 { break }; app.swipeUp() }
+        XCTAssertEqual(readiness.count, 1)
+        guard readiness.count == 1 else { return }
+        let count = Int(readiness.element(boundBy: 0).label.components(separatedBy: ": ").last ?? "") ?? 0
+        XCTAssertGreaterThan(count, 0, "Requires provider-linked accounts ready for the authorized sync")
+        guard count > 0 else { return }
+        XCTAssertEqual(app.switches.count, 0, "Bank accounts must not expose app selection toggles")
+        capture("pre-single-sync-linked-readiness-private", app: app)
+        let updates = app.buttons.matching(NSPredicate(format: "label == %@", "Update imports: " + bank))
+        XCTAssertEqual(updates.count, 1, "Authorized bank action must be unique")
+        guard updates.count == 1 else { return }
+        let update = updates.element(boundBy: 0)
         for _ in 0..<6 { if update.isHittable { break }; app.swipeDown() }
         XCTAssertTrue(update.isHittable && update.isEnabled)
         update.tap() // Exactly one mutation tap. Never retry this method automatically.

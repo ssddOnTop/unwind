@@ -76,21 +76,13 @@ import Testing
         case "exchange":
             var new = connections[0]; new["id"] = "connection-new"; new["label"] = "New server bank"
             var accounts = new["accounts"] as! [[String: Any]]
-            accounts = accounts.enumerated().map { i, old in var a = old; a["id"] = "new-account-\(i)"; a["enabled"] = false; a["import_status"] = "disabled"; return a }
+            accounts = accounts.enumerated().map { i, old in var a = old; a["id"] = "new-account-\(i)"; a["enabled"] = true; a["import_status"] = "not_synced"; return a }
             new["accounts"] = accounts; new["groups"] = []; connections.append(new)
         case "reconcile":
             let index = connections.firstIndex { $0["id"] as? String == value["connection_id"] as? String }!
             var accounts = connections[index]["accounts"] as! [[String: Any]]
-            var discovered = accounts[0]; discovered["id"] = "newly-discovered"; discovered["enabled"] = false; discovered["mask"] = "0013"; discovered["import_status"] = "disabled"; accounts.append(discovered)
+            var discovered = accounts[0]; discovered["id"] = "newly-discovered"; discovered["enabled"] = true; discovered["mask"] = "0013"; discovered["import_status"] = "not_synced"; accounts.append(discovered)
             connections[index]["accounts"] = accounts
-        case "select_accounts", "select_group":
-            let index = connections.firstIndex { $0["id"] as? String == value["connection_id"] as? String }!
-            let ids = value["account_ids"] as! [String]
-            connections[index]["accounts"] = (connections[index]["accounts"] as! [[String: Any]]).map { old in
-                var account = old
-                if ids.contains(old["id"] as! String) { account["enabled"] = value["enabled"]!; account["import_status"] = (value["enabled"] as! Bool) ? "not_synced" : "disabled" }
-                return account
-            }
         case "sync":
             result["status"] = syncStatus; result["message"] = syncStatus == "partial" ? "Server reports imports still partial" : "Server reports sync complete"
             result["added"] = 0; result["modified"] = 0; result["removed"] = 0
@@ -98,7 +90,7 @@ import Testing
         case "disconnect":
             let index = connections.firstIndex { $0["id"] as? String == value["connection_id"] as? String }!
             connections[index]["status"] = "disconnected"; connections[index]["can_manage"] = false
-            connections[index]["accounts"] = (connections[index]["accounts"] as! [[String: Any]]).map { old in var a = old; a["enabled"] = false; a["availability"] = "disconnected"; a["can_enable"] = false; a["import_status"] = "disabled"; return a }
+            connections[index]["accounts"] = (connections[index]["accounts"] as! [[String: Any]]).map { old in var a = old; a["enabled"] = false; a["availability"] = "disconnected"; a["import_status"] = "disabled"; return a }
             result["status"] = "disconnected"
         default: throw ClientFailure.invalidResponse
         }
@@ -156,11 +148,11 @@ import Testing
     let rig = try BankRig(); defer { rig.cleanup() }; rig.service.inventory["connections"] = []; rig.service.inventory["status"] = "not_connected"; try await rig.prepare()
     #expect(rig.controller.status == .idle); #expect(rig.controller.overview?.connections.isEmpty == true)
 }
-@Test @MainActor func integratedSelectionWaitsForServerAndPreservesExactGroupIDs() async throws {
+@Test @MainActor func integratedDisconnectWaitsForServerAndPreservesOtherBank() async throws {
     let rig = try BankRig(); defer { rig.cleanup() }; try await rig.prepare()
-    let original = try #require(rig.controller.overview); let bank = original.connections[0], group = bank.groups[0]
+    let original = try #require(rig.controller.overview); let bank = original.connections[0]
     rig.service.hold = true
-    rig.controller.perform(try rig.event(.selectGroup(connectionID: bank.id, groupID: group.id, accountIDs: group.account_ids, enabled: false)), requestID: "group-stable")
+    rig.controller.perform(try rig.event(.disconnect(connectionID: bank.id)), requestID: "group-stable")
     try await rig.wait { rig.service.entered }
     #expect(rig.controller.overview == original); #expect(rig.controller.status == .updating)
     rig.service.release(); try await rig.wait { !rig.controller.working }
@@ -168,7 +160,7 @@ import Testing
     #expect(rig.controller.overview?.connections[1] == original.connections[1])
     #expect(rig.client.snapshot.state?.observations == rig.service.state.observations)
     let request = try #require(rig.actions().first)
-    #expect(request["group_id"] as? String == group.id); #expect(request["account_ids"] as? [String] == group.account_ids)
+    #expect(request["connection_id"] as? String == bank.id); #expect(request["action"] as? String == "disconnect")
     #expect(request["request_id"] as? String == "group-stable")
 }
 @Test @MainActor func integratedSafeTransportRetryPreservesBytesAndLogicalIdentity() async throws {
@@ -191,7 +183,7 @@ import Testing
         #expect(rig.controller.notice == (partial ? "Server reports imports still partial" : "Server reports sync complete"))
     }
 }
-@Test @MainActor func integratedAddNativeSuccessExchangesOnceAndNewAccountsStayDisabled() async throws {
+@Test @MainActor func integratedAddNativeSuccessExchangesOnceAndSharedAccountsAreEnabled() async throws {
     let rig = try BankRig(); defer { rig.cleanup() }; try await rig.prepare()
     rig.controller.perform(try rig.event(.addLink))
     try await rig.wait { rig.controller.session != nil }
@@ -202,7 +194,7 @@ import Testing
     let actions = try rig.actions(); #expect(actions.map { $0["action"] as! String } == ["add_link", "exchange"])
     #expect(actions[1]["link_session_id"] as? String == "unit-link-session")
     #expect(rig.controller.overview?.connections.count == 3)
-    #expect(rig.controller.overview?.connections.last?.accounts.allSatisfy { !$0.enabled } == true)
+    #expect(rig.controller.overview?.connections.last?.accounts.allSatisfy { $0.enabled } == true)
     callback.onSuccess(LinkSuccess(publicToken: "public-sandbox-unit-banking")); callback.onLoad()
     for _ in 0..<30 { await Task.yield() }
     #expect(rig.service.commits == 2); #expect(!rig.controller.showingLink)
@@ -217,7 +209,7 @@ import Testing
     try await rig.wait { rig.service.commits == 2 && !rig.controller.working }
     let actions = try rig.actions(); #expect(actions.map { $0["action"] as! String } == ["update_link", "reconcile"])
     #expect(actions[1]["public_token"] == nil); #expect(actions[1]["connection_id"] as? String == bank.id)
-    #expect(rig.controller.overview?.connections[0].accounts.last?.enabled == false)
+    #expect(rig.controller.overview?.connections[0].accounts.last?.enabled == true)
     #expect(rig.controller.overview?.connections[0].accounts[1].enabled == bank.accounts[1].enabled)
 }
 @Test @MainActor func integratedNativeExitCancelsOnlyPendingSessionWithoutDisconnect() async throws {
@@ -235,7 +227,7 @@ import Testing
 @Test @MainActor func integratedStaleSelectionsRefreshButNeverRetagOrReplay() async throws {
     for code in ["stale_banking", "obsolete_selection"] {
         let rig = try BankRig(); defer { rig.cleanup() }; try await rig.prepare()
-        let event = try rig.event(.selectAccounts(connectionID: "connection-opaque", accountIDs: ["account-opaque"], enabled: true))
+        let event = try rig.event(.sync(connectionID: "connection-opaque"))
         rig.service.reject = code; rig.service.state.revision += 1
         rig.controller.perform(event, requestID: "stale-original")
         try await rig.wait { rig.service.mutationBodies.count == 1 && !rig.controller.working }
@@ -299,20 +291,20 @@ import Testing
 }
 @Test func bankingRequestsCannotEnterDurableOutbox() throws {
     let version = BankingVersion(data_epoch: "banking-example-epoch", revision: 12)
-    for action: BankingAction in [.addLink, .exchange(linkSessionID: "pending-unit", publicToken: "public-sandbox-unit"), .sync(connectionID: nil), .selectAccounts(connectionID: "connection-opaque", accountIDs: ["account-opaque"], enabled: true)] {
+    for action: BankingAction in [.addLink, .exchange(linkSessionID: "pending-unit", publicToken: "public-sandbox-unit"), .sync(connectionID: nil), .sync(connectionID: "connection-opaque")] {
         #expect(throws: ClientFailure.rejected("invalid_request", false)) {
             try PendingMutation(path: "/banking/v1/actions", request: BankingRequest(action: action, version: version, requestID: "unit"))
         }
     }
 }
 
-@Test @MainActor func integratedIndividualSelectionPublishesOnlyCommittedState() async throws {
+@Test @MainActor func integratedSyncPublishesOnlyCommittedState() async throws {
     let rig = try BankRig(); defer { rig.cleanup() }; try await rig.prepare()
-    rig.controller.perform(try rig.event(.selectAccounts(connectionID: "connection-opaque", accountIDs: ["account-opaque"], enabled: true)), requestID: "enable-single")
+    rig.controller.perform(try rig.event(.sync(connectionID: "connection-opaque")), requestID: "enable-single")
     try await rig.wait { rig.service.commits == 1 && !rig.controller.working }
     #expect(rig.controller.overview?.connections[0].accounts[0].enabled == true)
     #expect(rig.controller.overview?.revision == rig.client.snapshot.state?.revision)
-    #expect(try rig.actions()[0]["action"] as? String == "select_accounts")
+    #expect(try rig.actions()[0]["action"] as? String == "sync")
 }
 @Test @MainActor func integratedBankingRejectsUncommittedOrStaleOverviewRevision() async throws {
     for offset in [-1, 5] {
@@ -334,7 +326,7 @@ import Testing
 }
 @Test @MainActor func integratedLifecycleCancellationDiscardsDelayedInventorySelection() async throws {
     let rig = try BankRig(); defer { rig.cleanup() }; try await rig.prepare(); rig.service.hold = true
-    rig.controller.perform(try rig.event(.selectAccounts(connectionID: "connection-opaque", accountIDs: ["account-opaque"], enabled: true)))
+    rig.controller.perform(try rig.event(.sync(connectionID: "connection-opaque")))
     try await rig.wait { rig.service.entered }; rig.controller.cancelForLifecycle(); rig.service.release()
     try await rig.wait { rig.service.commits == 1 }
     for _ in 0..<30 { await Task.yield() }
@@ -357,11 +349,11 @@ import Testing
 }
 @Test func bankingEncodedActionsMatchFrozenSchema() throws {
     let version = BankingVersion(data_epoch: "banking-example-epoch", revision: 12)
-    let actions: [BankingAction] = [.addLink, .exchange(linkSessionID: "unit-session", publicToken: "public-sandbox-test-only"), .updateLink(connectionID: "connection-opaque"), .reconcile(connectionID: "connection-opaque", linkSessionID: "unit-session"), .cancelLink(linkSessionID: "unit-session"), .selectAccounts(connectionID: "connection-opaque", accountIDs: ["account-opaque"], enabled: false), .selectGroup(connectionID: "connection-opaque", groupID: "group-opaque", accountIDs: ["account-other", "account-opaque"], enabled: true), .sync(connectionID: nil), .sync(connectionID: "connection-opaque"), .disconnect(connectionID: "connection-opaque")]
+    let actions: [BankingAction] = [.addLink, .exchange(linkSessionID: "unit-session", publicToken: "public-sandbox-test-only"), .updateLink(connectionID: "connection-opaque"), .reconcile(connectionID: "connection-opaque", linkSessionID: "unit-session"), .cancelLink(linkSessionID: "unit-session"), .sync(connectionID: nil), .sync(connectionID: "connection-opaque"), .disconnect(connectionID: "connection-opaque")]
     let values = try actions.enumerated().map { index, action in try JSONSerialization.jsonObject(with: BankingRequest(action: action, version: version, requestID: "schema-case-\(index)").body()) }
     let target = URL(fileURLWithPath: ProcessInfo.processInfo.environment["COMPANION_EVIDENCE_DIR"]!).appendingPathComponent("encoded-banking-actions.json")
     try JSONSerialization.data(withJSONObject: values, options: [.prettyPrinted, .sortedKeys]).write(to: target)
-    #expect(values.count == 10)
+    #expect(values.count == 8)
 }
 
 @Test @MainActor func integratedBusyRetriesAreBoundedAndKeepTheExactRequest() async throws {
