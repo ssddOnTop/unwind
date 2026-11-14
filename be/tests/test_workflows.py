@@ -229,3 +229,23 @@ async def test_bounded_manual_admission_and_pre_execution_retry_limit(app):
         assert (await q.latest(account,state['data_epoch'])).status=='failed'
         clock[0]+=timedelta(hours=1)
         assert await q.claim(account) is None
+
+async def test_delete_during_model_call_cannot_publish_old_epoch_or_requeue(app):
+    h,_,_=app
+    async with h.client() as client:
+        state=await seed(client,h);handle=await h.handle('a');service=handle.service.app.state.service;q=h.app.state.workflow_queue
+        entered=asyncio.Event();calls=[]
+        class Slow:
+            async def ainvoke(self,*args,**kwargs):
+                calls.append(True);entered.set();await asyncio.Event().wait()
+        service.pattern_coordinator.model_factory=lambda:Slow()
+        await enqueue(client,h,state);job=await q.claim(handle.account_id)
+        pending=asyncio.create_task(h.app.state.workflow_worker.run(job));await asyncio.wait_for(entered.wait(),10)
+        result=await client.request('DELETE','/data',headers=h.headers(),json={'schema_version':'1','request_id':str(uuid4()),'data_epoch':state['data_epoch'],'confirm':'delete_all'})
+        assert result.status_code==200,result.text
+        await asyncio.wait_for(pending,5);await q.scan()
+        async with q.scoped(handle.account_id) as c:
+            for table in ('pattern_jobs','pattern_runs','pattern_requests','pattern_insights'):
+                assert (await (await c.execute(sql.SQL('SELECT count(*) FROM companion_private.{}').format(sql.Identifier(table)))).fetchone())[0]==0
+        assert len(calls)==1
+        assert (await client.get('/workflows/v1',headers=h.headers())).json()['action'] is None
