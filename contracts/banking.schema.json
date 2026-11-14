@@ -1,0 +1,883 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Frozen banking v1: GET /banking/v1 and POST /banking/v1/actions. Plain text inventory; Sandbox synthetic records only. Existing State and Plaid v1 schemas unchanged.",
+  "$ref": "#/$defs/banking",
+  "$defs": {
+    "account": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "official_name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 240
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mask": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 16
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "subtype": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "availability": {
+          "type": "string",
+          "enum": [
+            "available",
+            "missing",
+            "disconnected"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "can_enable": {
+          "type": "boolean"
+        },
+        "import_status": {
+          "type": "string",
+          "enum": [
+            "disabled",
+            "not_synced",
+            "syncing",
+            "ready",
+            "error"
+          ]
+        },
+        "last_sync_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "official_name",
+        "mask",
+        "type",
+        "subtype",
+        "availability",
+        "enabled",
+        "can_enable",
+        "import_status",
+        "last_sync_at"
+      ]
+    },
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "account_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+          },
+          "maxItems": 1000
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "account_ids"
+      ]
+    },
+    "connection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "institution_name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 180
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "connected",
+            "syncing",
+            "attention",
+            "disconnected"
+          ]
+        },
+        "can_manage": {
+          "type": "boolean"
+        },
+        "can_disconnect": {
+          "type": "boolean"
+        },
+        "last_inventory_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_sync_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "accounts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/account"
+          },
+          "maxItems": 1000
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/group"
+          },
+          "maxItems": 1000
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "institution_name",
+        "status",
+        "can_manage",
+        "can_disconnect",
+        "last_inventory_at",
+        "last_sync_at",
+        "accounts",
+        "groups"
+      ]
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "link_ready",
+            "saved",
+            "complete",
+            "partial",
+            "cancelled",
+            "disconnected",
+            "removal_pending"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "link_session_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "link_token": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expiration": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "added": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "modified": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "removed": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "message",
+        "link_session_id",
+        "link_token",
+        "expiration",
+        "added",
+        "modified",
+        "removed"
+      ]
+    },
+    "banking": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "environment": {
+          "const": "sandbox"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "not_configured",
+            "not_connected",
+            "ready",
+            "attention"
+          ]
+        },
+        "selection_notice": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "connections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/connection"
+          },
+          "maxItems": 1000
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/result"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "data_epoch",
+        "revision",
+        "generated_at",
+        "environment",
+        "status",
+        "selection_notice",
+        "connections",
+        "result"
+      ]
+    },
+    "add_link_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "action": {
+          "const": "add_link"
+        },
+        "consent_sandbox": {
+          "const": true
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "expected_revision",
+        "action",
+        "consent_sandbox"
+      ]
+    },
+    "exchange_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "action": {
+          "const": "exchange"
+        },
+        "link_session_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "public_token": {
+          "type": "string",
+          "pattern": "^public-sandbox-",
+          "minLength": 16,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "expected_revision",
+        "action",
+        "link_session_id",
+        "public_token"
+      ]
+    },
+    "update_link_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "action": {
+          "const": "update_link"
+        },
+        "connection_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "expected_revision",
+        "action",
+        "connection_id"
+      ]
+    },
+    "reconcile_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "action": {
+          "const": "reconcile"
+        },
+        "connection_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "link_session_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "expected_revision",
+        "action",
+        "connection_id",
+        "link_session_id"
+      ]
+    },
+    "cancel_link_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "action": {
+          "const": "cancel_link"
+        },
+        "link_session_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "expected_revision",
+        "action",
+        "link_session_id"
+      ]
+    },
+    "select_accounts_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "action": {
+          "const": "select_accounts"
+        },
+        "connection_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "account_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+          },
+          "minItems": 1,
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "expected_revision",
+        "action",
+        "connection_id",
+        "account_ids",
+        "enabled"
+      ]
+    },
+    "select_group_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "action": {
+          "const": "select_group"
+        },
+        "connection_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "group_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "account_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+          },
+          "minItems": 1,
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "expected_revision",
+        "action",
+        "connection_id",
+        "group_id",
+        "account_ids",
+        "enabled"
+      ]
+    },
+    "sync_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "action": {
+          "const": "sync"
+        },
+        "connection_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "expected_revision",
+        "action",
+        "connection_id"
+      ]
+    },
+    "disconnect_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "action": {
+          "const": "disconnect"
+        },
+        "connection_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "expected_revision",
+        "action",
+        "connection_id"
+      ]
+    },
+    "request": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/add_link_request"
+        },
+        {
+          "$ref": "#/$defs/exchange_request"
+        },
+        {
+          "$ref": "#/$defs/update_link_request"
+        },
+        {
+          "$ref": "#/$defs/reconcile_request"
+        },
+        {
+          "$ref": "#/$defs/cancel_link_request"
+        },
+        {
+          "$ref": "#/$defs/select_accounts_request"
+        },
+        {
+          "$ref": "#/$defs/select_group_request"
+        },
+        {
+          "$ref": "#/$defs/sync_request"
+        },
+        {
+          "$ref": "#/$defs/disconnect_request"
+        }
+      ]
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "invalid_request",
+                "unsupported_version",
+                "epoch_mismatch",
+                "stale_banking",
+                "obsolete_selection",
+                "idempotency_conflict",
+                "consent_required",
+                "busy",
+                "not_found",
+                "not_configured",
+                "internal_error"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "request_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "field": {
+                    "type": "string",
+                    "maxLength": 240
+                  },
+                  "message": {
+                    "type": "string",
+                    "maxLength": 240
+                  }
+                },
+                "required": [
+                  "field",
+                  "message"
+                ]
+              },
+              "maxItems": 1000
+            }
+          },
+          "required": [
+            "code",
+            "message",
+            "retryable",
+            "request_id",
+            "details"
+          ]
+        }
+      },
+      "required": [
+        "error"
+      ]
+    }
+  },
+  "examples": [
+    {
+      "schema_version": "1",
+      "data_epoch": "banking-example-epoch",
+      "revision": 0,
+      "generated_at": "2026-11-14T12:00:00Z",
+      "environment": "sandbox",
+      "status": "not_connected",
+      "selection_notice": "Removing an account here stops future imports and excludes its saved records from new insights. Saved history stays in your ledger. This is a local setting, not bank-side access revocation.",
+      "connections": [],
+      "result": null
+    }
+  ]
+}

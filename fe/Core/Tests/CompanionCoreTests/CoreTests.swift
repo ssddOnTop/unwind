@@ -292,6 +292,44 @@ actor ReplayHTTP: HTTPTransport {
     try add("feedback_request", FeedbackRequest(schema_version: "1", request_id: "usefulness-feedback", data_epoch: s.data_epoch, card_id: "purchase_recurrence", kind: "usefulness", value: "not_useful", scope: "card", event_ref: nil, attribution: nil, note: ""))
     try add("feedback_request", FeedbackRequest(schema_version: "1", request_id: "stop-feedback", data_epoch: s.data_epoch, card_id: "purchase_recurrence", kind: "suppress", value: "stop", scope: "scenario", event_ref: nil, attribution: nil, note: ""))
     let fe = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-    try JSONSerialization.data(withJSONObject: cases, options: [.prettyPrinted, .sortedKeys]).write(to: fe.appendingPathComponent("evidence/encoded-contracts.json"), options: .atomic)
+    let evidence = ProcessInfo.processInfo.environment["COMPANION_EVIDENCE_DIR"].map { URL(fileURLWithPath: $0) } ?? fe.appendingPathComponent("evidence")
+    try FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: true)
+    try JSONSerialization.data(withJSONObject: cases, options: [.prettyPrinted, .sortedKeys]).write(to: evidence.appendingPathComponent("encoded-contracts.json"), options: .atomic)
     #expect(cases.count == 14)
+}
+
+@Test func readOnlyPreviewRejectsEveryMutationWithoutReachingTransport() async throws {
+    let underlying = StubHTTP(state: try fixture())
+    let transport = ReadOnlyTransport(base: underlying)
+    for path in ["/connections/plaid", "/preferences", "/data", "/feedback", "/process", "/observations", "/demo"] {
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:8000" + path)!)
+        request.httpMethod = path == "/data" ? "DELETE" : "POST"
+        await #expect(throws: ClientFailure.rejected("read_only_preview", false)) { try await transport.send(request) }
+    }
+    #expect(await underlying.requests.isEmpty)
+}
+@Test func readOnlyPreviewCanReadState() async throws {
+    let underlying = StubHTTP(state: try fixture())
+    let transport = ReadOnlyTransport(base: underlying)
+    let result = try await transport.send(URLRequest(url: URL(string: "http://127.0.0.1:8000/state")!))
+    #expect(result.status == 200); #expect(await underlying.requests.count == 1)
+}
+
+
+@Test func debugLoopbackPortOverrideIsExplicitAndValidated() throws {
+    #expect(try LoopbackEndpoint.port(arguments: [], environment: [:], allowOverride: true) == 8000)
+    #expect(try LoopbackEndpoint.port(arguments: ["--service-port", "8768"], environment: [:], allowOverride: true) == 8768)
+    #expect(try LoopbackEndpoint.port(arguments: [], environment: ["LOCAL_COMPANION_TEST_PORT": "8768"], allowOverride: true) == 8768)
+    #expect(try LoopbackEndpoint.port(arguments: ["--service-port", "8768"], environment: [:], allowOverride: false) == 8000)
+    for bad in ["0", "65536", "-1", "https://example.com", "127.0.0.1:8768", "8768/path", ""] {
+        #expect(throws: ClientFailure.invalidEndpoint) { try LoopbackEndpoint.port(arguments: ["--service-port", bad], environment: [:], allowOverride: true) }
+    }
+    #expect(throws: ClientFailure.invalidEndpoint) { try LoopbackEndpoint.port(arguments: ["--service-port"], environment: [:], allowOverride: true) }
+}
+@Test @MainActor func clientNondefaultLoopbackRequiresExplicitPortAndNeverAllowsRemoteHost() throws {
+    let storage = temporaryStorage(); defer { try? FileManager.default.removeItem(at: storage.directory) }
+    let url = try LoopbackEndpoint.url(port: 8768)
+    #expect(throws: ClientFailure.invalidEndpoint) { try CompanionClient(storage: storage, baseURL: url) }
+    _ = try CompanionClient(storage: storage, baseURL: url, allowedPort: 8768)
+    #expect(throws: ClientFailure.invalidEndpoint) { try CompanionClient(storage: storage, baseURL: URL(string: "http://example.com:8768")!, allowedPort: 8768) }
 }

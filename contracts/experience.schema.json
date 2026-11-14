@@ -1,0 +1,659 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Frozen experience v1: GET /experience/v1 and POST /experience/v1/answers only. Legacy unauthenticated mode is for isolated tests; authenticated-user composition follows separately. Plain-text native rendering only.",
+  "$ref": "#/$defs/experience",
+  "$defs": {
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "connect",
+            "view_visit",
+            "view_ledger",
+            "explore_suggestion"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 1000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "card_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "suggestion_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "label",
+        "detail",
+        "card_id",
+        "suggestion_id"
+      ]
+    },
+    "home": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "pattern",
+            "no_flags",
+            "insufficient",
+            "stale",
+            "suppressed",
+            "review_pending",
+            "corrected"
+          ]
+        },
+        "headline": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "info": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "sample_label": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "primary_action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/action"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "headline",
+        "detail",
+        "info",
+        "sample_label",
+        "primary_action"
+      ]
+    },
+    "concern": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "unconfirmed_pattern",
+            "no_pattern",
+            "not_reviewed",
+            "corrected"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "evidence_count": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "distinct_dates": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "span_days": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "first_date": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_date": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "title",
+        "summary",
+        "evidence_count",
+        "distinct_dates",
+        "span_days",
+        "first_date",
+        "last_date"
+      ]
+    },
+    "clarification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "question": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "scope": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "answer": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "yes",
+                "no",
+                "not_sure",
+                "dismissed"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "should_prompt": {
+          "type": "boolean"
+        },
+        "can_answer": {
+          "type": "boolean"
+        },
+        "next_prompt_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "value": {
+                "type": "string",
+                "enum": [
+                  "yes",
+                  "no",
+                  "not_sure",
+                  "dismissed"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 80
+              }
+            },
+            "required": [
+              "value",
+              "label"
+            ]
+          }
+        }
+      },
+      "required": [
+        "key",
+        "question",
+        "scope",
+        "answer",
+        "should_prompt",
+        "can_answer",
+        "next_prompt_at",
+        "options"
+      ]
+    },
+    "visit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "inferred_pattern",
+            "no_patterns_flagged",
+            "insufficient_information",
+            "corrected"
+          ]
+        },
+        "record_review": {
+          "type": "string",
+          "enum": [
+            "limited",
+            "not_reviewed"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "caption": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "reason_for_discussion": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "doctor_starting_point": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "scope_notice": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "observed_information": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "inferred_habits": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "confirmed_context": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "user_reported_preferences": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "uncertainties": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "brief": {
+          "type": "string",
+          "maxLength": 16000
+        }
+      },
+      "required": [
+        "status",
+        "record_review",
+        "title",
+        "caption",
+        "reason_for_discussion",
+        "doctor_starting_point",
+        "scope_notice",
+        "observed_information",
+        "inferred_habits",
+        "confirmed_context",
+        "user_reported_preferences",
+        "uncertainties",
+        "questions",
+        "brief"
+      ]
+    },
+    "experience": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "evaluation_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "timezone": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "is_demo": {
+          "type": "boolean"
+        },
+        "provenance": {
+          "type": "string",
+          "enum": [
+            "synthetic",
+            "live",
+            "mixed",
+            "none"
+          ]
+        },
+        "home": {
+          "$ref": "#/$defs/home"
+        },
+        "concern": {
+          "$ref": "#/$defs/concern"
+        },
+        "clarification": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/clarification"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "visit": {
+          "$ref": "#/$defs/visit"
+        }
+      },
+      "required": [
+        "schema_version",
+        "data_epoch",
+        "revision",
+        "generated_at",
+        "evaluation_date",
+        "timezone",
+        "is_demo",
+        "provenance",
+        "home",
+        "concern",
+        "clarification",
+        "visit"
+      ]
+    },
+    "answer_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clarification_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "answer": {
+          "type": "string",
+          "enum": [
+            "yes",
+            "no",
+            "not_sure",
+            "dismissed"
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "expected_revision",
+        "clarification_key",
+        "answer"
+      ]
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "invalid_request",
+                "unsupported_version",
+                "epoch_mismatch",
+                "stale_experience",
+                "obsolete_pattern",
+                "idempotency_conflict",
+                "consent_required",
+                "demo_conflict",
+                "busy",
+                "not_found",
+                "internal_error"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 1000
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "request_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "field": {
+                    "type": "string",
+                    "maxLength": 1000
+                  },
+                  "message": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                },
+                "required": [
+                  "field",
+                  "message"
+                ]
+              }
+            }
+          },
+          "required": [
+            "code",
+            "message",
+            "retryable",
+            "request_id",
+            "details"
+          ]
+        }
+      },
+      "required": [
+        "error"
+      ]
+    }
+  },
+  "examples": [
+    {
+      "schema_version": "1",
+      "data_epoch": "experience-example-epoch",
+      "revision": 1,
+      "generated_at": "2026-11-14T12:00:00Z",
+      "evaluation_date": "2026-11-14",
+      "timezone": "America/New_York",
+      "is_demo": false,
+      "provenance": "none",
+      "home": {
+        "status": "insufficient",
+        "headline": "Not enough information yet",
+        "detail": "Connect a source when you are ready.",
+        "info": [
+          "Missing records do not tell us how you are doing."
+        ],
+        "sample_label": null,
+        "primary_action": {
+          "kind": "connect",
+          "label": "Connect a source",
+          "detail": null,
+          "card_id": null,
+          "suggestion_id": null
+        }
+      },
+      "concern": {
+        "status": "not_reviewed",
+        "title": "Not enough information yet",
+        "summary": "No current pattern review is available.",
+        "evidence_count": null,
+        "distinct_dates": null,
+        "span_days": null,
+        "first_date": null,
+        "last_date": null
+      },
+      "clarification": null,
+      "visit": {
+        "status": "insufficient_information",
+        "record_review": "not_reviewed",
+        "title": "Not enough information yet",
+        "caption": "No current pattern review is available.",
+        "reason_for_discussion": "An optional general wellbeing conversation can use the available records without assuming a personal habit.",
+        "doctor_starting_point": "Primary care or family medicine is an optional starting point for a nonurgent wellbeing discussion. A purchase pattern does not establish a need for medical care.",
+        "scope_notice": "Conversation preparation, not a diagnosis or symptom assessment.",
+        "observed_information": [],
+        "inferred_habits": [],
+        "confirmed_context": [],
+        "user_reported_preferences": [],
+        "uncertainties": [
+          "Missing records are unknown, not a health assessment."
+        ],
+        "questions": [
+          "What context would help us discuss my wellbeing?"
+        ],
+        "brief": "Visit preparation\nNo current, verified record summary is included.\nNothing has been sent to a doctor."
+      }
+    }
+  ]
+}

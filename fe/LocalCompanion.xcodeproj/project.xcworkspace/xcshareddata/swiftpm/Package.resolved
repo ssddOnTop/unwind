@@ -1,0 +1,42 @@
+{
+  "originHash" : "4ab6c9ffc2c93529c2abc41b4117850e2065f91e5c524a54282d877719f9618b",
+  "pins" : [
+    {
+      "identity" : "clerk-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/clerk/clerk-ios.git",
+      "state" : {
+        "revision" : "c82ae3a6dfb8130cdf753ce496aec83856a47b7d",
+        "version" : "1.7.2"
+      }
+    },
+    {
+      "identity" : "nuke",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/kean/Nuke",
+      "state" : {
+        "revision" : "9e37a277bdb527bf3ae71156ded1423f495f5168",
+        "version" : "13.2.3"
+      }
+    },
+    {
+      "identity" : "phonenumberkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/PhoneNumberKit/PhoneNumberKit",
+      "state" : {
+        "revision" : "ff40a615c71bf3e1785562c86f7e38bdea29660a",
+        "version" : "5.0.14"
+      }
+    },
+    {
+      "identity" : "plaid-link-ios-spm",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/plaid/plaid-link-ios-spm.git",
+      "state" : {
+        "revision" : "0d89484e78a76834f32edec8191511d00985dc74",
+        "version" : "7.4.0"
+      }
+    }
+  ],
+  "version" : 3
+}

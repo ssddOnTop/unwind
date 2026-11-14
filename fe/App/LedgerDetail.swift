@@ -10,20 +10,22 @@ struct LedgerDetail: View {
         List {
             if let card {
                 Section("Observed, not assumed") { CardSummary(card: card) }
-                if let inferred = card.inferred { Section("Backend interpretation") { Text(inferred) } }
+                if let inferred = card.inferred { Section("Possible meaning") { Text(inferred) } }
                 Section("Window and uncertainty") {
                     Text("\(card.window.start_date) through \(card.window.end_date)")
-                    Text("Timezone: \(card.window.timezone)")
-                    Text("Coverage: \(card.coverage)")
-                    Text("Rule \(card.rule_version) · card revision \(card.revision)")
-                    ForEach(card.limitations, id: \.self) { Text($0) }
+                    HStack {
+                        Text("These records may be incomplete.")
+                        Spacer()
+                        AccessibleInfoPopover(title: "Record limitations", message: card.limitations.joined(separator: "\n\n"))
+                    }
                 }
-                Section("Exact evidence revisions") {
+                Section("Supporting records") {
                     if card.evidence.isEmpty { Text("No supporting observations. This is not evidence of inactivity.") }
                     ForEach(card.evidence, id: \.observation_id) { ref in
                         if let o = model.state?.observations.first(where: { $0.id == ref.observation_id && $0.revision == ref.revision }) {
                             VStack(alignment: .leading, spacing: 5) {
-                                Text("\(o.local_date) · \(o.source_id) · \(o.mode)").font(.headline)
+                                Text(o.local_date).font(.headline)
+                                if o.mode == "fixture" { Text("Sample data").font(.caption) }
                                 if let activity = o.activity { Text("Recorded \(activity.value) \(activity.metric) (\(activity.unit))") }
                                 if let purchase = o.purchase {
                                     Text("\(purchase.category ?? "Unknown category") · \(purchase.merchant ?? "Unknown merchant")")
@@ -31,9 +33,11 @@ struct LedgerDetail: View {
                                     Text("Authorized: \(purchase.authorized_date ?? "Unknown") · Posted: \(purchase.posted_date ?? "Unknown")").font(.caption)
                                     Text("Purchase context is not proof of eating or nutrition.").font(.caption)
                                 }
-                                Text("\(o.id) / revision \(o.revision)").font(.caption).textSelection(.enabled)
-                                Text("\(o.provenance.adapter) v\(o.provenance.adapter_version) · \(o.provenance.method) · coverage \(o.provenance.coverage)").font(.caption)
-                                Text("Timezone \(o.timezone) · precision \(o.time_precision)").font(.caption)
+                                DisclosureGroup("Record details") {
+                                    Text("\(o.id) / revision \(o.revision)").font(.caption).textSelection(.enabled)
+                                    Text("\(o.provenance.adapter) · \(o.provenance.method)").font(.caption)
+                                    Text("Timezone \(o.timezone) · precision \(o.time_precision)").font(.caption)
+                                }
                             }
                         } else { Text("Referenced evidence is unavailable; refresh before drawing conclusions.") }
                     }
@@ -41,11 +45,11 @@ struct LedgerDetail: View {
                 Section("Suggestion") {
                     if let suggestion = card.suggestion {
                         Text(model.hasPending ? "Pending changes: suggestion paused locally." : suggestion.text)
-                        Text("Status: \(suggestion.status)")
+                        if suggestion.status != "eligible" { Text("This suggestion isn’t currently available.").font(.caption) }
                         if let reason = suggestion.reason { Text(reason).font(.caption) }
-                        Button("Stop this scenario", role: .destructive) {
+                        Button("Stop suggestions like this", role: .destructive) {
                             Task { await model.feedback(cardID: card.id, kind: "suppress", value: "stop", scope: "scenario") }
-                        }
+                        }.accessibilityIdentifier("Stop this scenario")
                     } else { Text("No compatible suggestion. Missing evidence is not confirmation.") }
                 }
                 Section("Optional feedback") {
@@ -55,7 +59,7 @@ struct LedgerDetail: View {
                         VStack(alignment: .leading) {
                             Text("\(feedback.kind): \(feedback.value) · \(feedback.scope)")
                             if !feedback.note.isEmpty { Text(feedback.note) }
-                            Text(feedback.created_at).font(.caption).foregroundStyle(.secondary)
+
                         }
                     }
                 }

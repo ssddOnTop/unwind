@@ -1,0 +1,16 @@
+# Additive frontend publication allowlist; runtime evidence remains ignored.
+!/.gitignore
+!/Core/Tests/CompanionCoreTests/Fixtures/plaid-examples.json
+!/LocalCompanion.xcodeproj/project.xcworkspace/
+!/LocalCompanion.xcodeproj/project.xcworkspace/xcshareddata/
+!/LocalCompanion.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+!/LocalCompanion.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+
+!/Config/
+!/Config/Defaults.xcconfig
+/Config/Local.xcconfig
+
+!/Core/Tests/CompanionCoreTests/Fixtures/experience.example.json
+
+!/Legacy/
+!/Legacy/**

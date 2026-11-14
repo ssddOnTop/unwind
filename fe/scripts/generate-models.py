@@ -4,10 +4,31 @@ import json
 from pathlib import Path
 root = Path(__file__).resolve().parents[2]
 defs = json.loads((root / 'contracts/state.schema.json').read_text())['$defs']
+# Explicit build-time adoption of the frozen additive Sandbox profile; base files stay read-only.
+profile = json.loads((root / 'contracts/plaid.schema.json').read_text())['$defs']
+for field in ['adapter', 'method']:
+    defs['provenance']['properties'][field]['enum'].append(profile['sandbox_provenance']['properties'][field]['const'])
+for kind in ['link_token', 'exchange', 'sync', 'disconnect']:
+    for direction in ['request', 'response']:
+        key = kind + '_' + direction
+        defs['plaid_' + key] = json.loads(json.dumps(profile[key]).replace('state.schema.json#/', '#/'))
+experience = json.loads((root / 'contracts/experience.schema.json').read_text())['$defs']
+def experience_refs(value):
+    if isinstance(value, dict):
+        return {k: ('#/$defs/experience_' + v.split('/')[-1] if k == '$ref' and v.startswith('#/$defs/') else experience_refs(v)) for k,v in value.items()}
+    if isinstance(value, list): return [experience_refs(v) for v in value]
+    return value
+for key, value in experience.items():
+    defs['experience_' + key] = experience_refs(value)
+# Explicit additive deployment errors; frozen base artifacts are not rewritten.
+for code in ['stale_experience', 'obsolete_pattern', 'unauthorized', 'session_pending', 'auth_unavailable']:
+    defs['error']['properties']['error']['properties']['code']['enum'].append(code)
 names = {k: ''.join(x.title() for x in k.split('_')) for k in defs}
 names['error'] = 'APIErrorEnvelope'
 names['notification'] = 'NotificationIntent'
 names['process'] = 'ProcessingState'
+names['experience_experience'] = 'ExperienceV1'
+names['experience_error'] = 'ExperienceErrorEnvelope'
 objects = []
 def typ(p, name):
     if 'anyOf' in p:
@@ -50,6 +71,10 @@ while i < len(objects):
             guard = f'if let value = {k}' if optional else f'do {{ let value = {k};'
             if optional: guard += ' {'
             out += [f'        {guard}', f'            guard {cond} else {{ throw DecodingError.dataCorruptedError(forKey: .{k}, in: c, debugDescription: "Invalid contract value") }}', '        }']
+    if name == 'Provenance':
+        out += ['        guard (adapter == "plaid_sandbox") == (method == "transactions_sync"), adapter != "plaid_sandbox" || adapter_version == "1" else {', '            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid Sandbox provenance"))', '        }']
+    if name == 'Observation':
+        out += ['        if source_id == "plaid" {', '            guard mode == "fixture", kind == "purchase", time_precision == "date", occurred_at == nil, provenance.adapter == "plaid_sandbox", provenance.method == "transactions_sync" else {', '                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid Sandbox observation profile"))', '            }', '        } else if provenance.adapter == "plaid_sandbox" {', '            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Sandbox provenance on another source"))', '        }']
     out += ['    }', '    public func encode(to encoder: Encoder) throws {', '        var c = encoder.container(keyedBy: CodingKeys.self)']
     out += [f'        try c.encode({k}, forKey: .{k})' for k,t,p in props] + ['    }','}\n']
     output.append('\n'.join(out))

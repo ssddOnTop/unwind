@@ -1,0 +1,777 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Frozen opt-in Plaid Sandbox contract 2026-11-14. Root validates POST request; use $defs.response for successful responses and $defs.state for full state. Base schema remains unchanged. Resolve state.schema.json relative to this file. Semantic rules in plaid.md are mandatory.",
+  "$ref": "#/$defs/request",
+  "$defs": {
+    "link_token_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "action": {
+          "const": "link_token"
+        },
+        "consent_sandbox": {
+          "const": true
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "action",
+        "consent_sandbox"
+      ]
+    },
+    "exchange_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "action": {
+          "const": "exchange"
+        },
+        "public_token": {
+          "type": "string",
+          "pattern": "^public-sandbox-",
+          "minLength": 16,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "action",
+        "public_token"
+      ]
+    },
+    "sync_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "action": {
+          "const": "sync"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "action"
+      ]
+    },
+    "disconnect_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "action": {
+          "const": "disconnect"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "action"
+      ]
+    },
+    "request": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/link_token_request"
+        },
+        {
+          "$ref": "#/$defs/exchange_request"
+        },
+        {
+          "$ref": "#/$defs/sync_request"
+        },
+        {
+          "$ref": "#/$defs/disconnect_request"
+        }
+      ]
+    },
+    "sandbox_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "plaid_sandbox"
+        },
+        "adapter_version": {
+          "const": "1"
+        },
+        "record_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "method": {
+          "const": "transactions_sync"
+        },
+        "coverage": {
+          "type": "string",
+          "enum": [
+            "unknown",
+            "partial"
+          ]
+        }
+      },
+      "required": [
+        "adapter",
+        "adapter_version",
+        "record_id",
+        "method",
+        "coverage"
+      ]
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_id": {
+          "type": "string",
+          "enum": [
+            "demo",
+            "healthkit",
+            "plaid"
+          ]
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "fixture",
+            "live"
+          ]
+        },
+        "operation": {
+          "type": "string",
+          "enum": [
+            "upsert",
+            "remove"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "purchase",
+            "activity"
+          ]
+        },
+        "local_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1
+        },
+        "time_precision": {
+          "type": "string",
+          "enum": [
+            "date",
+            "datetime"
+          ]
+        },
+        "occurred_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lifecycle": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "posted",
+            "recorded",
+            "removed"
+          ]
+        },
+        "supersedes": {
+          "anyOf": [
+            {
+              "$ref": "state.schema.json#/$defs/evidence_ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "household_attribution": {
+          "type": "string",
+          "enum": [
+            "self",
+            "shared",
+            "other",
+            "unknown"
+          ]
+        },
+        "provenance": {
+          "oneOf": [
+            {
+              "$ref": "state.schema.json#/$defs/provenance"
+            },
+            {
+              "$ref": "#/$defs/sandbox_provenance"
+            }
+          ]
+        },
+        "purchase": {
+          "anyOf": [
+            {
+              "$ref": "state.schema.json#/$defs/purchase"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "activity": {
+          "anyOf": [
+            {
+              "$ref": "state.schema.json#/$defs/activity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "source_id",
+        "mode",
+        "operation",
+        "kind",
+        "local_date",
+        "timezone",
+        "time_precision",
+        "occurred_at",
+        "lifecycle",
+        "supersedes",
+        "household_attribution",
+        "provenance",
+        "purchase",
+        "activity"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "time_precision": {
+                "const": "date"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "occurred_at": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "occurred_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "remove"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "lifecycle": {
+                "const": "removed"
+              },
+              "purchase": {
+                "type": "null"
+              },
+              "activity": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "oneOf": [
+              {
+                "properties": {
+                  "kind": {
+                    "const": "purchase"
+                  },
+                  "purchase": {
+                    "$ref": "state.schema.json#/$defs/purchase"
+                  },
+                  "activity": {
+                    "type": "null"
+                  },
+                  "lifecycle": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "posted"
+                    ]
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "activity"
+                  },
+                  "activity": {
+                    "$ref": "state.schema.json#/$defs/activity"
+                  },
+                  "purchase": {
+                    "type": "null"
+                  },
+                  "lifecycle": {
+                    "const": "recorded"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source_id": {
+                "const": "plaid"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mode": {
+                "const": "fixture"
+              },
+              "kind": {
+                "const": "purchase"
+              },
+              "time_precision": {
+                "const": "date"
+              },
+              "occurred_at": {
+                "type": "null"
+              },
+              "provenance": {
+                "$ref": "#/$defs/sandbox_provenance"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "provenance": {
+                "$ref": "state.schema.json#/$defs/provenance"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "evaluation_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "preferences": {
+          "$ref": "state.schema.json#/$defs/preferences"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "state.schema.json#/$defs/source"
+          }
+        },
+        "observations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/observation"
+          }
+        },
+        "ledger": {
+          "type": "array",
+          "items": {
+            "$ref": "state.schema.json#/$defs/ledger_card"
+          }
+        },
+        "feedback": {
+          "type": "array",
+          "items": {
+            "$ref": "state.schema.json#/$defs/feedback"
+          }
+        },
+        "notification_intents": {
+          "type": "array",
+          "items": {
+            "$ref": "state.schema.json#/$defs/notification"
+          }
+        },
+        "process": {
+          "$ref": "state.schema.json#/$defs/process"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "data_epoch",
+        "revision",
+        "generated_at",
+        "evaluation_date",
+        "preferences",
+        "sources",
+        "observations",
+        "ledger",
+        "feedback",
+        "notification_intents",
+        "process",
+        "limitations"
+      ]
+    },
+    "error": {
+      "$ref": "state.schema.json#/$defs/error"
+    },
+    "link_token_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "action": {
+          "const": "link_token"
+        },
+        "environment": {
+          "const": "sandbox"
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "link_token": {
+              "type": "string",
+              "pattern": "^link-sandbox-",
+              "maxLength": 2048
+            },
+            "expiration": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "link_token",
+            "expiration"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "action",
+        "environment",
+        "result",
+        "state"
+      ]
+    },
+    "exchange_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "action": {
+          "const": "exchange"
+        },
+        "environment": {
+          "const": "sandbox"
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "const": "connected"
+            }
+          },
+          "required": [
+            "status"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "action",
+        "environment",
+        "result",
+        "state"
+      ]
+    },
+    "sync_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "action": {
+          "const": "sync"
+        },
+        "environment": {
+          "const": "sandbox"
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "enum": [
+                "waiting",
+                "partial",
+                "complete",
+                "error"
+              ]
+            },
+            "added": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "modified": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "removed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "skipped": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "retry_after_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 300
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "status",
+            "added",
+            "modified",
+            "removed",
+            "skipped",
+            "retry_after_seconds"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "action",
+        "environment",
+        "result",
+        "state"
+      ]
+    },
+    "disconnect_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "data_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "action": {
+          "const": "disconnect"
+        },
+        "environment": {
+          "const": "sandbox"
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "enum": [
+                "disconnected",
+                "removal_pending"
+              ]
+            }
+          },
+          "required": [
+            "status"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "action",
+        "environment",
+        "result",
+        "state"
+      ]
+    },
+    "response": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/link_token_response"
+        },
+        {
+          "$ref": "#/$defs/exchange_response"
+        },
+        {
+          "$ref": "#/$defs/sync_response"
+        },
+        {
+          "$ref": "#/$defs/disconnect_response"
+        }
+      ]
+    }
+  }
+}

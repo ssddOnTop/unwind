@@ -1,136 +1,131 @@
-# Local Companion — native iOS 17+
+# Local Companion — authenticated native iOS 17+
 
-Native SwiftUI Today / Ledger / Settings app with a dependency-free Foundation Swift package. Frontend source is under `fe/`; contracts and backend implementation remain separate and read-only to this frontend work.
+SwiftUI Today / Ledger / Settings app. Clerk owns native authentication; the backend owns Home selection, inference, visit copy, clarification identity and persisted answers. The local Foundation/CryptoKit package has no remote dependencies. The app uses official SwiftPM packages **Clerk 1.7.2** (`ClerkKit`, `ClerkKitUI`) and **Plaid LinkKit 7.4.0**, both exactly pinned with a shared resolved lockfile.
 
-## Current verification
+## Current profile and boundaries
 
-**The complete `RuntimeSmokeTests.testSyntheticUserJourney` passed: 1 actual XCTest UI test, 0 failures, 0 skipped**, on iOS 18.3.1. This is the full journey, not the shorter continuation. It passed on the first attempt of the final verification pass; no fix/rerun cycle was needed. Result: `fe/evidence/ui/FullJourney-01.xcresult`; summary: `fe/evidence/ui/full-runtime-summary.json`. The seeded app was left running for preview. Runtime identifiers and process IDs stay in ignored evidence, not source.
+This supersedes account-free onboarding and client-side Home/visit rules. Missing auth configuration shows a setup screen, never anonymous access. A loaded SDK and active session are necessary but not sufficient: the app also requires a fresh, exact `/auth/v1/session` admission for the configured endpoint, issuer and SDK subject before opening account storage or fetching any data. A legacy backend returning anonymous `/state` cannot unlock the app.
 
-- Full Xcode app build, simulator installation and actual app launch succeed. The original CoreDevice/Mercury loader failure was resolved by the owner restoring the original Xcode resources and completing setup; it is **not a current build blocker**. No agent accepted licenses or changed system frameworks.
-- Actual iOS URLSession requests reach the isolated loopback backend. The UI tests exercise explicit synthetic seed consent, ledger detail, correctness feedback, preferences, relaunch persistence, scripted processing, suppression, deletion/epoch rotation and explicit reseeding.
-- The exact latest UI test result, screenshots and test destination are recorded under ignored `fe/evidence/ui`. Earlier failed attempts remain available; compile success and partial journeys are not counted as full UI passes.
-- **32 real Swift Testing core tests pass on macOS.** These are separate from the iOS XCTest UI journey. Contract checks validated 14 Swift-encoded payload cases; ASGI interoperability and Swift decoding provide additional non-UI coverage.
-- Complete device/simulator direct typecheck, object compilation and linking also passed. Direct-link ZIP artifacts are historical, unvalidated bundles; use the Xcode project for the installed app.
+The authenticated API endpoint is deliberately **disabled by default (port 0)** until an operator designates an authenticated deployment. The parent has now designated authenticated port **8769**; the current ignored local configuration and builds use that endpoint. Neither the earlier port 8000 service nor the anonymous Sandbox on 8768 is selected or probed. Old `--service-port` and anonymous-preview launch arguments no longer configure the actual app. The Core package retains base-contract compatibility for existing tests, but the authenticated transport forbids `/demo` and there is no seed/reset button or new demo route in the UI.
 
-## Clean-checkout prerequisites
+Only `fe/` is owned by this implementation. Backend, contract and research files are read-only. No model/provider keys are collected by the app. No iCloud container or writes are used. No user team ID is fabricated.
 
-A complete Xcode installation with owner-completed setup and an installed compatible simulator runtime is required. iOS 18.3.1 was used for runtime verification; the deployment target remains iOS 17. Python 3 is needed for tooling only. No network Swift packages or XcodeGen are required: the project and generated Codable models are committed.
+## Public Clerk configuration
 
-Start the backend using its documented setup and a **separate empty synthetic test database** at `http://127.0.0.1:8000`. For destructive UI tests, reserve a dedicated simulator with no personal app cache. Never point these tests at real data. The frontend scripts neither install runtimes nor accept licenses.
-
-The UI runner chooses Xcode from explicit `DEVELOPER_DIR`, then a selected full Xcode installation, then the standard Xcode application location. An explicit invalid selection fails rather than silently switching. Build/core scripts also honor `DEVELOPER_DIR`. Set it to an Xcode `.app` or its `Contents/Developer` directory when using a nonstandard installation. No global `xcode-select` change is required.
-
-## Build and core tests
-
-Normal Xcode Run uses the project's Debug active-destination architecture policy (`ONLY_ACTIVE_ARCH=YES`); Release uses all standard architectures (`NO`). This must match the local Swift package: otherwise a concrete simulator destination can build only the package's active module while the app also requests an unavailable second slice. The generator preserves this policy. No `ARCHS`, `EXCLUDED_ARCHS`, Swift include-path or framework-search-path workaround is needed.
-
-The missing-module failure was reproduced with a fresh concrete iOS 27.2 simulator Debug build, despite a successful generic build. After fixing the project/generator, fresh Debug and Release builds passed for both generic and concrete iOS 27.2 destinations with no command-line architecture, search-path or signing overrides. Evidence is under ignored `fe/evidence/module-fix`. This was not fixed by deleting user DerivedData or changing the package import.
+The project includes `Config/Defaults.xcconfig`, which optionally includes ignored `Config/Local.xcconfig`. Only the two approved **public** settings, `CLERK_PUBLISHABLE_KEY` and `CLERK_ISSUER`, are extracted programmatically from the workspace-root `.env`. The script never emits that file or copies other settings. The exact issuer is encoded for safe xcconfig transport, not normalized or inferred from a token.
 
 From the workspace root:
 
 ```sh
-./fe/scripts/test-core.sh
-./fe/scripts/typecheck-ios.sh
-python3 fe/scripts/toolchain.py xcode
-```
-
-The scripts create their output/cache directories under `fe/evidence`, use explicit SDK paths and strip inherited `DYLD_*`. Core tests supply only the installed platform testing-framework paths; the obsolete Mercury override has been removed. Python can be selected with `PYTHON` for the shell launchers. These build commands do not boot simulators, modify system libraries, stage, commit or push files.
-
-## Full simulator UI journey
-
-Inspect the authorized isolated backend before resetting it: every observation must be `mode=fixture`, `source_id=demo`; all non-demo sources must be disabled and not consented, with no private notes or cloud consent. Only then use the contract's confirmed `DELETE /data` request with the current epoch to obtain a pristine test instance. The UI runner intentionally **does not reset any backend automatically**.
-
-The runner checks the backend is empty and has no non-demo source consent, notes or cloud consent before launching XCTest. The tests repeat these checks **before launching the app or taking their first screenshot**. They never request HealthKit or notification permissions. XCTest artifacts and screenshots may still contain test data, so all result bundles remain ignored.
-
-Provide the dedicated simulator explicitly; no ignored device-ID file is required on a clean checkout:
-
-```sh
-export DEVICE_ID="YOUR_DEDICATED_SIMULATOR_UDID"
-python3 fe/scripts/run-ui-smoke.py FullJourney --device "$DEVICE_ID"
-
-# Equivalent: DEVICE_ID supplies the destination without --device.
-python3 fe/scripts/run-ui-smoke.py AnotherFullJourney
-```
-
-Use a unique result name each time; previous failures are never overwritten. The default selected test is **RuntimeSmokeTests.testSyntheticUserJourney**, not the shorter continuation. The runner records the host architecture, uses its own DerivedData and disables parallel UI testing. It does not override `ARCHS` or `ONLY_ACTIVE_ARCH`; project defaults determine the build, just as for normal Xcode Run. The optional second positional argument preserves targeted invocation:
-
-```sh
-python3 fe/scripts/run-ui-smoke.py IndependentSuppression testSuppressionDeletionAndPreview --device "$DEVICE_ID"
-```
-
-Both tests require pristine input and seed their own fixtures; the shorter test no longer assumes preferences or synthesis left by another run. Reset the authorized synthetic database again before another destructive test. A legacy `fe/evidence/ui/device-id.txt` is accepted only as a last-resort fallback for existing local workflows. Explicit `--device` takes priority over `DEVICE_ID`, which takes priority over that file.
-
-The full journey waits on committed revisions, process completion and epoch changes rather than assuming disappearance of a spinner means a network mutation has finished. It leaves explicitly seeded fixtures after verifying deletion and relaunch. To preview afterwards, launch `org.localcompanion.prototype` on the same dedicated simulator. The normal app never seeds automatically.
-
-## Manual app flow
-
-1. Open `fe/LocalCompanion.xcodeproj`, select **LocalCompanion**, and run on a simulator connected to the local backend.
-2. Refresh, then explicitly consent to **Load representative synthetic demo**. The demo shows recorded values and fixture labels, not personal history or clinical conclusions.
-3. Inspect ledger evidence revisions, coverage, uncertainty and limitations. Correctness and usefulness are separate feedback types; suppression persists until explicitly cleared.
-4. Settings → **Refresh and edit preferences** saves a complete replacement. Stale forms are rejected; pending mutations retain their original request identities.
-5. Optional HealthKit uses a separate explicit app-sync consent and Apple read-permission action. No live collection occurs at launch. Optional generic reminders likewise require a separate preference and OS authorization.
-6. Delete all data only after confirmation. Offline deletion remains pending rather than being described as complete; deletion never modifies Apple's Health store.
-
-The endpoint is fixed to `http://127.0.0.1:8000`, with no authentication or provider-key UI. Other hosts/ports and redirects are rejected. Actual simulator loopback access is verified. On a physical phone, loopback refers to the phone, not the Mac; physical-device backend networking needs a separately approved boundary.
-
-## Contract and retry behavior
-
-- Generated Codable types use exact snake_case keys, no implicit key conversion. Decoding rejects missing/unknown properties and invalid enum/version values. Nullable required keys are explicitly encoded as JSON null, not omitted. Dates stay strings.
-- The schema is the source of truth. Generation is optional; committed generated models/project are immediately usable:
-
-```sh
-python3 fe/scripts/generate-models.py
+python3 fe/scripts/configure-auth.py
 python3 fe/scripts/generate-project.py
 ```
 
-- Every mutation is encoded once and durably saved before sending. Retries send the same bytes, request ID and epoch, at most three attempts per sync with bounded backoff. Only transport failures or retryable server errors retry. Permanent rejection persists a blocked marker; relaunch/foreground refresh does not blindly resend it. Explicit discard is required before a replacement edit.
-- State is fetched before draining the queue. A different server epoch discards old pending mutations; **nothing retags them**. A same-epoch lower revision, including an idempotency receipt, cannot roll the cached projection backward. A fresh GET follows successful mutations.
-- Snapshot/outbox are atomically persisted together. Storage failure/corruption is not treated as an empty queue. Requests older than the 90-day receipt window are discarded with an explicit warning instead of resent.
-- Mutations/HealthKit actions are serialized. Preferences require a fresh snapshot and unchanged editor baseline. Pending requests pause suggestion display/reminder scheduling conservatively until reconciled.
-- Ledger facts, recurrence thresholds, coverage conclusions, suggestion filtering, cooldowns, synthesis and scheduling decisions remain on the backend. The client only normalizes daily counts, renders returned state, records explicit feedback and reconciles intent identifiers.
-
-## HealthKit boundary and limits
-
-Read-only step type, foreground only, no workouts/location/microphone/Motion permission, no background entitlement, and no HealthKit writes. The adapter requests cumulative statistics for each of seven completed dates in the preference IANA timezone. It uses calendar day boundaries rather than fixed 24-hour increments. It does not separately sum phone/watch samples. Changed aggregates reuse observation identity with the next revision and an exact supersedes reference; timezone changes do not rewrite old records.
-
-Authorization-request completion is **not** read permission. Empty queries and errors report read_access=unknown; only actual returned quantities produce samples_readable. Empty is never converted to zero. Explicit returned zero remains a recorded value, not evidence of inactivity. Queries cannot establish continuous wear/carry coverage; successful observations are partial at most. Protected-data/unavailable/query-failed outcomes contain no raw error or health payload.
-
-Device comparison against Health UI, multi-source reconciliation, limited authorization history, revocation and locked-device behavior remain unverified. Only seven completed days are refreshed; this is not a 90-day rescan or anchored deletion tracker. An empty query cannot distinguish revocation, deletion or genuine absence, so previously uploaded evidence is **not** tombstoned on empty results. Late changes outside the refresh window are not detected by this adapter. Disconnecting immediately excludes the source on the backend but preserves historical evidence until retention or explicit deletion.
-
-## Notifications and privacy
-
-- Generic fixed title/body; no record details in notification payloads. OS permission is checked separately from the backend preference. Notifications are upserted by epoch + backend intent ID and absent/expired intents are removed. Suppression, revocation, pending mutations, offline uncertainty and reset/delete cancel stale reminders.
-- iOS can defer/suppress delivery. There is no delivery acknowledgment and no exact daily wakeup promise. Expiry is reconciled on foreground refresh; exact cancellation at midnight while terminated is not guaranteed.
-- Live normalized data and the outbox are kept in Application Support with complete file protection on iOS and backup exclusion on both directory and snapshot. No iCloud/CloudKit entitlement or ubiquitous store, no analytics, and no persisted URL cache/cookies.
-- Backup exclusion is tested on macOS; iOS locked-device enforcement and backup behavior remain device verification gates. Atomic replacement is not a secure-disk-overwrite guarantee.
-- No provider keys/UI. Plaid and email stay visibly not_configured. Cloud consent defaults off; optional live health transmission is not enabled by v1. Scripted synthesis is explicitly labeled and disabled in the UI when live evidence exists.
-
-## Additional reproducible checks
-
-On a clean checkout, **run the core tests first**: they create `fe/evidence/encoded-contracts.json` and the required evidence/cache directories. Validation depends on that generated file. ASGI interoperability then creates `backend-state-responses.json`, which the Swift decoder check consumes. The backend virtual environment must already be set up according to backend instructions, including jsonschema/FastAPI test dependencies; these frontend checks install nothing. ASGI tests use a temporary database under frontend evidence, no listening port, and synthetic records only:
+The first command writes the ignored, mode-0600 local xcconfig with API port 0. It is a clean-checkout example, not an instruction to overwrite the current parent-managed port 8769. Once an operator designates an **authenticated** loopback service, configure only that approved port and rebuild:
 
 ```sh
-./fe/scripts/test-core.sh
-PYTHONDONTWRITEBYTECODE=1 be/.venv/bin/python fe/scripts/validate-encoded-contracts.py
-PYTHONDONTWRITEBYTECODE=1 HOME="$PWD/fe/evidence/home" XDG_CACHE_HOME="$PWD/fe/evidence/cache" TMPDIR="$PWD/fe/evidence/tmp" \
-  be/.venv/bin/python fe/scripts/check-backend-interop.py
-python3 fe/scripts/toolchain.py decode-backend
-plutil -lint fe/LocalCompanion.xcodeproj/project.pbxproj fe/App/Info.plist fe/App/LocalCompanion.entitlements
+python3 fe/scripts/configure-auth.py --api-port "$APPROVED_AUTH_PORT"
 ```
 
-No backend service was launched or left running by these checks. The ASGI response snapshots are then decoded by the actual Swift Codable types. This is interoperability evidence, **not** proof of app-to-backend networking on iOS.
+Do not point this at the old anonymous service. Admission failures never trigger endpoint discovery, anonymous fallback or a `/state` probe. The port becomes build configuration, not a user-editable host/tenant selector. All native API calls are restricted to that loopback origin for this development deployment. A deployed HTTPS origin needs explicit deployment configuration; do not weaken TLS or redirect handling to connect a device.
 
-## Evidence inventory
+For a physical device, choose your actual signing team and HealthKit capability in Xcode. Clerk Native API and the selected sign-in methods must be enabled/configured in the instance dashboard; any production OAuth/native associated-domain configuration remains operator work. The current app successfully displays the real native SDK sign-in form, including its development-mode badge, but that does not establish successful email/OTP or OAuth completion.
 
-All generated files/logs are under `fe/evidence`, including:
+## Native sign-in and lifecycle safety
 
-- `core-tests.json`: exact command/environment, exit status, and real Swift Testing output/count.
-- `encoded-contracts.json`, `contract-validation.json`: actual Swift payloads and JSON Schema results.
-- `backend-interop.json`, `backend-state-responses.json`, `backend-decoder-run.json`: synthetic real-backend interoperability and Swift decoding results.
-- `device-{core,typecheck,objects,link,platform}.json` and corresponding `simulator-*`: exact compiler/linker results and platform inspection.
-- `device/LocalCompanion-unvalidated.zip`, `simulator/LocalCompanion-unvalidated.zip`: separately linked unvalidated app bundles; not installed/launched.
-- `xcodebuild.json`: full-project build result. Earlier loader/CLT failures are historical, not current launch blockers.
-- `ui/*.xcresult`, `ui/*-command.json`, screenshots and runtime summaries: actual simulator journeys, with failed and successful attempts kept separately.
-- `verification-summary.json`: concise final gate results.
+`LocalCompanionApp` mounts the SDK's **AuthView**, not imitation forms. Its completion callback uses the installed SDK's `onAuthComplete` initializer. Tokens come from the captured `Session.getToken(.init(skipCache: ...))`, with no custom JWT template. The SDK manages Keychain credentials; the app never persists or logs JWTs.
 
-Remaining acceptance work: consult the current runtime summary for tested simulator flows; broader accessibility, real-device signing/HealthKit entitlement, actual queries, protection/backup behavior and notification delivery still require explicit device validation. Simulator runtime evidence is not clinical validation.
+- Exactly one Bearer header is injected for each send. Cookies, credential storage, disk HTTP caching and redirects are disabled. Tokens never enter URLs, request bodies or the persistent outbox.
+- Admission is a no-cache `GET /auth/v1/session`. It requires HTTP 200, JSON content type, exactly three string fields, schema version 1 and exact issuer/SDK-subject equality. Duplicate keys (including escaped duplicates), extra/missing/null fields, redirects, 304 and legacy 404/405 fail closed. The mismatch message names the API/Clerk configuration, never suggests anonymous access.
+- A data 401 invalidates admission, forces SDK refresh at most once for the same captured session, re-admits and retries the same original method/path/body/request ID/epoch. Admission and data share that refresh budget. Concurrent old-generation responses are rejected rather than creating additional refreshes. A second 401, absent/unsafe token or pending session keeps data locked. 503 is retryable service unavailability, not successful sign-in.
+- Identity, session, endpoint and auth/admission generations are checked around token fetches, network responses, cache writes and callbacks. A same-user re-admission does not make an old callback current again. A late user-A mutation cannot populate user B's storage, even with matching epochs and request IDs.
+- Account namespaces hash `(issuer, subject)`, never raw path components. A deployment change invalidates old server cache. Anonymous snapshots/answers are deleted, never imported. Logout/account switching synchronously gates data, cancels Link/Health/work/reminders and clears the outgoing protected cache/outbox **before** exposing SDK switch/sign-out controls. A failed SDK sign-out leaves a persisted local lock; reopening requires a deliberate user action.
+- `UserButton` and `UserProfileView` are exposed only after local clearing. They do not bypass the host's sign-out boundary.
+- Backgrounding hides private UI and fences in-flight work while retaining same-account queued bytes on disk. Foreground requires fresh admission before reopening them. Previously authorized generic OS reminders may remain while backgrounded; foreground re-admission, logout/switch and auth failure cancel/reconcile them. Permission prompts only follow explicit user controls.
+
+## Backend-driven experience
+
+The app renders strict typed `GET /experience/v1` responses. POST answers send only the exact `schema_version`, `request_id`, `data_epoch`, `expected_revision`, `clarification_key`, and selected backend option `answer`. No evaluation date, user ID, inference text or client-created answer key is added.
+
+Home displays backend headline/detail/sample label/info and routes the finite action kind. Ledger appears only in its tab. The visit view renders the backend's observed records, possible interpretations, confirmed context, preferences, uncertainties, questions and complete brief. It never computes patterns, category priority, clinical status, thresholds or no-flags copy. Optional expansion and cosmetic editing remain view-local. Copy is explicit, device-local and expires after five minutes; the backend sample marker is preserved after cosmetic editing.
+
+Successful answer responses replace the projection directly after a fresh State check proves they are not older receipts. Lower revisions cannot overwrite newer projections; epoch rotation clears projection/outbox. Stale/obsolete answer conflicts refresh the current question and require a new choice, never automatic retagging/retry. Answers persist only in backend storage, not in the retired local answer store.
+
+Settings retains optional native bank/Health/reminder management, persistent preferences, explicit separate cloud consent, evidence feedback and deletion. Source/permission status is not a clinical inference. Health collects foreground daily cumulative step totals only; successful permission requests and empty queries never claim granted readable access. Local records use file protection and backup exclusion. Provider configuration stays backend-only. Normalized synthetic records may later be preloaded by an authorized backend operator; the frontend neither generates nor seeds them.
+
+## Superseded implementation preserved, not counted as current coverage
+
+`Legacy/AnonymousPresentation/` holds the former `HomePresentation`, `VisitPreparation`, `VisitAnswerStore`, their tests, old onboarding/Home views, anonymous UI tests and anonymous runner. None is in the Swift package or Xcode build. This intentionally retires 56 former local-domain/persistence tests rather than pretending client inference remains authoritative. The original base-contract tests and all 19 Plaid tests remain in the current suite.
+
+Earlier anonymous UI evidence is historical, not authenticated acceptance. In the last pre-auth targeted attempt (`evidence/native-acceptance/Attempt-4.xcresult`), real Link reached Sandbox credentials but the app crashed in an iOS keyboard-accessory logging callback; the visit return interaction also failed. No real Link completion was established. The user superseded that work with this auth migration before another run. All prior failures remain preserved; no anonymous acceptance tests are run by the new project.
+
+## Reproducible builds and tests
+
+A complete owner-configured Xcode and an existing dedicated simulator are required. No script installs software, accepts licenses, changes system libraries or pushes code. The self-contained `.xcodeproj` is generated deterministically with explicit current app/UI test source entries. No XcodeGen is needed.
+
+```sh
+FE_EVIDENCE_SUBDIR=auth ./fe/scripts/test-core.sh
+FE_EVIDENCE_SUBDIR=auth ./fe/scripts/typecheck-ios.sh
+```
+
+Core tests execute actual macOS Swift Testing, not iOS app runtime tests. Scripts strip inherited `DYLD_*`, set explicit SDK/toolchain/framework paths where needed and keep scratch/cache/output under `fe/evidence`. The iOS launcher builds both full device and simulator projects; the device build is unsigned compile/link evidence, not installation.
+
+For normal concrete-simulator Debug and Release builds (no architecture/search-path/signing overrides):
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+export DEVICE_ID="YOUR_EXISTING_DEDICATED_SIMULATOR_UDID"
+xcodebuild -project fe/LocalCompanion.xcodeproj -scheme LocalCompanion \
+  -configuration Debug -destination "platform=iOS Simulator,id=$DEVICE_ID" \
+  -derivedDataPath fe/evidence/auth/DebugDerivedData \
+  -clonedSourcePackagesDirPath fe/evidence/auth/SourcePackages \
+  -packageCachePath fe/evidence/auth/PackageCache build
+# Repeat with Release and fe/evidence/auth/ReleaseDerivedData.
+```
+
+**Do not run the following signed-out UI test on the newly signed-in user’s current simulator.** It terminates/relaunches the test app. Preserve that session; use a separately authorized signed-out simulator for any future rerun. The already-passing native **signed-out sign-in-screen** test is reproducible as follows:
+
+```sh
+xcodebuild -project fe/LocalCompanion.xcodeproj -scheme LocalCompanion \
+  -configuration Debug -destination "platform=iOS Simulator,id=$DEVICE_ID" \
+  -derivedDataPath fe/evidence/auth/DebugDerivedData \
+  -clonedSourcePackagesDirPath fe/evidence/auth/SourcePackages \
+  -packageCachePath fe/evidence/auth/PackageCache \
+  -parallel-testing-enabled NO -resultBundlePath fe/evidence/auth/NewAuthScreen.xcresult \
+  -only-testing:LocalCompanionUITests/AuthRuntimeTests/testNativeClerkSignInAndNoAnonymousTabs test
+```
+
+Use a new result name; prior results are never overwritten. The test waits for the actual Clerk identifier/Continue controls, verifies anonymous tabs/setup/seed controls are absent and checks the gate after relaunch. It does not type an identifier, request an OTP, create an account, synthesize a token or access any companion backend. It refuses its screenshot if an existing identifier is present.
+
+Actual Swift-encoded experience payloads can be validated with an existing Python environment containing `jsonschema` (no installs required):
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 FE_EVIDENCE_SUBDIR=auth \
+  be/.venv/bin/python fe/scripts/validate-experience-contracts.py
+```
+
+## Offline manual-update feedback regression
+
+The earlier silent-update incident is **not retrospectively attributed to a401**. An offline regression did reproduce that precise failure path in the actual `PlaidController` and `AppModel` sources: ordinary sync passed, while a401/forced-refresh/re-admission/exact-byte retry returned a valid result but left `lastSync` nil. The original admission callback rotated the shared ticket, so the controller rejected the permitted operation's response along with stale SDK callbacks.
+
+The fix separates native Link callback invalidation from the in-flight HTTP operation. Only a request accepted by the existing identity/session/epoch/transport checks can publish its result after re-admission. Recovered waiting/partial results stay pending and do not start another automatic poll. Cancelled/interrupted operations have visible notices; error outcomes finish without false success or stuck working. Logout, account switch and epoch changes still discard delayed results. Old native Link callbacks cannot reopen a sheet or erase a completed result.
+
+**105 actual macOS Swift Testing tests pass**, including 15 new controller-flow regressions. Relative symlinks in the test target compile the actual app/controller implementations; only SDK/Health/notification dependencies are test doubles, and those are excluded from the app bundle. This is not an iOS runtime or live provider test. The before-fix failure and final passes are preserved under `fe/evidence/offline-sync`; `verification-summary.json` records scope. Build-only Debug verification against the simulator SDK passed using cached pinned dependencies with package updates disabled. Nothing was installed/launched, and no live account, Item, simulator state or backend was changed in this slice.
+
+## Latest signed-in acceptance on the user's iPhone 16
+
+The actual existing signed-in app on the user-designated iPhone 16 (not the earlier UI-smoke simulator) passed Home/Settings/Ledger inspection against authenticated port 8769. The UI showed backend-provided facts: one restaurant-category purchase, one merchant and one purchase date; no activity records and no eligible suggestion under the current preferences. Synthetic Sandbox provenance and uncertainty remained explicit. No frontend seed or local inference was used.
+
+Settings already displayed **Bank: Connected · Sandbox**. Therefore no Link flow or second Item was created. Exactly one **Update bank records** tap was attempted. No server-confirmed result appeared within 45 seconds; the last captured UI still displayed Connected/Sandbox without a visible bank error. Sync success/import readiness is **unverified**, not complete. The manual update was not repeated. The initial native Link flow that established the existing connection was not observed or proved by this pass.
+
+Evidence is private/ignored under `fe/evidence/signed-in-acceptance`: corrected inspection passed; one Settings-selector failure and the update-result timeout are preserved. All 90 macOS core tests passed again. `handoff-summary.json` contains sanitized status/counts and result timings. Account/session and existing connection are preserved; no logout/reset/uninstall/disconnect/delete, backend edit/restart or model/provider-processing action was performed. Parent requested this focused handoff with no additional update attempts. Future multi-bank/account-selection/removal semantics await a frozen backend contract; no guessed API was added.
+
+## Evidence and remaining acceptance gates
+
+Current verification: **90 actual macOS Swift Testing tests pass** (36 base/compatibility, 19 Plaid, 22 auth, 10 experience, 3 app-wiring); **1 signed-out native Clerk UI test passed before the user signup update**. Final concrete Debug/Release simulator and unsigned device builds pass. All 25 actual encoded schema cases pass (14 base, 9 Plaid, 2 experience). Fixture resources are absent from all three app bundles. No signed-out UI tests or app lifecycle manipulation were repeated after the parent asked to preserve the new account.
+
+Ignored `fe/evidence/auth/` contains core output, concrete Debug/Release and unsigned device build commands/results, exact SDK release/API inspection, schema validation, failed initial UI compile evidence, passing native-screen XCTest bundles and a reviewed screenshot. `integration-summary.json` records final measured counts and build statuses.
+
+The real Clerk sign-in screen passed before the parent reported that the user had just created an account. That account/session is now preserved: no signed-out UI rerun, restart, installation, logout, deletion, bank connection or provider call is performed after that update. The last private screenshot showed the simulator home screen, so it does not establish a signed-in app session or live backend admission. Port 8769 is the confirmed authenticated backend. The parent will coordinate actual signed-in data/Plaid acceptance; no account, credential or token was fabricated.
+
+Consequently live token verification, real two-user server isolation, authenticated experience answer persistence, SDK account-switch/logout behavior, authenticated native Plaid completion and physical-device Health/notification/protection behavior are not claimed as end-to-end verified. Mocks, successful compilation and a native sign-in-screen pass do not prove those flows.
