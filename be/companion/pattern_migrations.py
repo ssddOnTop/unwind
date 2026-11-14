@@ -96,6 +96,9 @@ COMMIT;
 """
 
 
+from .assessment_migrations import ASSESSMENT_MIGRATION
+MIGRATION_V3 = MIGRATION_V3.replace('COMMIT;', ASSESSMENT_MIGRATION + '\nCOMMIT;')
+
 def main():
     import argparse
     import os
@@ -116,7 +119,7 @@ def main():
             ddl=MIGRATION_V3.strip().removeprefix('BEGIN;').removesuffix('COMMIT;')
             with c.transaction():
                 c.execute(ddl)
-                for table in ('pattern_batches','health_samples','pattern_transactions','pattern_runs','pattern_insights','pattern_requests','health_import_pages'):
+                for table in ('pattern_batches','health_samples','pattern_transactions','pattern_runs','pattern_insights','pattern_requests','health_import_pages','pattern_revisions'):
                     c.execute(sql.SQL('GRANT SELECT,INSERT,UPDATE,DELETE ON companion_private.{} TO {}').format(sql.Identifier(table),sql.Identifier(a.runtime_role)))
         print('{"migration":"completed","runtime_grants":"scoped"}')
     except Exception:

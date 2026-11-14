@@ -92,8 +92,8 @@ def overview(config,account,doc,now,report,job=None):
     return WorkflowOverview(enabled=config.enabled,eligible=consent,next_scheduled_at=tomorrow.isoformat(),
         consent_label='Allow nightly cloud review',consent_notice='Off by default. Allow coarse pattern summaries from permitted Health and bank sources to be reviewed at 00:00 UTC. Raw records, identity and private notes are not sent. Summaries remain sensitive; you may turn this off anytime.',
         action=WorkflowAction(id='enqueue',label='Queue my pattern review') if config.enabled and consent and account in config.manual_accounts else None,
-        pages=[WorkflowPage(id='home',title='Patterns worth reviewing',paragraphs=[schedule,readiness]),
-               WorkflowPage(id='ledger',title='Saved pattern reviews',paragraphs=['These are recorded comparisons, not diagnoses. Open a pattern to review its evidence and limitations.']),
+        pages=[WorkflowPage(id='home',title='Current assessment',paragraphs=[schedule,readiness]),
+               WorkflowPage(id='ledger',title='Current assessment',paragraphs=['One latest result per area. Earlier assessments remain in private history, not as current warnings. Missing coverage is unknown, not good health.']),
                WorkflowPage(id='brief',title='Prepare an optional doctor question',paragraphs=['Your saved notes remain private and are never sent for AI review.']),
                WorkflowPage(id='settings',title='Nightly pattern review',paragraphs=[schedule,readiness,'Bank data follows its rolling 24-hour refresh limit. Missing or older data is not proof of no activity.','Your private backend owns imported records and reviews. This device retains a protected cache and unsent Health uploads.'])],
         questions=[WorkflowQuestion(id='attribution',label='Were these records mostly about you?',choices=[WorkflowChoice(id='for_me',label='Mostly about me'),WorkflowChoice(id='not_for_me',label='Not mostly about me'),WorkflowChoice(id='unsure',label='Not sure')])],job=job,report=report)

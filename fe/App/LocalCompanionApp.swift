@@ -136,31 +136,17 @@ struct LedgerView: View {
                 if let patterns = model.patternOverview, patterns.status != "not_analyzed" {
                     Section(model.workflowPage("ledger")?.title ?? "Saved reviews") { PatternSummaryView(model: model, value: patterns, separateListRows: true) }
                 }
-                if let value = model.experience {
-                    ForEach(value.inference_history.reversed(), id: \.id) { entry in
-                        NavigationLink { InferenceHistoryDetail(entry: entry) } label: {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(verbatim: entry.title).font(.headline)
-                                Text(verbatim: entry.inference).foregroundStyle(.secondary)
-                                Text(verbatim: entry.status.capitalized).font(.caption)
-                                InferenceTimestamp(value: entry.inferred_at)
-                            }.padding(.vertical, 4)
-                        }
-                    }
-                    if value.inference_history.isEmpty && (model.patternOverview?.findings.isEmpty ?? true) {
-                        Text("No inferences yet.").font(.headline)
-                        Text("When your records support a possible pattern, its explanation and supporting evidence will appear here.")
-                    }
-                } else {
-                    Text("Inference history is not available yet. Try refreshing.")
+                if model.patternOverview == nil || model.patternOverview?.status == "not_analyzed" {
+                    Text("No assessment yet.").font(.headline)
+                    Text("Your latest assessment will appear here after a review. Earlier results remain saved privately, not shown as current warnings.")
                 }
                 if let issue = model.message { Text(verbatim: issue).foregroundStyle(.red) }
-            }.navigationTitle("Inference history").accessibilityIdentifier("app.ledger")
+            }.navigationTitle("Current assessment").accessibilityIdentifier("app.ledger")
                 // Home may open a current supported suggestion directly; it is
                 // not an activity-feed row or a fabricated history entry.
                 .navigationDestination(item: $selectedCard) { id in LedgerDetail(model: model, cardID: id) }
                 .refreshable { await model.refresh() }
-                .toolbar { AccessibleInfoPopover(title: "Inference history", message: "What was inferred, why, and when it was saved. Historical interpretations may no longer apply. Disabled bank accounts can remain in history without supporting new suggestions.") }
+                .toolbar { AccessibleInfoPopover(title: "Current assessment", message: "One result per area from your latest review. Missing coverage is unknown, not good health. Earlier assessments are retained privately until you explicitly reset or delete your data.") }
         }
     }
 }

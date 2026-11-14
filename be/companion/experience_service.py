@@ -18,7 +18,8 @@ class ExperienceCoordinator:
         healthkit = next(s for s in state["sources"] if s["id"] == "healthkit")
         return {"state": deepcopy(state), "answers": deepcopy(doc["meta"].get("experience_answers", [])),
                 "now": iso(service.clock()),
-                "inference_history": deepcopy(doc["meta"].get("inference_history", [])),
+                # Keep the legacy wire window bounded, never truncate stored history.
+                "inference_history": deepcopy(doc["meta"].get("inference_history", [])[-128:]),
                 "as_of_date": service.now(doc).astimezone(zone(state["preferences"]["timezone"])).date().isoformat(),
                 "review_ready": bool(doc["meta"].get("experience_review_ready")) and not service.required_failure,
                 "selected_sources": {"purchase_recurrence": "plaid" if doc["meta"].get("plaid_connected") else "demo",
@@ -41,12 +42,9 @@ class ExperienceCoordinator:
         legacy = bool(self.service.document) and not initialized
         projection = await self.service.registry.dispatch("experience", "project", self.payload(doc))
         value = projection["experience"]
-        available = {(o["id"], o["revision"]) for o in doc["state"]["observations"]
-                     if o["source_id"] != "demo" and o["provenance"]["adapter"] != "demo_fixture"}
-        # Disabled accounts remain history, not actionable suggestions. Erased or
-        # expired supporting records do not survive as duplicated private text.
-        history = [h for h in meta.get("inference_history", [])
-                   if all((e["observation_id"], e["revision"]) in available for e in h["evidence"])]
+        # Raw-record expiry/corrections must not erase completed interpretations.
+        # Explicit /data deletion and reset create a fresh document instead.
+        history = deepcopy(meta.get("inference_history", []))
         scope = projection.get("question_scope")
         fingerprint = None
         if scope and (value["visit"]["inferred_habits"] or value["concern"]["status"] == "corrected"):
@@ -69,7 +67,7 @@ class ExperienceCoordinator:
                 fingerprint = hashlib.sha256(json.dumps(candidate, sort_keys=True).encode()).hexdigest()
                 if fingerprint != meta.get("inference_history_current"):
                     history.append(dict(candidate, id=str(uuid4()), inferred_at=None if legacy else iso(self.service.clock())))
-        meta["inference_history"] = history[-128:]
+        meta["inference_history"] = history
         meta["inference_history_current"] = fingerprint
         meta["inference_history_initialized"] = True
 

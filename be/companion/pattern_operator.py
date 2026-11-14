@@ -70,7 +70,6 @@ async def load(conn, *, account_id, issuer, subject, now, remove=False, transact
         existing=await (await conn.execute('SELECT 1 FROM companion_private.pattern_batches WHERE account_id=%s AND batch_id=%s',(account,batch))).fetchone()
         if existing:return {'loaded':True,'reused':True}
         start,samples,tx=generate(now)
-        await conn.execute('DELETE FROM companion_private.pattern_runs WHERE account_id=%s',(account,))
         await conn.execute('INSERT INTO companion_private.pattern_batches(account_id,batch_id,dataset,provenance,start_at,end_at) VALUES(%s,%s,%s,\'synthetic\',%s,%s)',(account,batch,DATASET,start,now))
         columns=['sample_id','hk_type','kind','start_at','end_at','timezone','value','unit','category','workout_activity','duration_seconds','energy_kcal','distance_m','source_name','revision']
         async with conn.cursor() as cursor:

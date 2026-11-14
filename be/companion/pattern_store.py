@@ -4,7 +4,7 @@ from copy import deepcopy
 from . import banking_schedule as schedule
 from uuid import uuid4
 from psycopg.types.json import Jsonb
-from .patterns import Aggregate, PatternOverview, aggregate, concerns, findings, empty_overview, model_review, VERSION
+from .patterns import Aggregate, Finding, PatternOverview, area_results, aggregate, concerns, findings, empty_overview, model_review, VERSION
 from .contracts import DomainError
 import asyncio
 import hashlib
@@ -53,29 +53,41 @@ class PatternCoordinator:
     async def _view(self, conn, row):
         if not row: return empty_overview()
         run_id,status,engine,at,evidence,is_demo=row
-        ids=await (await conn.execute('SELECT concern_id,attribution FROM companion_private.pattern_insights WHERE account_id=%s AND run_id=%s ORDER BY rank', (self.store.account_id,run_id))).fetchall()
+        saved=await (await conn.execute('SELECT assessment,source_label,brief_override FROM companion_private.pattern_runs WHERE account_id=%s AND run_id=%s',(self.store.account_id,run_id))).fetchone()
         dto=Aggregate.model_validate(evidence)
-        cards=findings([r[0] for r in ids],dto)
-        for card,entry in zip(cards,ids):
-            card.attribution=entry[1]
-            if entry[1]=='not_for_me':
-                card.explanation='You reported these records were not mostly about you. No personal interpretation is made; the recorded pattern is retained for transparency.'
-        brief=('SYNTHETIC HEALTH DEMO — not medical evidence.\n' if is_demo else '')+'Patterns worth reviewing\n'
-        brief+='\n'.join(c.title+': '+c.explanation+' '+c.evidence_summary for c in cards if c.attribution!='not_for_me')
-        brief+='\nOptional question for a clinician: Could changes in my routine or recording coverage help explain these observations? These records do not establish a diagnosis, diet quality or causality.'
-        label=await (await conn.execute('SELECT source_label,brief_override FROM companion_private.pattern_runs WHERE account_id=%s AND run_id=%s',(self.store.account_id,run_id))).fetchone()
-        if label[1] is not None:
-            brief=('SYNTHETIC HEALTH DEMO — not medical evidence.\n' if is_demo else '')+'User-edited notes (not AI conclusions):\n'+label[1]
+        snapshot=saved[0]
+        cards=[Finding.model_validate(v) for v in snapshot['findings']]
+        revisions=await (await conn.execute('SELECT revision,kind,concern_id,value FROM companion_private.pattern_revisions WHERE account_id=%s AND run_id=%s ORDER BY revision',(self.store.account_id,run_id))).fetchall()
+        notes=saved[2]
+        for _,kind,area,value in revisions:
+            if kind=='notes': notes=value
+            else:
+                notes=None
+                for card in cards:
+                    if card.concern_id==area: card.attribution=value
+        cards=[card for card in cards if card.attribution!='not_for_me']
+        areas=deepcopy(snapshot['areas'])
+        for area in areas:
+            if area['state']=='concern' and not any(c.concern_id==area['area'] for c in cards):
+                area.update(state='insufficient_data',summary='You said these records were not about you. No personal assessment is made.')
+        brief=('SYNTHETIC HEALTH DEMO — not medical evidence.\n' if is_demo else '')+'Current assessment\n'
+        brief+='\n'.join(a['summary'] for a in areas)
+        if notes is not None: brief=('SYNTHETIC HEALTH DEMO — not medical evidence.\n' if is_demo else '')+'User-edited notes (not AI conclusions):\n'+notes
+        latest=await (await conn.execute("SELECT run_id FROM companion_private.pattern_runs WHERE account_id=%s ORDER BY analyzed_at DESC,sequence DESC LIMIT 1",(self.store.account_id,))).fetchone()
+        is_current=bool(latest and latest[0]==run_id and status!='running')
+        actionable=sorted(c.concern_id for c in cards) if is_current else []
+        key=hashlib.sha256(json.dumps(actionable).encode()).hexdigest() if actionable else None
         eligible=await (await conn.execute("SELECT EXISTS(SELECT 1 FROM companion_private.pattern_batches b WHERE b.account_id=%s AND b.active AND (EXISTS(SELECT 1 FROM companion_private.health_samples h WHERE h.account_id=b.account_id AND h.batch_id=b.batch_id AND NOT h.deleted) OR EXISTS(SELECT 1 FROM companion_private.pattern_transactions t WHERE t.account_id=b.account_id AND t.batch_id=b.batch_id AND NOT t.deleted)))",(self.store.account_id,))).fetchone()
         return PatternOverview(bank_refresh={'status':'not_requested','last_updated':schedule.last_full_success(self.service.document) if hasattr(self.service,'document') else None,'message':'Using saved bank data; no bank fetch requested.'},doctor_brief=brief,status=status,run_id=str(run_id),analyzed_at=at.isoformat(),engine=engine,is_demo=is_demo,can_analyze=eligible[0],
-            source_label=label[0],
-            evidence=dto,findings=cards).model_dump()
+            source_label=saved[1], areas=areas, current_run_id=str(latest[0]) if latest else None, is_current=is_current,
+            actionable_area_ids=actionable, actionability_key=key, revision=revisions[-1][0] if revisions else 0,
+            evidence=dto,findings=cards if status!='running' else []).model_dump()
 
     async def get(self):
         async with self.service.lock:
             async with self.transaction() as c:
                 await self._recover_orphans(c)
-                row=await (await c.execute('SELECT run_id,status,engine,analyzed_at,evidence,is_demo FROM companion_private.pattern_runs WHERE account_id=%s ORDER BY analyzed_at DESC LIMIT 1',(self.store.account_id,))).fetchone()
+                row=await (await c.execute('SELECT run_id,status,engine,analyzed_at,evidence,is_demo FROM companion_private.pattern_runs WHERE account_id=%s ORDER BY analyzed_at DESC,sequence DESC LIMIT 1',(self.store.account_id,))).fetchone()
                 if row: return await self._view(c,row)
                 value=empty_overview()
                 batches=await (await c.execute('SELECT provenance,origin FROM companion_private.pattern_batches WHERE account_id=%s AND active',(self.store.account_id,))).fetchall()
@@ -86,13 +98,32 @@ class PatternCoordinator:
                     if value['is_demo'] and any(r[1]=='healthkit' for r in batches):value['source_label']='Synthetic HealthKit helper records — read through this app’s Health permissions' + (' + Plaid Sandbox transactions' if any(r[0]=='providerSandbox' for r in batches) else '')
                 return value
 
+    async def notification_candidate(self, expected_run_id, expected_actionability_key):
+        """Read-only send-time fence for the notification owner; never sends anything.
+
+        Compare both fields immediately before delivery. A newer run invalidates
+        pending work even if it has the same concerns; the stable key supports
+        unchanged-repeat suppression in the owner's durable delivery history.
+        Corrections can change the key without changing the assessment run ID.
+        """
+        current = await self.get()
+        return {
+            'current_run_id': current['current_run_id'],
+            'revision': current['revision'],
+            'actionability_key': current['actionability_key'],
+            'actionable_area_ids': current['actionable_area_ids'],
+            'eligible': bool(current['is_current'] and current['actionable_area_ids']
+                and current['run_id'] == expected_run_id
+                and current['actionability_key'] == expected_actionability_key),
+        }
+
     async def clarify(self, body):
         async with self.service.lock:
             async with self.transaction() as c:
                 await self._recover_orphans(c)
-                row=await (await c.execute('UPDATE companion_private.pattern_insights SET attribution=%s WHERE account_id=%s AND run_id=%s AND concern_id=%s RETURNING run_id',(body.attribution,self.store.account_id,body.run_id,body.concern_id))).fetchone()
+                row=await (await c.execute("SELECT 1 FROM companion_private.pattern_insights i JOIN companion_private.pattern_runs r USING(account_id,run_id) WHERE i.account_id=%s AND i.run_id=%s AND i.concern_id=%s AND r.status<>'running'",(self.store.account_id,body.run_id,body.concern_id))).fetchone()
                 if not row: raise DomainError('invalid_request',409,'This pattern is no longer available.')
-                await c.execute('UPDATE companion_private.pattern_runs SET brief_override=NULL WHERE account_id=%s AND run_id=%s',(self.store.account_id,body.run_id))
+                await c.execute("INSERT INTO companion_private.pattern_revisions(account_id,run_id,kind,concern_id,value) VALUES(%s,%s,'attribution',%s,%s)",(self.store.account_id,body.run_id,body.concern_id,body.attribution))
                 run=await (await c.execute('SELECT run_id,status,engine,analyzed_at,evidence,is_demo FROM companion_private.pattern_runs WHERE account_id=%s AND run_id=%s',(self.store.account_id,body.run_id))).fetchone()
                 return await self._view(c,run)
 
@@ -100,11 +131,10 @@ class PatternCoordinator:
         async with self.service.lock:
             async with self.transaction() as c:
                 row=await (await c.execute('SELECT run_id,status,engine,analyzed_at,evidence,is_demo FROM companion_private.pattern_runs WHERE account_id=%s AND run_id=%s',(self.store.account_id,body.run_id))).fetchone()
-                if not row:raise DomainError('invalid_request',409,'This review is no longer available.')
+                if not row or row[1]=='running':raise DomainError('invalid_request',409,'This review is no longer available.')
                 view=await self._view(c,row)
-                existing=await (await c.execute('SELECT brief_override FROM companion_private.pattern_runs WHERE account_id=%s AND run_id=%s',(self.store.account_id,body.run_id))).fetchone()
-                if body.expected_brief!=view['doctor_brief'] and body.text!=existing[0]:raise DomainError('stale_experience',409,'The brief changed. Refresh before editing.')
-                await c.execute('UPDATE companion_private.pattern_runs SET brief_override=%s WHERE account_id=%s AND run_id=%s',(body.text,self.store.account_id,body.run_id))
+                if body.expected_brief!=view['doctor_brief']:raise DomainError('stale_experience',409,'The brief changed. Refresh before editing.')
+                await c.execute("INSERT INTO companion_private.pattern_revisions(account_id,run_id,kind,value) VALUES(%s,%s,'notes',%s)",(self.store.account_id,body.run_id,body.text))
                 return await self._view(c,row)
 
     async def execute(self, body):
@@ -182,22 +212,28 @@ class PatternCoordinator:
                 samples=[dict(zip(('hk_type','start_at','end_at','timezone','value','category'),r)) for r in rows]
                 rows=await (await c.execute('SELECT t.event_at,t.category,t.amount FROM companion_private.pattern_transactions t JOIN companion_private.pattern_batches b USING(account_id,batch_id) WHERE t.account_id=%s AND b.active AND NOT t.deleted',(account,))).fetchall()
                 tx=[dict(zip(('event_at','category','amount'),r)) for r in rows]
-                if not samples and not tx: raise DomainError('invalid_request',409,'No eligible records are available. Refresh permitted Health records and sync connected bank accounts first.')
                 dto=aggregate(samples,tx,self.service.clock())
                 batches=await (await c.execute('SELECT provenance FROM companion_private.pattern_batches WHERE account_id=%s AND active',(account,))).fetchall()
                 demo=any(r[0]=='synthetic' for r in batches)
                 # Model choice participates in the local cache key but never the model prompt as user identity.
                 version=VERSION+':'+os.environ.get('COMPANION_LLM_MODEL','unconfigured')[:200]
                 digest=hashlib.sha256(json.dumps({'aggregate':dto.model_dump(),'provenance':sorted(r[0] for r in batches)},sort_keys=True).encode()).hexdigest()
-                row=await (await c.execute('SELECT run_id,status,engine,analyzed_at,evidence,is_demo FROM companion_private.pattern_runs WHERE account_id=%s AND input_digest=%s AND input_version=%s',(account,digest,version))).fetchone()
+                row=await (await c.execute('SELECT run_id,status,engine,analyzed_at,evidence,is_demo FROM companion_private.pattern_runs WHERE account_id=%s AND input_digest=%s AND input_version=%s ORDER BY analyzed_at DESC,sequence DESC LIMIT 1',(account,digest,version))).fetchone()
                 if row:
+                    latest=await (await c.execute('SELECT run_id FROM companion_private.pattern_runs WHERE account_id=%s ORDER BY analyzed_at DESC,sequence DESC LIMIT 1',(account,))).fetchone()
+                    if latest[0]!=row[0]:
+                        # A -> B -> A is a new result, with cached model output and no extra call.
+                        previous=row[0];new_run=str(uuid4())
+                        await c.execute("INSERT INTO companion_private.pattern_runs(account_id,run_id,request_id,input_digest,input_version,status,engine,evidence,is_demo,source_label,assessment) SELECT account_id,%s,%s,input_digest,input_version,status,engine,evidence,is_demo,source_label,assessment FROM companion_private.pattern_runs WHERE account_id=%s AND run_id=%s",(new_run,request_id,account,previous))
+                        await c.execute('INSERT INTO companion_private.pattern_insights(account_id,run_id,concern_id,rank) SELECT account_id,%s,concern_id,rank FROM companion_private.pattern_insights WHERE account_id=%s AND run_id=%s',(new_run,account,previous))
+                        row=await (await c.execute('SELECT run_id,status,engine,analyzed_at,evidence,is_demo FROM companion_private.pattern_runs WHERE account_id=%s AND run_id=%s',(account,new_run))).fetchone()
                     await c.execute('INSERT INTO companion_private.pattern_requests(account_id,request_id,run_id) VALUES(%s,%s,%s)',(account,request_id,row[0]))
                     return await self._view(c,row)
                 run=str(uuid4()); ids=concerns(dto)
                 origins=await (await c.execute('SELECT origin FROM companion_private.pattern_batches WHERE account_id=%s AND active',(account,))).fetchall()
                 label=source_label({r[0] for r in batches})
                 if demo and any(r[0]=='healthkit' for r in origins):label='Synthetic HealthKit helper records (real Health excluded from this demo comparison)' + (' + Plaid Sandbox transactions' if any(r[0]=='providerSandbox' for r in batches) else '')
-                await c.execute("INSERT INTO companion_private.pattern_runs(account_id,run_id,request_id,input_digest,input_version,status,engine,evidence,is_demo,source_label) VALUES(%s,%s,%s,%s,%s,'running','deterministic',%s,%s,%s)",(account,run,request_id,digest,version,Jsonb(dto.model_dump()),demo,label))
+                await c.execute("INSERT INTO companion_private.pattern_runs(account_id,run_id,request_id,input_digest,input_version,status,engine,evidence,is_demo,source_label,assessment) VALUES(%s,%s,%s,%s,%s,'running','deterministic',%s,%s,%s,%s)",(account,run,request_id,digest,version,Jsonb(dto.model_dump()),demo,label,Jsonb({'areas':[a.model_dump() for a in area_results(dto)],'findings':[f.model_dump() for f in findings(ids,dto)]})))
                 await c.execute('INSERT INTO companion_private.pattern_requests(account_id,request_id,run_id) VALUES(%s,%s,%s)',(account,request_id,run))
                 for rank,i in enumerate(ids):
                     await c.execute('INSERT INTO companion_private.pattern_insights(account_id,run_id,concern_id,rank) VALUES(%s,%s,%s,%s)',(account,run,i,rank))
@@ -221,11 +257,11 @@ class PatternCoordinator:
                     from .workflow_contracts import eligible,consent_key
                     if not eligible(self.service.document) or expected_consent is not None and consent_key(self.service.document)!=expected_consent:raise DomainError('consent_required',403)
                 async with self.transaction() as c:
-                    await c.execute('UPDATE companion_private.pattern_runs SET status=%s,engine=%s WHERE account_id=%s AND run_id=%s',(status,engine,account,run))
                     # Remove old ranks before inserting the validated permutation.
                     await c.execute('DELETE FROM companion_private.pattern_insights WHERE account_id=%s AND run_id=%s',(account,run))
                     for rank,i in enumerate(ids):
                         await c.execute('INSERT INTO companion_private.pattern_insights(account_id,run_id,concern_id,rank) VALUES(%s,%s,%s,%s)',(account,run,i,rank))
+                    await c.execute('UPDATE companion_private.pattern_runs SET status=%s,engine=%s,assessment=%s WHERE account_id=%s AND run_id=%s AND status=\'running\'',(status,engine,Jsonb({'areas':[a.model_dump() for a in area_results(dto)],'findings':[f.model_dump() for f in findings(ids,dto)]}),account,run))
                     row=await (await c.execute('SELECT run_id,status,engine,analyzed_at,evidence,is_demo FROM companion_private.pattern_runs WHERE account_id=%s AND run_id=%s',(account,run))).fetchone()
                     result=await self._view(c,row)
             if cancelled: raise asyncio.CancelledError

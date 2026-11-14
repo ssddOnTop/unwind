@@ -114,7 +114,7 @@ async def test_legacy_inference_has_unknown_timestamp_and_demo_history_is_exclud
         await service.evaluate(doc)
         await service.commit(doc)
         value = await service.experience_coordinator.get()
-        assert value["inference_history"] == []
+        assert value["inference_history"] == [entry]
         assert value["visit"]["inferred_habits"] == []
         assert value["home"]["sample_label"] is None
         assert service.document["state"]["observations"]  # Stored history was not deleted.
@@ -152,3 +152,25 @@ def test_shipped_runtime_has_no_example_data_dependencies():
         assert "observation-batch.example.json" not in text
         assert "FakeMessagesListChatModel" not in text
     assert not list((root / "contracts").glob("*.example.json"))
+
+
+@pytest.mark.asyncio
+async def test_legacy_history_survives_raw_expiry_and_wire_window(tmp_path):
+    clock=[NOW]
+    service=service_at(tmp_path, lambda:clock[0])
+    await service.start()
+    try:
+        doc=connected_document(service)
+        await service.evaluate(doc)
+        await service.commit(doc)
+        entry=deepcopy(service.document["meta"]["inference_history"][0])
+        doc=deepcopy(service.document)
+        history=[dict(entry,id=f"saved-{i}") for i in range(130)]
+        doc["meta"]["inference_history"]=deepcopy(history)
+        await service.commit(doc)
+        clock[0]+=timedelta(days=400)
+        await service.housekeep()
+        assert service.document["state"]["observations"]==[]
+        assert service.document["meta"]["inference_history"]==history
+        assert len((await service.experience_coordinator.get())["inference_history"])==128
+    finally:await service.close()
