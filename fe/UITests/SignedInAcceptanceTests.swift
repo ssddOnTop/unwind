@@ -58,13 +58,24 @@ final class SignedInAcceptanceTests: XCTestCase {
         capture("populated-evidence-top-private", app: app)
         // Assert after read-only cleanup: XCTest's stop-on-failure does not reliably run defer.
         app.swipeUp(); capture("populated-evidence-bottom-private", app: app)
-        let context = app.buttons["Were these records mostly about you?"]
-        if context.isHittable { context.tap(); capture("populated-context-options-private", app: app) }
         app.navigationBars.buttons.element(boundBy: 0).tap()
+        var otherTitlesCorrect = true
+        for title in ["Shorter recorded sleep", "More food-service purchases"] {
+            let link = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch
+            for _ in 0..<5 { if link.isHittable { break }; app.swipeUp() }
+            guard link.isHittable else { otherTitlesCorrect = false; break }
+            link.tap()
+            otherTitlesCorrect = app.navigationBars[title].waitForExistence(timeout: 3) && otherTitlesCorrect
+            let heading = app.staticTexts["pattern.finding.title"]
+            otherTitlesCorrect = heading.label == title && heading.isHittable && otherTitlesCorrect
+            capture(title == "Shorter recorded sleep" ? "sleep-detail-private" : "food-service-full-title-private", app: app)
+            app.navigationBars.buttons.firstMatch.tap()
+        }
         app.tabBars.buttons["Today"].tap()
         for _ in 0..<4 { app.swipeDown() }
         capture("populated-home-final-private", app: app)
         XCTAssertTrue(correctFinding, "The selected activity finding must open its own detail, not another finding")
+        XCTAssertTrue(otherTitlesCorrect, "Each other finding must open its own detail with the complete readable title")
     }
 
     @MainActor func testCurrentSessionHomeSettingsLedger() throws {
