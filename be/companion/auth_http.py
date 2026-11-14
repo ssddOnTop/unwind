@@ -1,8 +1,8 @@
 """Explicit single-worker auth profile; existing domain HTTP logic stays per-user.
 
 No environment/dotenv reads, socket binding, global service, or anonymous fallback.
-The launcher must bind loopback only; TLS termination/trusted proxy policy is its
-responsibility. This adapter retains the existing localhost/127.0.0.1 Host policy.
+TLS termination is the launcher's responsibility. Hosts default to loopback;
+container composition may supply an explicit validated public API host.
 """
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 import inspect
 from pathlib import Path
-import re
 from weakref import WeakSet
 
 from fastapi import FastAPI
@@ -19,7 +18,7 @@ from starlette.responses import JSONResponse
 
 from .accounts import AccountError, AccountManager
 from .auth import AuthConfig, AuthConfigurationError, AuthError, AuthVerifier
-from .http import create_app
+from .http import create_app, LOOPBACK_HOSTS, validated_hosts, allowed_host
 
 
 _CACHE_HEADERS = {"Cache-Control": "no-store", "Vary": "Authorization"}
@@ -78,7 +77,9 @@ class _ChildService:
 
 class _Gateway:
     def __init__(self, accounts: AccountManager, verifier: AuthVerifier, *,
-                 plaid_profile: bool, experience_profile: bool, webhook_receiver=None, banking_profile=False):
+                 plaid_profile: bool, experience_profile: bool, webhook_receiver=None, banking_profile=False,
+                 allowed_hosts=LOOPBACK_HOSTS):
+        self.allowed_hosts = validated_hosts(allowed_hosts)
         self.accounts, self.verifier = accounts, verifier
         self.webhook_receiver = webhook_receiver
         self.routes = {("GET", "/state"), ("POST", "/observations"),
@@ -128,21 +129,13 @@ class _Gateway:
         except UnicodeError:
             return False
 
-    @staticmethod
-    def _local_host(scope) -> bool:
-        values = [value for key, value in scope.get("headers", []) if key.lower() == b"host"]
-        if len(values) != 1:
-            return False
-        match = re.fullmatch(rb"(?:localhost|127\.0\.0\.1)(?::([0-9]{1,5}))?", values[0])
-        return bool(match and (match[1] is None or 1 <= int(match[1]) <= 65535))
-
     async def handle(self, scope, receive, send) -> None:
         route = (scope["method"], scope["path"])
         if not self._canonical(scope) or route not in self.routes | {
                 ("GET", "/health"), ("GET", "/auth/v1/session")}:
             await _error("not_found", 404)(scope, receive, send)
             return
-        if not self._local_host(scope):
+        if not allowed_host(scope, self.allowed_hosts):
             await _error("invalid_request", 400)(scope, receive, send)
             return
         if route == ("GET", "/health"):
@@ -242,7 +235,8 @@ def create_authenticated_app(auth_root: Path, *, auth_config: AuthConfig | None 
         clock=None, synthesis_timeout=30, housekeeping_interval=60,
         plaid_profile=False, experience_profile=False, max_accounts=128,
         postgres_runtime=None, webhook_url=None, webhook_verifier=None,
-        replacements_factory=None, webhook_worker_enabled=True, banking_profile=False) -> FastAPI:
+        replacements_factory=None, webhook_worker_enabled=True, banking_profile=False,
+        allowed_hosts=LOOPBACK_HOSTS) -> FastAPI:
     """Build an explicitly authenticated app without initializing user storage.
 
     Supply auth_config or a configured verifier (both must agree if supplied).
@@ -253,11 +247,12 @@ def create_authenticated_app(auth_root: Path, *, auth_config: AuthConfig | None 
     closure calling http.create_app(path, replacements=fresh_replacements, ...).
     It may be async and must return a fresh app/service with its own lifespan,
     clock/scheduler/coordinators and only that directory's stores. When supplied,
-    it owns child configuration; match the profile flags passed here. Otherwise
+    it owns child configuration; match the profile flags and allowed_hosts passed here. Otherwise
     create_app receives clock/timeouts/profiles directly. Never reuse mutable
     replacements across identities. state.accounts exposes internal handles for
     server-owned work/tests, not an HTTP identity-selection interface.
     """
+    allowed_hosts = validated_hosts(allowed_hosts)
     plaid_profile = plaid_profile or banking_profile
     if auth_config is not None and not isinstance(auth_config, AuthConfig):
         raise AuthConfigurationError("Invalid Clerk authentication configuration")
@@ -281,7 +276,7 @@ def create_authenticated_app(auth_root: Path, *, auth_config: AuthConfig | None 
             if postgres_runtime is not None:
                 from .extensions.postgres import PostgresPersistenceExtension
                 replacements = {**replacements, 'persistence': PostgresPersistenceExtension(postgres_runtime, path.name, residual_dir=path)}
-            child = create_app(path, clock=clock, synthesis_timeout=synthesis_timeout,
+            child = create_app(path, clock=clock, synthesis_timeout=synthesis_timeout, allowed_hosts=allowed_hosts,
                 housekeeping_interval=housekeeping_interval, plaid_profile=plaid_profile,
                 experience_profile=experience_profile, replacements=replacements,
                 webhook_url=webhook_url, account_id=path.name,
@@ -337,7 +332,7 @@ def create_authenticated_app(auth_root: Path, *, auth_config: AuthConfig | None 
             if result['result']['status'] == 'error':
                 raise AccountError()
         worker = WebhookWorker(inbox, sync_job)
-    gateway = _Gateway(accounts, verifier, plaid_profile=plaid_profile, experience_profile=experience_profile, webhook_receiver=receiver, banking_profile=banking_profile)
+    gateway = _Gateway(accounts, verifier, plaid_profile=plaid_profile, experience_profile=experience_profile, webhook_receiver=receiver, banking_profile=banking_profile, allowed_hosts=allowed_hosts)
 
     @asynccontextmanager
     async def lifespan(app):

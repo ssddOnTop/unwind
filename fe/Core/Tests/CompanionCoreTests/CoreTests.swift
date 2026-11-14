@@ -260,9 +260,9 @@ actor ReplayHTTP: HTTPTransport {
     }
     #expect(client.snapshot.outbox.isEmpty)
 }
-@Test @MainActor func endpointCannotEscapeLoopback() throws {
+@Test @MainActor func endpointCannotUseRemotePlainHTTP() throws {
     #expect(throws: ClientFailure.invalidEndpoint) {
-        try CompanionClient(storage: temporaryStorage(), baseURL: URL(string: "https://example.com")!)
+        try CompanionClient(storage: temporaryStorage(), baseURL: URL(string: "http://example.com")!)
     }
 }
 @Test func mutationRejectsUnknownRouteOrWrongMethod() throws {
@@ -326,10 +326,11 @@ actor ReplayHTTP: HTTPTransport {
     }
     #expect(throws: ClientFailure.invalidEndpoint) { try LoopbackEndpoint.port(arguments: ["--service-port"], environment: [:], allowOverride: true) }
 }
-@Test @MainActor func clientNondefaultLoopbackRequiresExplicitPortAndNeverAllowsRemoteHost() throws {
+@Test @MainActor func clientExplicitOriginAllowsLocalPortButRejectsMismatchedPortAssertion() throws {
     let storage = temporaryStorage(); defer { try? FileManager.default.removeItem(at: storage.directory) }
     let url = try LoopbackEndpoint.url(port: 8768)
-    #expect(throws: ClientFailure.invalidEndpoint) { try CompanionClient(storage: storage, baseURL: url) }
+    _ = try CompanionClient(storage: storage, baseURL: url)
+    #expect(throws: ClientFailure.invalidEndpoint) { try CompanionClient(storage: storage, baseURL: url, allowedPort: 8769) }
     _ = try CompanionClient(storage: storage, baseURL: url, allowedPort: 8768)
     #expect(throws: ClientFailure.invalidEndpoint) { try CompanionClient(storage: storage, baseURL: URL(string: "http://example.com:8768")!, allowedPort: 8768) }
 }

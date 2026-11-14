@@ -1,5 +1,4 @@
 // Safe defaults: missing configuration never falls back to anonymous access.
 CLERK_PUBLISHABLE_KEY =
 CLERK_ISSUER_BASE64 =
-COMPANION_AUTH_API_PORT = 0
 #include? "Local.xcconfig"

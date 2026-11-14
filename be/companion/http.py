@@ -26,10 +26,33 @@ def envelope(code, message, request_id=None):
                       "request_id": request_id, "details": []}}
 
 
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
+
+
+def validated_hosts(hosts):
+    """Exact DNS/IPv4 names only; no wildcards, ports or proxy-derived authority."""
+    hosts = frozenset(hosts)
+    if not hosts or any(not isinstance(host, str) or len(host) > 253 or
+            not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*", host)
+            for host in hosts):
+        raise ValueError("API hosts must be explicit lowercase DNS or IPv4 names.")
+    return hosts
+
+
+def allowed_host(scope, hosts):
+    values = [value for key, value in scope.get("headers", []) if key.lower() == b"host"]
+    if len(values) != 1:
+        return False
+    match = re.fullmatch(rb"([A-Za-z0-9.-]+)(?::([0-9]{1,5}))?", values[0])
+    return bool(match and match[1].decode("ascii").lower() in hosts
+                and (match[2] is None or 1 <= int(match[2]) <= 65535))
+
+
 class Boundary:
     """Bound bytes before buffering; reject malformed/unknown JSON without echoing private inputs."""
-    def __init__(self, app, plaid_profile=False, experience_profile=False, banking_profile=False):
+    def __init__(self, app, plaid_profile=False, experience_profile=False, banking_profile=False, allowed_hosts=LOOPBACK_HOSTS):
         self.app = app
+        self.allowed_hosts = validated_hosts(allowed_hosts)
         self.plaid_profile = plaid_profile
         self.experience_profile = experience_profile
         self.banking_profile = banking_profile
@@ -46,9 +69,8 @@ class Boundary:
             await send(message)
         try:
             headers = dict(scope["headers"])
-            host = headers.get(b"host", b"").decode().split(":")[0]
-            if host not in {"127.0.0.1", "localhost"}:
-                raise DomainError("invalid_request", 400, "Only local loopback hosts are supported.")
+            if not allowed_host(scope, self.allowed_hosts):
+                raise DomainError("invalid_request", 400, "Unrecognized API host.")
             route = (scope["method"], scope["path"])
             requests = dict(REQUESTS)
             if self.plaid_profile:
@@ -123,7 +145,9 @@ class Boundary:
 
 def create_app(data_dir: Path | None = None, *, replacements=None, scheduler=None, clock=None,
                synthesis_timeout=30, housekeeping_interval=60, plaid_profile=False, experience_profile=False,
-               webhook_url=None, account_id=None, plaid_owner_check=None, banking_profile=False, banking_claim_item=None):
+               webhook_url=None, account_id=None, plaid_owner_check=None, banking_profile=False, banking_claim_item=None,
+               allowed_hosts=LOOPBACK_HOSTS):
+    allowed_hosts = validated_hosts(allowed_hosts)
     plaid_profile = plaid_profile or banking_profile
     service = build_service(data_dir or ROOT / "be" / ".data", replacements, scheduler, clock, synthesis_timeout, plaid_profile, experience_profile, webhook_url, account_id, plaid_owner_check, banking_profile, banking_claim_item)
     state_model, ingestion_model = State, IngestionResponse
@@ -165,7 +189,7 @@ def create_app(data_dir: Path | None = None, *, replacements=None, scheduler=Non
                   redoc_url=None, swagger_ui_oauth2_redirect_url=None)
     app.state.service = service
     app.state.housekeeping_failed = False
-    app.add_middleware(Boundary, plaid_profile=plaid_profile, experience_profile=experience_profile, banking_profile=banking_profile)
+    app.add_middleware(Boundary, plaid_profile=plaid_profile, experience_profile=experience_profile, banking_profile=banking_profile, allowed_hosts=allowed_hosts)
     errors = {status: {"model": ErrorResponse} for status in (400, 404, 409, 413, 422, 500)}
 
     @app.exception_handler(DomainError)

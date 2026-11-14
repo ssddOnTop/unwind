@@ -1,6 +1,7 @@
 import Foundation
+@testable import CompanionCore
 
-/// Only the app's DEBUG simulator branch enables this parser. Release ignores overrides.
+/// Retired launch-argument parser, preserved only for legacy compatibility tests.
 public enum LoopbackEndpoint {
     public static func port(arguments: [String], environment: [String: String], allowOverride: Bool) throws -> Int {
         guard allowOverride else { return 8000 }

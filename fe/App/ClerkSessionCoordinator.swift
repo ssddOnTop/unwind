@@ -8,7 +8,6 @@ import CompanionCore
 struct PublicAuthConfiguration {
     let publishableKey: String
     let issuer: String
-    let apiPort: Int?
     init(bundle: Bundle = .main) throws {
         guard let key = bundle.object(forInfoDictionaryKey: "ClerkPublishableKey") as? String,
               key.hasPrefix("pk_test_") || key.hasPrefix("pk_live_"), !key.contains("$("),
@@ -17,9 +16,6 @@ struct PublicAuthConfiguration {
               let url = URLComponents(string: issuer), url.scheme == "https", url.host != nil,
               url.path.isEmpty, url.query == nil, url.fragment == nil, url.user == nil, url.password == nil else { throw AuthenticationFailure.unavailable }
         self.publishableKey = key; self.issuer = issuer
-        let port = Int(bundle.object(forInfoDictionaryKey: "AuthenticatedAPIPort") as? String ?? "0") ?? 0
-        guard port == 0 || (1...65535).contains(port) else { throw AuthenticationFailure.invalidDestination }
-        apiPort = port == 0 ? nil : port
     }
 }
 
@@ -48,6 +44,7 @@ struct PublicAuthConfiguration {
     @Published private(set) var locallyLocked: Bool
     @Published private(set) var issue: String?
     private let fence = AuthSessionFence()
+    private let apiOrigin: URL?
     private var provider: ClerkTokenProvider?
     private var bearer: AuthenticatedTransport?
     private var cache: AccountCache?
@@ -61,15 +58,22 @@ struct PublicAuthConfiguration {
     private let lockKey = "authenticated.local-lock.v1"
 
     init() {
+        apiOrigin = try? APIConfiguration.resolve()
         locallyLocked = UserDefaults.standard.bool(forKey: "authenticated.local-lock.v1")
-        if let configuration = try? PublicAuthConfiguration() {
-            self.configuration = configuration
+        configuration = try? PublicAuthConfiguration()
+        guard let apiOrigin, apiOrigin.host != configuration.flatMap({ URL(string: $0.issuer)?.host?.lowercased() }) else {
+            clerk = nil
+            issue = "API address is invalid. Edit APIConfiguration.baseURL to an HTTPS root origin (HTTP is allowed only for localhost or 127.0.0.1), separate from Clerk, then rebuild. Paths, credentials, queries and fragments are not supported."
+            cancelLocalReminders()
+            return
+        }
+        if let configuration {
             let clerk = Clerk.configure(publishableKey: configuration.publishableKey, options: .init(logLevel: .error, telemetryEnabled: false))
             self.clerk = clerk; provider = ClerkTokenProvider(clerk: clerk, issuer: configuration.issuer)
-        } else { configuration = nil; clerk = nil; issue = "Sign-in is not configured. Generate the approved public Clerk configuration and rebuild." }
+        } else { clerk = nil; issue = "Sign-in is not configured. Generate the approved public Clerk configuration and rebuild." }
         do {
             let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            cache = AccountCache(root: support.appendingPathComponent("AuthenticatedAccounts", isDirectory: true), deployment: "loopback:\(configuration?.apiPort ?? 0)")
+            cache = AccountCache(root: support.appendingPathComponent("AuthenticatedAccounts", isDirectory: true), deployment: apiOrigin.absoluteString)
             // Never adopt the previous anonymous app's files or locally authoritative answers.
             let legacy = support.appendingPathComponent("LocalCompanion", isDirectory: true)
             if FileManager.default.fileExists(atPath: legacy.path) { try FileManager.default.removeItem(at: legacy) }
@@ -105,7 +109,7 @@ struct PublicAuthConfiguration {
     }
     func authCompleted() { managingAccount = false; activateDeliberately() }
     func activateDeliberately() {
-        guard let identity = sdkIdentity else { return }
+        guard let identity = sdkIdentity, cache != nil else { return }
         do { try cache?.clearActive() }
         catch {
             locallyLocked = true; defaults.set(true, forKey: lockKey)
@@ -116,21 +120,16 @@ struct PublicAuthConfiguration {
         prepare(identity)
     }
     private func prepare(_ identity: AuthIdentity) {
-        guard let configuration, let provider, let cache else { return }
+        guard let origin = apiOrigin, let provider, let cache else { return }
         if let previous = preparedIdentity, previous != identity { fence.lock() }
         // Retry/foreground of the same account keeps queued bytes on disk, but destroys old objects.
         work?.cancel(); model?.invalidateForSignOut(); model = nil; observation = nil
         bearer?.cancel(); bearer = nil; ready = false; issue = nil
         locallyLocked = false; defaults.set(false, forKey: lockKey)
         let lease = fence.activate(identity); preparedIdentity = identity
-        guard let port = configuration.apiPort else {
-            issue = "Signed in. The authenticated service endpoint has not been configured yet. No anonymous service will be used."
-            return
-        }
         work = Task { [weak self] in
             guard let self else { return }
             do {
-                let origin = try LoopbackEndpoint.url(port: port)
                 let transport = try AuthenticatedTransport(base: URLSessionTransport(), provider: provider, fence: self.fence, lease: lease, origin: origin)
                 self.bearer = transport
                 transport.onAdmissionInvalidated = { [weak self] in
@@ -142,7 +141,7 @@ struct PublicAuthConfiguration {
                 guard self.sdkIdentity == identity, !Task.isCancelled else { return }
                 // The network-verified principal gate MUST precede opening any private cache.
                 let storage = try cache.activate(identity)
-                let client = try CompanionClient(storage: storage, transport: transport, baseURL: origin, allowedPort: port, sessionValidator: { try transport.validate() })
+                let client = try CompanionClient(storage: storage, transport: transport, baseURL: origin, sessionValidator: { try transport.validate() })
                 let instance = AppModel(client: client, accountNamespace: identity.accountNamespace)
                 self.model = instance
                 self.observation = instance.objectWillChange.sink { [weak self, weak instance] _ in

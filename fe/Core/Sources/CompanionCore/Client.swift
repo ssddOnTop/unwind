@@ -153,10 +153,12 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
     private var plaidGeneration = 0
     private var plaidFlight: UUID?
     public func invalidatePlaidWork() { plaidGeneration += 1; plaidFlight = nil }
-    public init(storage: ProtectedStorage, transport: any HTTPTransport = URLSessionTransport(), baseURL: URL = URL(string: "http://127.0.0.1:8000")!, allowedPort: Int = 8000, retryDelay: UInt64 = 500_000_000, sessionValidator: @escaping @MainActor @Sendable () throws -> Void = {}) throws {
-        guard (1...65535).contains(allowedPort), baseURL.scheme == "http", baseURL.host == "127.0.0.1", baseURL.port == allowedPort,
-              baseURL.user == nil, baseURL.password == nil, baseURL.query == nil, baseURL.fragment == nil,
-              baseURL.path.isEmpty || baseURL.path == "/" else { throw ClientFailure.invalidEndpoint }
+    public init(storage: ProtectedStorage, transport: any HTTPTransport = URLSessionTransport(), baseURL: URL? = nil, allowedPort: Int? = nil, retryDelay: UInt64 = 500_000_000, sessionValidator: @escaping @MainActor @Sendable () throws -> Void = {}) throws {
+        let baseURL = try baseURL.map { try APIOrigin.url($0.absoluteString) } ?? APIConfiguration.resolve()
+        // Optional compatibility assertion for callers injecting test endpoints, never an override.
+        if let allowedPort {
+            guard (1...65535).contains(allowedPort), baseURL.port == allowedPort else { throw ClientFailure.invalidEndpoint }
+        }
         self.storage = storage; self.transport = transport; self.baseURL = baseURL; self.retryDelay = retryDelay; self.sessionValidator = sessionValidator
         try sessionValidator()
         snapshot = try storage.load()
