@@ -25,7 +25,7 @@ struct LedgerDetail: View {
                         if let o = model.state?.observations.first(where: { $0.id == ref.observation_id && $0.revision == ref.revision }) {
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(o.local_date).font(.headline)
-                                if o.mode == "fixture" { Text("Sample data").font(.caption) }
+                                if o.mode == "fixture" { Text("Sandbox records").font(.caption) }
                                 if let activity = o.activity { Text("Recorded \(activity.value) \(activity.metric) (\(activity.unit))") }
                                 if let purchase = o.purchase {
                                     Text("\(purchase.category ?? "Unknown category") · \(purchase.merchant ?? "Unknown merchant")")

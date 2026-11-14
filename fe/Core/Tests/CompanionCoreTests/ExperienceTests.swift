@@ -128,3 +128,21 @@ private func answer(_ e: ExperienceV1) -> ExperienceAnswerRequest {
     #expect(client.experienceSnapshot == nil)
     #expect(try await client.refreshExperience() == http.value)
 }
+
+@Test func inferenceHistoryKeepsPersistedTimestampEvidenceAndUnknownLegacyTime() throws {
+    var value = try experience()
+    let evidence = ExperienceInferenceEvidence(observation_id: "test-evidence", revision: 1, date: "2026-11-01", source: "Plaid Sandbox", summary: "Restaurant-category purchase")
+    let entry = ExperienceInferenceEntry(id: "test-inference", inferred_at: "2026-11-14T12:00:00.123Z", title: "Possible routine", inference: "A possible eating-out routine", explanation: "Purchases recur on distinct dates.", status: "unconfirmed", method: "Deterministic rule", rule_version: "1.0.0", context: [], evidence: [evidence])
+    value.inference_history = [entry]
+    let decoded = try Wire.decode(ExperienceV1.self, Wire.encode(value))
+    #expect(decoded.inference_history == [entry])
+    value.inference_history[0].inferred_at = nil
+    #expect(try Wire.decode(ExperienceV1.self, Wire.encode(value)).inference_history[0].inferred_at == nil)
+}
+
+@Test func olderExperienceWithoutHistoryDecodesAsEmptyNotFabricated() throws {
+    var object = try dictionary(experience())
+    object.removeValue(forKey: "inference_history")
+    let decoded = try Wire.decode(ExperienceV1.self, JSONSerialization.data(withJSONObject: object))
+    #expect(decoded.inference_history.isEmpty)
+}

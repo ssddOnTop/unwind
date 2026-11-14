@@ -77,14 +77,14 @@ private struct SuggestionToolsView: View {
                 AccessibleInfoPopover(title: "Suggestions", message: "Observations use deterministic rules. Optional cloud wording uses a backend-configured free model, never paid fallback. If unavailable or rate limited, the observations remain available. Cloud consent is separate in Settings.")
                 if let synthesis = model.state?.process.synthesis {
                     if synthesis.status == "running" { ProgressView("Preparing suggestions…") }
-                    if let reason = synthesis.reason { Text(reason).font(.caption) }
+                    if synthesis.reason != nil { Text("Optional cloud wording is not available for this review.").font(.caption) }
                 }
             }.disabled(model.busy || model.hasPending || model.state == nil)
         }.navigationTitle("Suggestion tools")
             .confirmationDialog("Create optional cloud wording?", isPresented: $cloud, titleVisibility: .visible) {
                 Button("Create suggestions") { Task { await model.processLive() } }
                 Button("Cancel", role: .cancel) {}
-            } message: { Text("Only consented sample records may be sent. Your observations remain available if the service cannot respond.") }
+            } message: { Text("Only consented eligible Sandbox coverage summaries may be sent. Your observations remain available if the service cannot respond.") }
     }
 }
 

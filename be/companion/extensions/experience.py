@@ -8,7 +8,7 @@ from ..contracts import DomainError, RULES
 from ..domain import instant, iso, key, ref, refkey, zone
 
 DEMO_LABEL = "DEMO — fictional example, not your health information"
-STARTING_POINT = "If you would like a nonurgent general wellbeing discussion, primary care or family medicine is an optional starting point. A purchase pattern alone does not establish a need for medical care or a specialist."
+STARTING_POINT = "For a nonurgent wellbeing conversation, primary care or family medicine is an optional starting point."
 SCOPE_NOTICE = "Preparation for a conversation, not a diagnosis or symptom assessment. This feature does not assess urgent symptoms."
 BASE_LIMITS = [
     "Coverage is partial or unknown; records are not a complete account of eating or activity.",
@@ -100,7 +100,7 @@ def verified_summary(card, state, selected_sources):
         rows.append(o)
     if len({o["source_id"] for o in rows}) != 1:
         return None
-    prefix = "DEMO records" if card["mode"] == "fixture" else "Connected records"
+    prefix = "Plaid Sandbox records" if rows[0]["source_id"] == "plaid" else "DEMO records" if card["mode"] == "fixture" else "Connected records"
     period = f"{start} through {end}"
     if card["scenario_id"] == "purchase_recurrence":
         if not all(o["kind"] == "purchase" and o["lifecycle"] == "posted" and o["purchase"] and not o["purchase"]["is_refund"] and o["purchase"]["category"] == "restaurant" for o in rows):
@@ -180,7 +180,8 @@ def project(payload):
     modes = {o["mode"] for o in state["observations"]}
     provenance = "mixed" if len(modes)>1 else "synthetic" if modes == {"fixture"} else "live" if modes == {"live"} else "none"
     is_demo = "fixture" in modes
-    sample_label = ("Includes sample data — synthetic records" if provenance == "mixed" else "Sample data — synthetic records") if is_demo else None
+    sandbox = any(o["source_id"] == "plaid" for o in state["observations"])
+    sample_label = "Plaid Sandbox — synthetic bank records, not live finances" if sandbox else ("Sample data — synthetic records" if is_demo else None)
     limits, reviews, hidden = list(BASE_LIMITS), {}, False
     process = state["process"]
     ready = payload.get("review_ready", process["status"] == "completed" and process["ledger_status"] == "completed")
@@ -267,7 +268,7 @@ def project(payload):
              "reason_for_discussion": reason, "doctor_starting_point": STARTING_POINT, "scope_notice": SCOPE_NOTICE,
              "observed_information": observed, "inferred_habits": habits, "confirmed_context": confirmed,
              "user_reported_preferences": preferences_copy, "uncertainties": list(dict.fromkeys(limits)), "questions": questions, "brief": ""}
-    sections = ["DEMO — includes synthetic sample records alongside connected records" if provenance == "mixed" else DEMO_LABEL] if is_demo else []
+    sections = [sample_label if sandbox else "DEMO — includes synthetic sample records alongside connected records" if provenance == "mixed" else DEMO_LABEL] if is_demo else []
     sections += ["Visit preparation\n" + SCOPE_NOTICE, "Reason for discussion\n" + reason, "Starting point\n" + STARTING_POINT]
     for heading, lines, empty in (
         ("Observed information — " + ("records partially reviewed" if observed else "records not reviewed"), observed, "No current, verified record summary is included."),
@@ -284,7 +285,7 @@ def project(payload):
     elif no_answer:
         home.update(headline="Your correction is saved.", detail="The personal inference was removed; recorded purchases are unchanged.", primary_action=action("view_visit", "Review your brief"))
     elif no_flags:
-        home.update(headline="No patterns flagged in available records", detail="This is limited to the purchase and step records reviewed.", primary_action=action("view_ledger", "Review available records"))
+        home.update(headline="No patterns flagged in available records", detail="This is limited to the purchase and step records reviewed.", primary_action=action("view_ledger", "Review inference history"))
     elif reviews:
         candidates = sorted(reviews.values(), key=lambda r: (not can_suggest(r["card"], preferences), r["card"]["scenario_id"] != "recorded_steps"))
         card = candidates[0]["card"]
@@ -295,14 +296,16 @@ def project(payload):
         if can_suggest(card, preferences):
             home["primary_action"] = action("explore_suggestion", "Explore this idea", SUGGESTIONS[card["scenario_id"]], card["id"], card["suggestion"]["id"])
         else:
-            home["primary_action"] = action("view_ledger", "Review available records")
+            home["primary_action"] = action("view_ledger", "Review inference history")
     else:
         home.update(headline="Records need an update" if stale else "Some patterns are hidden" if hidden else "Not enough information yet",
                     detail="Review your connections or preferences when you are ready.", primary_action=action("connect", "Review connections"))
     public = {k: deepcopy(state[k]) for k in ("data_epoch", "revision", "generated_at", "evaluation_date")}
     public.update(schema_version="1", timezone=preferences["timezone"], is_demo=is_demo, provenance=provenance,
-                  home=home, concern=concern, clarification=clarification, visit=visit)
-    return {"experience": public, "question_scope": question_scope, "answers": answers}
+                  home=home, concern=concern, clarification=clarification, visit=visit,
+                  inference_history=deepcopy(payload.get("inference_history", [])))
+    return {"experience": public, "question_scope": question_scope, "answers": answers,
+            "inference_evidence": [ref(o) for o in pattern["rows"]] if pattern and not pattern["blocked"] else []}
 
 
 class ExperienceExtension:

@@ -13,7 +13,8 @@ import pytest
 
 from companion.bootstrap import UnavailableSynthesis
 from companion.connections.plaid import PlaidSandboxClient, SandboxCredentials
-from companion.contracts import EXAMPLE, DomainError, validate
+from companion.contracts import DomainError, validate
+from sample_data import EXAMPLE
 from companion.domain import iso
 from companion.environment import load_runtime_environment
 from companion.extensions.plaid import PlaidExtension

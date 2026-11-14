@@ -460,6 +460,13 @@
         },
         "visit": {
           "$ref": "#/$defs/visit"
+        },
+        "inference_history": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/inference_entry"
+          },
+          "maxItems": 128
         }
       },
       "required": [
@@ -595,6 +602,103 @@
       "required": [
         "error"
       ]
+    },
+    "inference_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observation_id",
+        "revision",
+        "date",
+        "source",
+        "summary"
+      ],
+      "properties": {
+        "observation_id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "date": {
+          "type": "string",
+          "format": "date"
+        },
+        "source": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        }
+      }
+    },
+    "inference_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "inferred_at",
+        "title",
+        "inference",
+        "explanation",
+        "status",
+        "method",
+        "rule_version",
+        "context",
+        "evidence"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "inferred_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "inference": {
+          "type": "string"
+        },
+        "explanation": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "unconfirmed",
+            "corrected"
+          ]
+        },
+        "method": {
+          "type": "string"
+        },
+        "rule_version": {
+          "type": "string"
+        },
+        "context": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/inference_evidence"
+          },
+          "minItems": 1
+        }
+      }
     }
   },
   "examples": [

@@ -10,8 +10,9 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from companion import http
-from companion.bootstrap import build_service
-from companion.contracts import BATCH, DomainError, EXAMPLE, validate
+from sample_data import build_service
+from companion.contracts import DomainError, validate
+from sample_data import BATCH, EXAMPLE
 from companion.daily import DailyCoordinator
 from companion.domain import iso, synthesis
 

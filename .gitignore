@@ -17,6 +17,8 @@
 !/be/tests/
 !/be/tests/**/
 !/be/tests/**/*.py
+!/be/tests/fixtures/state.example.json
+!/be/tests/fixtures/observation-batch.example.json
 !/be/pyproject.toml
 !/be/uv.lock
 !/be/run-local.sh
@@ -57,8 +59,6 @@
 # Reviewed public schemas and explicitly synthetic fixtures.
 !/contracts/
 !/contracts/state.schema.json
-!/contracts/state.example.json
-!/contracts/observation-batch.example.json
 !/contracts/scenarios.json
 !/contracts/v1.md
 !/contracts/plaid.md

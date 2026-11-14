@@ -4,7 +4,8 @@ from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .contracts import DomainError, EXAMPLE, RULES
+from .contracts import DomainError, RULES
+from .templates import EMPTY
 
 
 def utcnow():
@@ -43,7 +44,7 @@ def synthesis(mode="disabled", status="idle", reason=None):
 
 
 def defaults(now):
-    s = deepcopy(EXAMPLE)
+    s = deepcopy(EMPTY)
     s.update(data_epoch=str(uuid4()), revision=0, generated_at=iso(now), observations=[],
              feedback=[], notification_intents=[], ledger=[])
     p = s["preferences"]
@@ -51,8 +52,6 @@ def defaults(now):
     for source in s["sources"]:
         source.update(consent="not_requested", last_attempt_at=None, last_success_at=None,
                       coverage="unknown", coverage_window=None)
-        if source["id"] == "demo":
-            source.update(status="ready", reason="Synthetic adapter; explicit consent required.")
     s["process"] = {"run_id": None, "status": "idle", "started_at": None, "completed_at": None,
                     "input_state_revision": 0, "ledger_status": "idle", "synthesis": synthesis()}
     s["evaluation_date"] = now.astimezone(zone(p["timezone"])).date().isoformat()

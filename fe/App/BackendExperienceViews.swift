@@ -24,7 +24,7 @@ struct BackendHomeView: View {
                             if !value.home.info.isEmpty { AccessibleInfoPopover(title: "Your observation", message: value.home.info.joined(separator: "\n\n")) }
                         }
                         Text(verbatim: value.home.detail).font(.body)
-                        if let action = value.home.primary_action {
+                        if let action = value.home.primary_action, model.message == nil {
                             Button { route(action) } label: {
                                 VStack(alignment: .leading, spacing: 6) {
                                     Text(verbatim: action.label)
@@ -91,14 +91,8 @@ struct BackendVisitView: View {
                         if let message = model.message { Text(verbatim: message).foregroundStyle(.red) }
                         Button(expanded ? "Close brief" : "Read your brief") { expanded.toggle() }.accessibilityIdentifier("experience.visit.expand")
                         if expanded {
-                            Text(verbatim: value.visit.reason_for_discussion)
-                            Text(verbatim: value.visit.doctor_starting_point)
-                            lines("Observed records", value.visit.observed_information)
-                            lines("Possible patterns", value.visit.inferred_habits)
-                            lines("Your confirmed context", value.visit.confirmed_context)
-                            lines("Your preferences", value.visit.user_reported_preferences)
-                            lines("Uncertainties", value.visit.uncertainties)
-                            lines("Questions to discuss", value.visit.questions)
+                            // The brief already contains these sections; do not
+                            // render every warning and observation twice.
                             if editing {
                                 TextEditor(text: $editedBrief).frame(minHeight: 240).accessibilityIdentifier("experience.visit.edit")
                             } else { Text(verbatim: value.visit.brief).textSelection(.enabled).accessibilityIdentifier("experience.visit.brief") }
@@ -106,7 +100,7 @@ struct BackendVisitView: View {
                             Button("Copy brief") { copy(value) }.accessibilityIdentifier("experience.visit.copy")
                             if let copyStatus { Text(verbatim: copyStatus).font(.caption).accessibilityIdentifier("experience.visit.copyStatus") }
                         }
-                        Button("Review evidence in Ledger", action: openLedger)
+                        Button("Review inference history", action: openLedger)
                     } else {
                         Text("The overview changed or could not be loaded. Refresh before answering.")
                         Button("Refresh") { Task { await model.refresh() } }

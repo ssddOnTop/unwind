@@ -10,11 +10,13 @@ from fastapi.testclient import TestClient
 import httpx
 import pytest
 
-from companion.bootstrap import UnavailableSynthesis, build_service
-from companion.contracts import BATCH, EXAMPLE, DomainError, validate
+from companion.bootstrap import UnavailableSynthesis
+from sample_data import build_service
+from companion.contracts import DomainError, validate
+from sample_data import BATCH, EXAMPLE
 from companion.domain import iso, synthesis
 from companion.extensions.scenarios import ScenariosExtension
-from companion.http import create_app
+from sample_data import create_app
 from test_backend import NOW, ControlledSynthesis, batch, feedback, prefs, request, revision, seed, state
 
 

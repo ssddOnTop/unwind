@@ -54,11 +54,16 @@ while i < len(objects):
     props = [(k,typ(p,name+''.join(x.title() for x in k.split('_'))),p) for k,p in obj['properties'].items()]
     out = [f'public struct {name}: Codable, Equatable, Sendable {{']
     out += [f'    public var {k}: {t}' for k,t,p in props]
-    out += ['    public init(' + ', '.join(f'{k}: {t}' for k,t,p in props) + ') {']
+    out += ['    public init(' + ', '.join(f'{k}: {t}' + (' = []' if k == 'inference_history' else '') for k,t,p in props) + ') {']
     out += [f'        self.{k} = {k}' for k,t,p in props] + ['    }']
     out += ['    enum CodingKeys: String, CodingKey, CaseIterable {', '        case ' + ', '.join(k for k,t,p in props), '    }']
     out += ['    public init(from decoder: Decoder) throws {', '        let keys = try decoder.container(keyedBy: AnyKey.self)', '        let allowed = Set(CodingKeys.allCases.map(\\.rawValue))', '        guard Set(keys.allKeys.map(\\.stringValue)) == allowed else {', '            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))', '        }', '        let c = try decoder.container(keyedBy: CodingKeys.self)']
+    if name == 'ExperienceV1':
+        out = [line.replace(' == allowed else', '.isSubset(of: allowed), allowed.subtracting(["inference_history"]).isSubset(of: Set(keys.allKeys.map(\\.stringValue))) else') for line in out]
     for k,t,p in props:
+        if k == 'inference_history':
+            out.append('        inference_history = c.contains(.inference_history) ? try c.decode([ExperienceInferenceEntry].self, forKey: .inference_history) : []')
+            continue
         optional = t.endswith('?')
         out.append(f'        {k} = try c.decode'+('IfPresent' if optional else '')+f'({t.rstrip("?")}.self, forKey: .{k})')
         q = next((x for x in p.get('anyOf',[]) if x.get('type') != 'null'),p)

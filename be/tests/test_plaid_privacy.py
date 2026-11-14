@@ -11,7 +11,8 @@ import httpx
 import pytest
 
 from companion.connections.plaid import PlaidSandboxClient, SandboxCredentials
-from companion.contracts import BATCH, DomainError
+from companion.contracts import DomainError
+from sample_data import BATCH
 from companion.domain import iso
 from companion.plaid_contracts import validate_profile
 from test_backend import NOW
@@ -24,7 +25,7 @@ def test_401_disables_provider_without_other_environment(tmp_path):
         paths.append(str(request.url))
         return httpx.Response(401, json={"error_code":"INVALID_API_KEYS", "error_message":"PRIVATE_ERROR"})
     from companion.extensions.plaid import PlaidExtension
-    from companion.http import create_app
+    from sample_data import create_app
     from companion.bootstrap import UnavailableSynthesis
     extension=PlaidExtension(tmp_path, PlaidSandboxClient(SandboxCredentials('synthetic','synthetic'),httpx.MockTransport(handler)))
     app=create_app(tmp_path,plaid_profile=True,replacements={'plaid':extension,'synthesis':UnavailableSynthesis()},clock=lambda:NOW)
