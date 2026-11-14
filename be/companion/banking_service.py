@@ -45,7 +45,7 @@ class BankingCoordinator:
 
     async def prepare(self,doc):
         projected=await self.call('project',self.payload(doc));ctx=projected['context'];meta=doc['meta']
-        meta.update(banking_excluded_ids=ctx['excluded_ids'],banking_item_contexts=ctx['items'],banking_selected_count=ctx['selected_count'],plaid_connected=ctx['connected'])
+        meta.update(pattern_bank_accounts=ctx.get('pattern_accounts',[]),banking_excluded_ids=ctx['excluded_ids'],banking_item_contexts=ctx['items'],banking_selected_count=ctx['selected_count'],plaid_connected=ctx['connected'])
         source=self.source(doc)
         if ctx['connected']:
             source.update(enabled=True,consent='granted',authorization_requested=True,read_access='not_applicable',
@@ -108,14 +108,14 @@ class BankingCoordinator:
                 final=await self.call('disconnect_done',self.payload(doc)|{'connection_id':item['id'],'confirmed':confirmed})
                 doc['meta']['banking_vault']=final['vault'];await service.commit(doc)
 
-    async def publish(self,doc,receipt,reply):
+    async def publish(self,doc,receipt,reply,pattern_changes=None):
         doc['state']['revision']+=1;doc['state']['generated_at']=iso(self.service.clock())
         await self.service.evaluate(doc)
         value=(await self.call('project',self.payload(doc)))['view'];value['result']=reply
         validate_banking('banking',value)
         sealed=await self.call('receipt_seal',value)
         receipt.update(response={'banking_receipt':sealed['ciphertext']},preserve_response=True)
-        await self.service.commit(doc,receipt,bump=False)
+        await self.service.commit(doc,receipt,bump=False,pattern_bank_changes=pattern_changes)
         return value
 
     async def action(self,body,*,admission_guard=None):
@@ -187,7 +187,7 @@ class BankingCoordinator:
                 elif merged.get('cancelled'):reply=result('cancelled','Link was cancelled. Local imports are stopped; remote Item removal is unconfirmed. Use Disconnect bank to retry removal.')
                 else:reply=result('partial' if merged['partial'] else 'complete','Some shared account imports or inventory need attention.' if merged['partial'] else 'Bank information updated. All accounts returned by Plaid shared inventory are enabled.',**merged['counts'])
             service.invalidate(doc['state']);await service.clear_checkpoints()
-            response=await self.publish(doc,receipt,reply)
+            response=await self.publish(doc,receipt,reply,merged.get('pattern_changes',[]) if action!='disconnect' else [])
             if action=='exchange':await self.call('committed',{})
             return response
 

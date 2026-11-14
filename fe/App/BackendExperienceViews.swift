@@ -96,7 +96,7 @@ struct BackendVisitView: View {
                             Text(verbatim: patterns.source_label).font(.caption)
                         } else if let sample = value.home.sample_label { Text(verbatim: sample).font(.caption) }
                         Text(verbatim: value.visit.caption)
-                        AccessibleInfoPopover(title: "About this brief", message: value.visit.scope_notice + "\n\nOptional text edits are local to this screen and never change your records. They reset when the overview changes. Copying uses only this device’s clipboard.")
+                        AccessibleInfoPopover(title: "About this brief", message: value.visit.scope_notice + "\n\nEdits stay on this screen unless you tap Save notes to this review. Saved notes remain private, are not sent to AI, and do not alter sensor evidence. Context corrections reset edited notes to avoid keeping a stale interpretation. Copying uses only this device’s clipboard.")
                         if let question = value.clarification, model.patternOverview?.is_demo != true {
                             if question.should_prompt || showQuestion {
                                 Text(verbatim: question.question).font(.headline)
@@ -119,6 +119,11 @@ struct BackendVisitView: View {
                                 TextEditor(text: $editedBrief).frame(minHeight: 240).accessibilityIdentifier("experience.visit.edit")
                             } else { Text(verbatim: brief(value)).textSelection(.enabled).accessibilityIdentifier("experience.visit.brief") }
                             Button(editing ? "Use original brief" : "Edit a copy") { editing.toggle(); editedBrief = brief(value) }
+                            if editing, model.patternOverview?.run_id != nil {
+                                Button("Save notes to this review") { Task { if await model.savePatternBrief(editedBrief) { editing = false } } }
+                                    .disabled(model.busy || editedBrief.isEmpty || editedBrief.count > 4000)
+                            }
+                            if let issue = model.patternMessage { Text(verbatim: issue).foregroundStyle(.red) }
                             Button("Copy brief") { copy(value) }.accessibilityIdentifier("experience.visit.copy")
                             if let copyStatus { Text(verbatim: copyStatus).font(.caption).accessibilityIdentifier("experience.visit.copyStatus") }
                         }
@@ -144,8 +149,8 @@ struct BackendVisitView: View {
     }
     private func copy(_ experience: ExperienceV1) {
         var text = editing ? editedBrief : brief(experience)
-        if model.patternOverview?.is_demo == true, !text.hasPrefix("SYNTHETIC OPERATOR DEMO") {
-            text = "SYNTHETIC OPERATOR DEMO — not medical or provider records.\n" + text
+        if model.patternOverview?.is_demo == true, !text.hasPrefix("SYNTHETIC HEALTH DEMO") {
+            text = "SYNTHETIC HEALTH DEMO — not medical evidence.\n" + text
         }
         if experience.is_demo && model.patternOverview?.is_demo != true {
             // Preserve the server's mandatory visible sample marker even after cosmetic edits.

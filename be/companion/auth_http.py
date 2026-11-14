@@ -89,7 +89,7 @@ class _Gateway:
             self.routes.add(("POST", "/connections/plaid"))
         if experience_profile:
             self.routes.update({("GET", "/experience/v1"), ("POST", "/experience/v1/answers"),
-                ('GET','/patterns/v1'), ('POST','/patterns/v1/analyze'), ('POST','/patterns/v1/clarify')})
+                ('POST','/health/v1/samples'), ('GET','/patterns/v1'), ('POST','/patterns/v1/analyze'), ('POST','/patterns/v1/clarify'), ('POST','/patterns/v1/brief')})
         if banking_profile:
             self.routes.update({('GET','/banking/v1'),('POST','/banking/v1/actions')})
         if webhook_receiver is not None:

@@ -11,7 +11,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-VERSION = 'patterns-1:aggregate-1:prompt-1'
+VERSION = 'patterns-2:aggregate-1:prompt-1'
 NOTICE = ('Only a coarse pattern summary is sent for AI review, not identities, merchants or raw records. '
           'Aggregates can still be sensitive. Missing data is unknown, not zero. These are observations, not diagnoses or causes.')
 COPY = {
@@ -40,7 +40,7 @@ class HealthSample(Strict):
     timezone: str
     value: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     unit: Literal['count','bpm'] | None = None
-    category: Literal['inBed','asleepCore','asleepDeep','asleepREM','awake'] | None = None
+    category: Literal['inBed','asleepCore','asleepDeep','asleepREM','awake','asleepUnspecified'] | None = None
     workout_activity: Literal['walking','running','cycling'] | None = None
     duration_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     energy_kcal: float | None = Field(default=None, ge=0, allow_inf_nan=False)
@@ -103,6 +103,16 @@ class ClarifyRequest(Strict):
         UUID(self.run_id)
         return self
 
+class BriefRequest(Strict):
+    schema_version: Literal['1']
+    run_id: str
+    expected_brief: str = Field(max_length=8000)
+    text: str = Field(min_length=1,max_length=4000)
+    @model_validator(mode='after')
+    def valid(self):
+        UUID(self.run_id)
+        return self
+
 class Finding(Strict):
     concern_id: Literal['activity','sleep','food_service']
     title: str
@@ -140,9 +150,12 @@ def aggregate(samples, transactions, now):
         for s in samples:
             a,b = s['start_at'],s['end_at']
             # Complete daily aggregates only; point samples are never misrepresented as daily totals.
-            if s['hk_type']=='stepCount' and start <= a and b <= end:
-                steps[a.astimezone(ZoneInfo(s['timezone'])).date()] += s['value']
-            if s['hk_type']=='sleepAnalysis' and s['category'] in {'asleepCore','asleepDeep','asleepREM'}:
+            if s['hk_type']=='stepCount' and start <= a and b <= end and b-a >= timedelta(hours=23):
+                day=a.astimezone(ZoneInfo(s['timezone'])).date()
+                # The ingestion contract carries daily cumulative totals, not additive point samples.
+                # Do not sum duplicate daily exports or overlapping phone/watch/source totals.
+                steps[day] = max(steps[day],s['value'])
+            if s['hk_type']=='sleepAnalysis' and s['category'] in {'asleepCore','asleepDeep','asleepREM','asleepUnspecified'}:
                 a,b = max(a,start),min(b,end)
                 if b > a: sleep.append((a,b))
             if s['hk_type']=='workout' and start <= a < end: workouts += 1
@@ -188,13 +201,15 @@ def findings(ids, evidence):
 
 async def model_review(evidence: Aggregate, allowed, model_factory):
     """One invocation, no tool binding, no retries, no dynamic prose accepted from the model."""
+    if any(i not in COPY for i in allowed) or len(set(allowed))!=len(allowed):raise ValueError('Invalid concern set')
+    if not allowed:return []
     # Round-trip through the allowlist, rather than serializing any persistence row.
     dto=Aggregate.model_validate(evidence.model_dump()).model_dump()
     model=await asyncio.wait_for(asyncio.to_thread(model_factory),timeout=6)
     if model is None: raise ValueError('Unavailable')
     from langchain_core.messages import SystemMessage, HumanMessage
     result=await asyncio.wait_for(model.ainvoke([
-        SystemMessage(content='Rank the supported pattern IDs for a non-diagnostic review. Do not infer disease, causality, consumption or identity. Output ONLY JSON {"concern_ids":[...]} selecting each supported ID once. Supported IDs are activity (lower steps), sleep (shorter recorded sleep), food_service (more purchases). Never add a new ID. No tools.'),
+        SystemMessage(content='Rank the supported pattern IDs for a non-diagnostic review. Do not infer disease, causality, consumption or identity. Output ONLY JSON {"concern_ids":[...]} selecting each supported ID once. Supported IDs are activity (lower steps), sleep (shorter recorded sleep), food_service (more purchases). Never add a new ID. No tools. The exact allowed IDs for this review are: '+json.dumps(sorted(allowed))),
         HumanMessage(content=json.dumps(dto,sort_keys=True,separators=(',',':')))],
         max_tokens=300, config={'callbacks': []}),timeout=12)
     content=result.content

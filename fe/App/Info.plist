@@ -16,6 +16,6 @@
     <key>UILaunchScreen</key><dict/>
     <key>UIApplicationSceneManifest</key><dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict>
     <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
-    <key>NSHealthShareUsageDescription</key><string>Read daily step totals only when you choose to refresh, to show recorded activity and its limitations. With your app consent, normalized totals sync to your local companion backend.</string>
+    <key>NSHealthShareUsageDescription</key><string>Read up to six months of steps, sleep stages, heart rate, resting heart rate and workouts only when you choose to refresh. With your app consent, normalized records sync to your private companion backend. This app does not write Health records.</string>
     <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict></plist>

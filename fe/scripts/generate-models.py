@@ -40,6 +40,9 @@ names['experience_error'] = 'ExperienceErrorEnvelope'
 names['pattern_Overview'] = 'PatternOverview'
 names['pattern_Request'] = 'PatternAnalyzeRequest'
 names['pattern_ClarifyRequest'] = 'PatternClarifyRequest'
+names['pattern_HealthRecord'] = 'NormalizedHealthSample'
+names['pattern_HealthIngestRequest'] = 'HealthIngestRequest'
+names['pattern_BriefRequest'] = 'PatternBriefRequest'
 objects = []
 def typ(p, name):
     if 'anyOf' in p:

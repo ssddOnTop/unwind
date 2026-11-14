@@ -27,10 +27,11 @@ public struct PendingMutation: Codable, Equatable, Sendable, Identifiable {
     public var blocksDisplay: Bool { path == "/data" || (path == "/demo" && (try? Wire.decode(DemoRequest.self, body).action) == "reset") }
     public init<T: Encodable>(path: String, method: String = "POST", request: T, now: Date = Date()) throws {
         let body = try Wire.encode(request)
-        let methods = ["/observations": "POST", "/feedback": "POST", "/preferences": "PUT", "/process": "POST", "/demo": "POST", "/data": "DELETE", "/experience/v1/answers": "POST"]
+        let methods = ["/health/v1/samples": "POST", "/observations": "POST", "/feedback": "POST", "/preferences": "PUT", "/process": "POST", "/demo": "POST", "/data": "DELETE", "/experience/v1/answers": "POST"]
         guard methods[path] == method, body.count <= 1_048_576 else { throw ClientFailure.rejected("invalid_request", false) }
         // Round-trip through exact required-key/enum decoders before persisting a request.
         switch path {
+        case "/health/v1/samples": _ = try Wire.decode(HealthIngestRequest.self, body)
         case "/observations": _ = try Wire.decode(ObservationBatch.self, body)
         case "/feedback": _ = try Wire.decode(FeedbackRequest.self, body)
         case "/preferences": _ = try Wire.decode(PreferencesRequest.self, body)
@@ -208,6 +209,15 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
         let epoch = snapshot.state?.data_epoch
         let body = try Wire.encode(PatternClarifyRequest(schema_version: "1", run_id: runID, concern_id: concernID, attribution: attribution))
         let value = try Wire.decode(PatternOverview.self, await send(request(path: "/patterns/v1/clarify", method: "POST", body: body)))
+        guard epoch == snapshot.state?.data_epoch else { throw ClientFailure.invalidResponse }
+        return value
+    }
+    public func savePatternBrief(runID: String, expectedBrief: String, text: String) async throws -> PatternOverview {
+        try validateSession()
+        guard !busy, snapshot.outbox.isEmpty else { throw ClientFailure.busy }
+        let epoch = snapshot.state?.data_epoch
+        let body = try Wire.encode(PatternBriefRequest(schema_version: "1", run_id: runID, expected_brief: expectedBrief, text: text))
+        let value = try Wire.decode(PatternOverview.self, await send(request(path: "/patterns/v1/brief", method: "POST", body: body)))
         guard epoch == snapshot.state?.data_epoch else { throw ClientFailure.invalidResponse }
         return value
     }

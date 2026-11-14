@@ -11,7 +11,7 @@ import pytest
 from pydantic import ValidationError
 from companion.patterns import HealthSample,Transaction,Aggregate,aggregate,concerns,model_review,ClarifyRequest
 from companion.pattern_operator import generate,load,DATASET,six_month_start
-from companion.pattern_migrations import MIGRATION_V2
+from companion.pattern_migrations import MIGRATION_V3
 from companion.postgres import PostgresConfig,PostgresRuntime
 from companion.extensions.postgres import PostgresPersistenceExtension
 from companion.pattern_store import PatternCoordinator
@@ -30,8 +30,8 @@ class Model:
 async def configured(pg_dsn):
     role='patterns_'+uuid4().hex
     async with await psycopg.AsyncConnection.connect(pg_dsn,autocommit=True) as c:
-        await c.execute(MIGRATION_V2)
-        await c.execute(MIGRATION_V2)  # Explicit migration is idempotent.
+        await c.execute(MIGRATION_V3)
+        await c.execute(MIGRATION_V3)  # Explicit migration is idempotent.
         await c.execute(sql.SQL('CREATE ROLE {} LOGIN NOSUPERUSER NOBYPASSRLS').format(sql.Identifier(role)))
         await c.execute(sql.SQL('GRANT USAGE ON SCHEMA companion_private TO {}').format(sql.Identifier(role)))
         await c.execute(sql.SQL('GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA companion_private TO {}').format(sql.Identifier(role)))
@@ -135,8 +135,8 @@ async def test_forced_rls_deletion_cascade_and_operator_selection(configured):
     runtime,a,b,store,c,model=configured
     await c.analyze(str(uuid4()))
     async with c.transaction() as conn:
-        rows=await (await conn.execute("SELECT relname,relforcerowsecurity FROM pg_class WHERE relnamespace='companion_private'::regnamespace AND relname IN ('pattern_batches','health_samples','pattern_transactions','pattern_runs','pattern_insights','pattern_requests')")).fetchall()
-        assert len(rows)==6 and all(r[1] for r in rows)
+        rows=await (await conn.execute("SELECT relname,relforcerowsecurity FROM pg_class WHERE relnamespace='companion_private'::regnamespace AND relname IN ('pattern_batches','health_samples','pattern_transactions','pattern_runs','pattern_insights','pattern_requests','health_import_pages')")).fetchall()
+        assert len(rows)==7 and all(r[1] for r in rows)
         assert (await (await conn.execute('SELECT min(start_at) FROM companion_private.health_samples')).fetchone())[0].month==5
     # Snapshot epoch erasure participates in the same PG transaction and cascades to all six tables.
     await store.handle('commit',{'document':document('new-epoch'),'erase_receipts':True})
@@ -154,7 +154,8 @@ async def test_reserved_run_survives_restart_without_second_model_call(configure
         await conn.execute("UPDATE companion_private.pattern_runs SET status='running',engine='deterministic'")
     replacement=PatternCoordinator(c.service,store,lambda:model)
     response=await replacement.analyze(str(uuid4()))
-    assert response['status']=='running' and len(model.calls)==1
+    assert response['status']=='unavailable' and response['engine']=='deterministic' and len(model.calls)==1
+    assert response['findings']==first['findings']
 
 async def test_existing_free_gateway_actual_wire_shape_mocked(monkeypatch):
     import httpx
@@ -183,7 +184,7 @@ async def test_authenticated_http_vertical_slice_and_delete(pg_dsn,tmp_path):
     from companion.bootstrap import UnavailableSynthesis
     from companion.patterns import PatternOverview
     from test_auth_http import Harness,ISSUER
-    async with await psycopg.AsyncConnection.connect(pg_dsn,autocommit=True) as conn:await conn.execute(MIGRATION_V2)
+    async with await psycopg.AsyncConnection.connect(pg_dsn,autocommit=True) as conn:await conn.execute(MIGRATION_V3)
     runtime=PostgresRuntime(PostgresConfig(pg_dsn,local_test=True))
     await runtime.open()
     a=await runtime.identity(SimpleNamespace(issuer=ISSUER,subject='a'))
@@ -234,9 +235,10 @@ async def test_operator_lock_provider_batch_removal_and_unknown_fields(configure
             assert (await (await conn.execute('SELECT count(*) FROM companion_private.pattern_batches')).fetchone())[0]==0
 
 
-async def test_190_day_retention_preserves_initial_six_months_invalidates_expired_evidence(configured):
+async def test_190_day_retention_preserves_unaffected_review_attribution_and_request_binding(configured):
     runtime,a,b,store,c,model=configured
-    await c.analyze(str(uuid4()))
+    request_id=str(uuid4());review=await c.analyze(request_id)
+    corrected=await c.clarify(ClarifyRequest(schema_version='1',run_id=review['run_id'],concern_id='food_service',attribution='not_for_me'))
     async with c.transaction() as conn:
         before=(await (await conn.execute('SELECT count(*) FROM companion_private.health_samples')).fetchone())[0]
     await store.handle('commit',{'document':document()})
@@ -244,16 +246,94 @@ async def test_190_day_retention_preserves_initial_six_months_invalidates_expire
         assert (await (await conn.execute('SELECT count(*) FROM companion_private.health_samples')).fetchone())[0]==before
         await conn.execute("UPDATE companion_private.pattern_transactions SET event_at=now()-interval '191 days' WHERE transaction_id=(SELECT transaction_id FROM companion_private.pattern_transactions LIMIT 1)")
     await store.handle('commit',{'document':document()})
-    assert (await c.get())['status']=='not_analyzed'
+    retained=await c.get()
+    assert retained['run_id']==review['run_id'] and retained['findings']==corrected['findings']
+    assert (await c.analyze(request_id))['run_id']==review['run_id']
+    async with c.transaction() as conn:
+        assert (await (await conn.execute('SELECT count(*) FROM companion_private.pattern_requests WHERE request_id=%s',(request_id,))).fetchone())[0]==1
+    assert len(model.calls)==1
 
 
 def test_published_contract_matches_typed_allowlist_and_response():
     from pathlib import Path
-    from companion.patterns import PatternOverview,AnalyzeRequest
+    from companion.patterns import PatternOverview,AnalyzeRequest,BriefRequest
     schema=PatternOverview.model_json_schema();defs=schema.pop('$defs');defs['Overview']=schema
-    defs['Request']=AnalyzeRequest.model_json_schema();defs['ClarifyRequest']=ClarifyRequest.model_json_schema()
+    defs['Request']=AnalyzeRequest.model_json_schema();defs['ClarifyRequest']=ClarifyRequest.model_json_schema();defs['BriefRequest']=BriefRequest.model_json_schema()
+    from companion.health_ingestion import HealthIngestRequest
+    h=HealthIngestRequest.model_json_schema();defs.update(h.pop('$defs'));defs['HealthIngestRequest']=h
     published=json.loads((Path(__file__).resolve().parents[2]/'contracts/patterns.schema.json').read_text())
     assert published['$defs']==defs
     _,s,t=generate(NOW);dto=aggregate(s,t,NOW).model_dump()
     for change in [{'sample_count_bucket':'185'}, {'email':'private@example.invalid'}, {'recent':{**dto['recent'],'steps_average_bucket':9876}}]:
         with pytest.raises(ValidationError):Aggregate.model_validate({**dto,**change})
+
+@pytest.mark.parametrize('allowed',[[],['activity'],['activity','sleep'],['activity','sleep','food_service']])
+async def test_model_gets_exact_allowed_ids_zero_concerns_skip_call(allowed):
+    _,samples,tx=generate(NOW);dto=aggregate(samples,tx,NOW)
+    calls=[];factories=[]
+    class Exact:
+        async def ainvoke(self,messages,**kwargs):
+            calls.append(messages)
+            assert messages[0].content.endswith(json.dumps(sorted(allowed)))
+            return SimpleNamespace(content=json.dumps({'concern_ids':list(reversed(allowed))}))
+    def factory():factories.append(True);return Exact()
+    assert await model_review(dto,allowed,factory)==list(reversed(allowed))
+    assert len(calls)==len(factories)==(1 if allowed else 0)
+    class Wrong:
+        async def ainvoke(self,*args,**kwargs):return SimpleNamespace(content='{"concern_ids":["food_service","activity","sleep"]}')
+    if 0<len(allowed)<3:
+        with pytest.raises(ValueError):await model_review(dto,allowed,lambda:Wrong())
+
+async def test_recovery_does_not_mark_active_shared_session_invocation_orphan(configured):
+    runtime,a,b,store,c,model=configured
+    first=await c.analyze(str(uuid4()))
+    async with c.transaction() as conn:await conn.execute("UPDATE companion_private.pattern_runs SET status='running',engine='deterministic'")
+    store.pattern_active_runs.add(first['run_id'])
+    sibling=PatternCoordinator(c.service,store,lambda:model)
+    assert (await sibling.get())['status']=='running'
+    store.pattern_active_runs.clear()
+    assert (await sibling.get())['status']=='unavailable'
+    assert len(model.calls)==1
+
+async def test_actual_exclusive_session_restart_recovers_durable_reservation(configured):
+    runtime,a,b,store,c,model=configured
+    request_id=str(uuid4());first=await c.analyze(request_id)
+    async with c.transaction() as conn:await conn.execute("UPDATE companion_private.pattern_runs SET status='running',engine='deterministic'")
+    await store.handle('close',{})
+    restarted_store=PostgresPersistenceExtension(runtime,a)
+    restarted=PatternCoordinator(SimpleNamespace(lock=asyncio.Lock(),clock=lambda:NOW),restarted_store,lambda:model)
+    try:
+        replay=await restarted.analyze(request_id)
+        assert replay['status']=='unavailable' and replay['engine']=='deterministic'
+        assert replay['findings']==first['findings'] and replay['run_id']==first['run_id']
+        assert (await restarted.analyze(str(uuid4())))['run_id']==first['run_id']
+        assert len(model.calls)==1
+    finally:await restarted_store.handle('close',{})
+
+async def test_private_brief_edits_match_run_persist_and_never_reach_model(configured):
+    from companion.patterns import BriefRequest
+    runtime,a,b,store,c,model=configured
+    first=await c.analyze(str(uuid4()))
+    saved=await c.save_brief(BriefRequest(schema_version='1',run_id=first['run_id'],expected_brief=first['doctor_brief'],text='My private question for the clinician.'))
+    assert 'My private question' in saved['doctor_brief'] and saved['run_id']==first['run_id']
+    assert saved['doctor_brief'].startswith('SYNTHETIC HEALTH DEMO')
+    assert (await c.get())['doctor_brief']==saved['doctor_brief']
+    assert len(model.calls)==1 and 'My private question' not in str(model.calls)
+    with pytest.raises(Exception):
+        await c.save_brief(BriefRequest(schema_version='1',run_id=first['run_id'],expected_brief=first['doctor_brief'],text='Stale overwrite'))
+    corrected=await c.clarify(ClarifyRequest(schema_version='1',run_id=first['run_id'],concern_id='food_service',attribution='not_for_me'))
+    assert 'My private question' not in corrected['doctor_brief']
+    otherstore=PostgresPersistenceExtension(runtime,b)
+    other=PatternCoordinator(SimpleNamespace(lock=asyncio.Lock(),clock=lambda:NOW),otherstore,lambda:model)
+    try:
+        with pytest.raises(Exception):await other.save_brief(BriefRequest(schema_version='1',run_id=first['run_id'],expected_brief=saved['doctor_brief'],text='Cross-account'))
+    finally:await otherstore.handle('close',{})
+
+async def test_zero_concern_run_is_honestly_deterministic_without_model(configured):
+    runtime,a,b,store,c,model=configured
+    async with c.transaction() as conn:
+        await conn.execute("DELETE FROM companion_private.health_samples WHERE hk_type IN ('stepCount','sleepAnalysis')")
+        await conn.execute("UPDATE companion_private.pattern_transactions SET category='other'")
+    value=await c.analyze(str(uuid4()))
+    assert value['status']=='complete' and value['engine']=='deterministic' and value['findings']==[]
+    assert len(model.calls)==0

@@ -1,15 +1,15 @@
 """Explicit, additive operator migration; never applied by the runtime."""
-MIGRATION_V2 = r"""
+MIGRATION_V3 = r"""
 BEGIN;
 LOCK TABLE companion_private.schema_version IN EXCLUSIVE MODE;
 DO $$ BEGIN
- IF NOT EXISTS (SELECT 1 FROM companion_private.schema_version WHERE version IN (1,2)) THEN
-  RAISE EXCEPTION 'Expected private schema version 1 or 2';
+ IF NOT EXISTS (SELECT 1 FROM companion_private.schema_version WHERE version IN (1,2,3)) THEN
+  RAISE EXCEPTION 'Expected private schema version 1, 2 or 3';
  END IF;
 END $$;
 ALTER TABLE companion_private.schema_version DROP CONSTRAINT IF EXISTS schema_version_version_check;
-ALTER TABLE companion_private.schema_version ADD CONSTRAINT schema_version_version_check CHECK(version IN (1,2));
-UPDATE companion_private.schema_version SET version=2 WHERE version=1;
+ALTER TABLE companion_private.schema_version ADD CONSTRAINT schema_version_version_check CHECK(version IN (1,2,3));
+UPDATE companion_private.schema_version SET version=3 WHERE version IN (1,2);
 CREATE TABLE IF NOT EXISTS companion_private.pattern_batches (
  account_id uuid NOT NULL REFERENCES companion_private.accounts(account_id),
  batch_id uuid NOT NULL, dataset text NOT NULL CHECK(dataset ~ '^[a-z0-9-]{1,80}$'),
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS companion_private.health_samples (
  kind text NOT NULL CHECK(kind IN ('dailyCumulative','category','quantity','workout')),
  start_at timestamptz NOT NULL, end_at timestamptz NOT NULL CHECK(end_at>=start_at),
  timezone text NOT NULL, value double precision CHECK(value>=0 AND value<'Infinity'::float8),
- unit text CHECK(unit IN ('count','bpm')), category text CHECK(category IN ('inBed','asleepCore','asleepDeep','asleepREM','awake')),
+ unit text CHECK(unit IN ('count','bpm')), category text CHECK(category IN ('inBed','asleepCore','asleepDeep','asleepREM','awake','asleepUnspecified')),
  workout_activity text CHECK(workout_activity IN ('walking','running','cycling')),
  duration_seconds double precision CHECK(duration_seconds>=0), energy_kcal double precision CHECK(energy_kcal>=0),
  distance_m double precision CHECK(distance_m>=0), source_name text NOT NULL CHECK(length(source_name)<=80),
@@ -58,11 +58,28 @@ CREATE TABLE IF NOT EXISTS companion_private.pattern_insights (
  attribution text NOT NULL DEFAULT 'unconfirmed' CHECK(attribution IN ('unconfirmed','for_me','not_for_me','unsure')),
  rank integer NOT NULL CHECK(rank BETWEEN 0 AND 2), PRIMARY KEY(account_id,run_id,concern_id),
  FOREIGN KEY(account_id,run_id) REFERENCES companion_private.pattern_runs(account_id,run_id) ON DELETE CASCADE);
+ALTER TABLE companion_private.health_samples DROP CONSTRAINT IF EXISTS health_samples_category_check;
+ALTER TABLE companion_private.health_samples ADD CONSTRAINT health_samples_category_check CHECK(category IN ('inBed','asleepCore','asleepDeep','asleepREM','awake','asleepUnspecified'));
+ALTER TABLE companion_private.pattern_batches ADD COLUMN IF NOT EXISTS origin text NOT NULL DEFAULT 'operator' CHECK(origin IN ('operator','healthkit','plaid'));
+ALTER TABLE companion_private.pattern_batches ADD COLUMN IF NOT EXISTS active boolean NOT NULL DEFAULT true;
+ALTER TABLE companion_private.pattern_batches ADD COLUMN IF NOT EXISTS connection_id text;
+ALTER TABLE companion_private.pattern_batches ADD COLUMN IF NOT EXISTS bank_account_id text;
+ALTER TABLE companion_private.health_samples ADD COLUMN IF NOT EXISTS source_bundle text NOT NULL DEFAULT '';
+ALTER TABLE companion_private.health_samples ADD COLUMN IF NOT EXISTS source_revision text NOT NULL DEFAULT '';
+ALTER TABLE companion_private.health_samples ADD COLUMN IF NOT EXISTS deleted boolean NOT NULL DEFAULT false;
+ALTER TABLE companion_private.pattern_transactions ADD COLUMN IF NOT EXISTS deleted boolean NOT NULL DEFAULT false;
+ALTER TABLE companion_private.pattern_runs ADD COLUMN IF NOT EXISTS source_label text NOT NULL DEFAULT 'Previously saved review';
+ALTER TABLE companion_private.pattern_runs ADD COLUMN IF NOT EXISTS brief_override text CHECK(length(brief_override)<=4000);
+CREATE TABLE IF NOT EXISTS companion_private.health_import_pages (
+ account_id uuid NOT NULL REFERENCES companion_private.accounts(account_id), collection_id uuid NOT NULL,
+ page_index integer NOT NULL CHECK(page_index BETWEEN 0 AND 499), digest text NOT NULL,
+ body jsonb NOT NULL CHECK(octet_length(body::text)<=262144), received_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY(account_id,collection_id,page_index));
 CREATE INDEX IF NOT EXISTS health_sample_account_date_type ON companion_private.health_samples(account_id,start_at,hk_type);
 CREATE INDEX IF NOT EXISTS pattern_transaction_account_date ON companion_private.pattern_transactions(account_id,event_at,category);
 CREATE INDEX IF NOT EXISTS pattern_run_account_date ON companion_private.pattern_runs(account_id,analyzed_at DESC);
 DO $$ DECLARE t text; r text; BEGIN
- FOREACH t IN ARRAY ARRAY['pattern_batches','health_samples','pattern_transactions','pattern_runs','pattern_insights','pattern_requests'] LOOP
+ FOREACH t IN ARRAY ARRAY['pattern_batches','health_samples','pattern_transactions','pattern_runs','pattern_insights','pattern_requests','health_import_pages'] LOOP
   EXECUTE format('ALTER TABLE companion_private.%I ENABLE ROW LEVEL SECURITY',t);
   EXECUTE format('ALTER TABLE companion_private.%I FORCE ROW LEVEL SECURITY',t);
   EXECUTE format('DROP POLICY IF EXISTS account_scope ON companion_private.%I',t);
@@ -96,10 +113,10 @@ def main():
             row=c.execute('SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=%s',(a.runtime_role,)).fetchone()
             if row is None or any(row):raise ValueError('Restricted role required')
             # Keep reviewed DDL and role grants atomic; the exported script also works standalone.
-            ddl=MIGRATION_V2.strip().removeprefix('BEGIN;').removesuffix('COMMIT;')
+            ddl=MIGRATION_V3.strip().removeprefix('BEGIN;').removesuffix('COMMIT;')
             with c.transaction():
                 c.execute(ddl)
-                for table in ('pattern_batches','health_samples','pattern_transactions','pattern_runs','pattern_insights','pattern_requests'):
+                for table in ('pattern_batches','health_samples','pattern_transactions','pattern_runs','pattern_insights','pattern_requests','health_import_pages'):
                     c.execute(sql.SQL('GRANT SELECT,INSERT,UPDATE,DELETE ON companion_private.{} TO {}').format(sql.Identifier(table),sql.Identifier(a.runtime_role)))
         print('{"migration":"completed","runtime_grants":"scoped"}')
     except Exception:
