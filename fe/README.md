@@ -22,6 +22,10 @@ The UI runner chooses Xcode from explicit `DEVELOPER_DIR`, then a selected full 
 
 ## Build and core tests
 
+Normal Xcode Run uses the project's Debug active-destination architecture policy (`ONLY_ACTIVE_ARCH=YES`); Release uses all standard architectures (`NO`). This must match the local Swift package: otherwise a concrete simulator destination can build only the package's active module while the app also requests an unavailable second slice. The generator preserves this policy. No `ARCHS`, `EXCLUDED_ARCHS`, Swift include-path or framework-search-path workaround is needed.
+
+The missing-module failure was reproduced with a fresh concrete iOS 27.2 simulator Debug build, despite a successful generic build. After fixing the project/generator, fresh Debug and Release builds passed for both generic and concrete iOS 27.2 destinations with no command-line architecture, search-path or signing overrides. Evidence is under ignored `fe/evidence/module-fix`. This was not fixed by deleting user DerivedData or changing the package import.
+
 From the workspace root:
 
 ```sh
@@ -48,7 +52,7 @@ python3 fe/scripts/run-ui-smoke.py FullJourney --device "$DEVICE_ID"
 python3 fe/scripts/run-ui-smoke.py AnotherFullJourney
 ```
 
-Use a unique result name each time; previous failures are never overwritten. The default selected test is **RuntimeSmokeTests.testSyntheticUserJourney**, not the shorter continuation. The runner derives `ARCHS` from the host (arm64 or x86_64), uses its own DerivedData and disables parallel UI testing. The optional second positional argument preserves targeted invocation:
+Use a unique result name each time; previous failures are never overwritten. The default selected test is **RuntimeSmokeTests.testSyntheticUserJourney**, not the shorter continuation. The runner records the host architecture, uses its own DerivedData and disables parallel UI testing. It does not override `ARCHS` or `ONLY_ACTIVE_ARCH`; project defaults determine the build, just as for normal Xcode Run. The optional second positional argument preserves targeted invocation:
 
 ```sh
 python3 fe/scripts/run-ui-smoke.py IndependentSuppression testSuppressionDeletionAndPreview --device "$DEVICE_ID"

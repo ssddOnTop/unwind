@@ -27,7 +27,10 @@ resources=obj('resources','isa = PBXResourcesBuildPhase; buildActionMask = 21474
 projectconfigs=[]; targetconfigs=[]
 for config in ['Debug','Release']:
     debug=config=='Debug'
-    projectconfigs.append(obj('project-'+config,'isa = XCBuildConfiguration; name = '+config+'; buildSettings = { CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SDKROOT = iphoneos; SWIFT_VERSION = 6.0; };'))
+    # Match SwiftPM's standard Debug active-destination policy. Omitting this
+    # makes the app build both simulator slices while its local package builds one.
+    active = 'YES' if debug else 'NO'
+    projectconfigs.append(obj('project-'+config,'isa = XCBuildConfiguration; name = '+config+'; buildSettings = { CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SDKROOT = iphoneos; SWIFT_VERSION = 6.0; ONLY_ACTIVE_ARCH = '+active+'; };'))
     settings={'PRODUCT_NAME':'"$(TARGET_NAME)"','PRODUCT_BUNDLE_IDENTIFIER':'org.localcompanion.prototype','INFOPLIST_FILE':'App/Info.plist','GENERATE_INFOPLIST_FILE':'NO','CODE_SIGN_ENTITLEMENTS':'App/LocalCompanion.entitlements','CODE_SIGN_STYLE':'Automatic','TARGETED_DEVICE_FAMILY':'"1,2"','SUPPORTED_PLATFORMS':'"iphoneos iphonesimulator"','SUPPORTS_MACCATALYST':'NO','SWIFT_STRICT_CONCURRENCY':'complete','SWIFT_OPTIMIZATION_LEVEL':'"-Onone"' if debug else '"-O"','DEBUG_INFORMATION_FORMAT':'dwarf','LD_RUNPATH_SEARCH_PATHS':'"$(inherited) @executable_path/Frameworks"'}
     if debug: settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS']='DEBUG'
     targetconfigs.append(obj('target-'+config,'isa = XCBuildConfiguration; name = '+config+'; buildSettings = { '+' '.join(f'{k} = {v};' for k,v in settings.items())+' };'))

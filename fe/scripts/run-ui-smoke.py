@@ -90,7 +90,7 @@ def main():
     command = [str(developer/'usr/bin/xcodebuild'), '-project', str(root/'LocalCompanion.xcodeproj'),
                '-scheme', 'LocalCompanion', '-destination', 'platform=iOS Simulator,id=' + device,
                '-derivedDataPath', str(root/'evidence/UIDerivedData'), '-resultBundlePath', str(result),
-               '-parallel-testing-enabled', 'NO', 'ARCHS=' + architecture, 'ONLY_ACTIVE_ARCH=YES',
+               '-parallel-testing-enabled', 'NO',
                '-only-testing:LocalCompanionUITests/RuntimeSmokeTests/' + args.test_method, 'test']
     with open(ui/(args.result_name + '.txt'), 'w') as output:
         completed = subprocess.run(command, env=env, stdout=output, stderr=subprocess.STDOUT)
