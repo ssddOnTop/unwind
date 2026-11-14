@@ -295,3 +295,47 @@ async def test_shared_volume_lock_survives_pg_session_loss(runtime,tmp_path):
         await s.handle('close',{})
         assert (await contender.handle('load',{}))['state']['data_epoch']=='same-epoch'
     finally:await s.handle('close',{});await contender.handle('close',{})
+
+
+def test_migration_normalizes_legacy_owner_context_without_rewriting_source(tmp_path):
+    import sqlite3
+    from companion.domain import defaults
+    from companion.postgres_migrate_local import source_records, counts, Refused
+    from companion.vault import PrivateVault
+
+    root=tmp_path/'source';root.mkdir()
+    (root/'.auth-root').write_bytes(b'companion-auth-root-v1\n')
+    identifier=str(uuid4());directory=root/'users'/identifier;directory.mkdir(parents=True)
+    with sqlite3.connect(root/'identities.sqlite') as conn:
+        conn.execute('CREATE TABLE identities(account_id TEXT,issuer TEXT,subject TEXT)')
+        conn.execute('INSERT INTO identities VALUES(?,?,?)',(identifier,'https://issuer.invalid','synthetic-subject'))
+    state=defaults(datetime(2026,11,14,tzinfo=timezone.utc))
+    item='synthetic-existing-item'
+    sealed=PrivateVault(directory).seal({'item_id':item,'epoch':state['data_epoch'],
+        'access_token':'access-sandbox-synthetic-only','records':{},'cursor':None})
+    original={'state':state,'meta':{'plaid_connected':True,'plaid_vault':sealed}}
+    database=directory/'state.sqlite'
+    with sqlite3.connect(database) as conn:
+        conn.execute('CREATE TABLE snapshot(id INTEGER PRIMARY KEY,body TEXT)')
+        conn.execute('CREATE TABLE receipts(epoch TEXT,route TEXT,request_id TEXT,digest TEXT,response TEXT,created_at TEXT)')
+        conn.execute('INSERT INTO snapshot VALUES(1,?)',(json.dumps(original),))
+    source_bytes=database.read_bytes()
+    imported=source_records(root)
+    assert len(imported)==1
+    expected=deepcopy(original);expected['meta']['plaid_item_id']=item
+    assert imported[0]['document']==expected
+    assert PostgresPersistenceExtension.contexts(imported[0]['document'])=={item:0}
+    assert imported[0]['items']==[(item,state['data_epoch'],1,True)]
+    assert counts(imported)['normalized_legacy_owners']==1
+    assert database.read_bytes()==source_bytes
+    # Never overwrite a conflicting plaintext owner with decrypted metadata.
+    original['meta']['plaid_item_id']='different-synthetic-item'
+    with sqlite3.connect(database) as conn:
+        conn.execute('UPDATE snapshot SET body=?',(json.dumps(original),))
+    with pytest.raises(Refused):source_records(root)
+    # Missing metadata is not filled from a vault for a different data epoch.
+    original['meta'].pop('plaid_item_id')
+    original['state']['data_epoch']=str(uuid4())
+    with sqlite3.connect(database) as conn:
+        conn.execute('UPDATE snapshot SET body=?',(json.dumps(original),))
+    with pytest.raises(Refused):source_records(root)

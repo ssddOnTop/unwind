@@ -81,7 +81,7 @@ def source_records(root):
         require(identifier not in seen);seen.add(identifier)
         path=root/'users'/identifier
         require(not path.is_symlink())
-        document=None;receipts=[];items={}
+        document=None;receipts=[];items={};normalized_legacy_owner=False
         if (path/'state.sqlite').exists():
             with closing(read_db(path/'state.sqlite')) as conn:
                 row=conn.execute('SELECT body FROM snapshot WHERE id=1').fetchone()
@@ -104,6 +104,12 @@ def source_records(root):
                     require(not meta.get('plaid_item_id') or meta['plaid_item_id']==item_id)
                     remember(item_id,meta.get('plaid_connected',False),meta.get('plaid_generation',1))
                 require(not meta.get('plaid_connected') or item_id)
+                if meta.get('plaid_connected') and 'plaid_item_id' not in meta:
+                    # Normalize only the import representation, never the source DB.
+                    # Runtime ownership checks need this key before lazy upgrade.
+                    require(private.get('item_id')==item_id and private.get('epoch')==epoch and private.get('access_token'))
+                    meta['plaid_item_id']=item_id;normalized_legacy_owner=True
+                require(not meta.get('plaid_connected') or meta.get('plaid_item_id'))
             pending=vault.pending();item=pending.get('item') or pending.get('connection')
             if item and item.get('item_id'):remember(item['item_id'],False,0,pending.get('epoch',epoch))
             for r in receipts:
@@ -112,14 +118,15 @@ def source_records(root):
                     for field in ('plaid_receipt','banking_receipt'):
                         if field in r[4]:require(bool(vault.open(r[4][field])))
         else:require(not receipts)
-        records.append({'id':identifier,'issuer':issuer,'subject':subject,'path':path,'document':document,'receipts':receipts,'items':list(items.values())})
+        records.append({'id':identifier,'issuer':issuer,'subject':subject,'path':path,'document':document,'receipts':receipts,'items':list(items.values()),'normalized_legacy_owner':normalized_legacy_owner})
     if (root/'users').exists():
         require(all(p.is_dir() and not p.is_symlink() and p.name in seen for p in (root/'users').iterdir()))
     return records
 
 
 def counts(records):
-    return {'users':len(records),'snapshots':sum(bool(r['document']) for r in records),
+    return {'users':len(records),'normalized_legacy_owners':sum(r['normalized_legacy_owner'] for r in records),
+        'snapshots':sum(bool(r['document']) for r in records),
         'observations':sum(len(r['document']['state']['observations']) for r in records if r['document']),
         'receipts':sum(len(r['receipts']) for r in records),'items':sum(len(r['items']) for r in records),
         'experience_answers':sum(len(r['document']['meta'].get('experience_answers',[])) for r in records if r['document'])}
