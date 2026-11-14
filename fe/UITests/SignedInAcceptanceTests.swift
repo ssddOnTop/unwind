@@ -7,6 +7,66 @@ final class SignedInAcceptanceTests: XCTestCase {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
     }
+    /// Presentation-only verification of an already completed populated review.
+    /// Never analyzes, refreshes providers, answers context, edits notes, or copies private text.
+    @MainActor func testExistingPopulatedPatternReviewReadOnly() throws {
+        guard ProcessInfo.processInfo.environment["COMPANION_VERIFY_EXISTING_PATTERN_REVIEW"] == "YES" else {
+            throw XCTSkip("Requires an existing completed review and an explicitly idle simulator")
+        }
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.activate()
+        let expand = app.buttons["experience.visit.expand"]
+        if !expand.exists {
+            XCTAssertTrue(app.tabBars.buttons["Today"].isHittable)
+            app.tabBars.buttons["Today"].tap()
+            let brief = app.buttons["Prepare an optional doctor question"]
+            for _ in 0..<8 { if brief.isHittable { break }; app.swipeUp() }
+            XCTAssertTrue(brief.isHittable); brief.tap()
+        }
+        XCTAssertTrue(expand.waitForExistence(timeout: 5))
+        if expand.label == "Read your brief" { expand.tap() }
+        capture("populated-brief-top-private", app: app)
+        app.swipeUp(); capture("populated-brief-middle-private", app: app)
+        app.swipeUp(); capture("populated-brief-bottom-private", app: app)
+        XCTAssertTrue(app.buttons["Edit a copy"].exists, "Editing affordance only; do not activate it")
+        app.navigationBars.buttons["Done"].tap()
+        app.tabBars.buttons["Today"].tap()
+        for _ in 0..<4 { app.swipeDown() }
+        capture("populated-home-top-private", app: app)
+        app.swipeUp(); capture("populated-home-middle-private", app: app)
+        app.swipeUp(); capture("populated-home-bottom-private", app: app)
+        app.tabBars.buttons["Ledger"].tap()
+        // Preserve user state while returning from an already-open evidence detail.
+        for _ in 0..<3 {
+            if app.navigationBars["Inference history"].exists { break }
+            // UIKit labels the back control with its previous destination title.
+            let back = app.navigationBars.buttons.firstMatch
+            guard back.isHittable else { break }
+            back.tap()
+        }
+        XCTAssertTrue(app.navigationBars["Inference history"].waitForExistence(timeout: 5))
+        for _ in 0..<3 { app.swipeDown() }
+        capture("populated-ledger-top-private", app: app)
+        let finding = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Lower recorded activity")).firstMatch
+        for _ in 0..<5 { if finding.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(finding.isHittable)
+        let matchCount = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Lower recorded activity")).count
+        let target = XCTAttachment(string: "Target label: \(finding.label)\nTarget frame: \(finding.frame)\nMatching elements: \(matchCount)")
+        target.name = "finding-navigation-target-private"; target.lifetime = .keepAlways; add(target)
+        finding.tap()
+        let correctFinding = app.navigationBars["Lower recorded activity"].waitForExistence(timeout: 3)
+        capture("populated-evidence-top-private", app: app)
+        // Assert after read-only cleanup: XCTest's stop-on-failure does not reliably run defer.
+        app.swipeUp(); capture("populated-evidence-bottom-private", app: app)
+        let context = app.buttons["Were these records mostly about you?"]
+        if context.isHittable { context.tap(); capture("populated-context-options-private", app: app) }
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.tabBars.buttons["Today"].tap()
+        for _ in 0..<4 { app.swipeDown() }
+        capture("populated-home-final-private", app: app)
+        XCTAssertTrue(correctFinding, "The selected activity finding must open its own detail, not another finding")
+    }
+
     @MainActor func testCurrentSessionHomeSettingsLedger() throws {
         continueAfterFailure = false
         let app = XCUIApplication(); app.activate()
