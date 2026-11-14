@@ -11,8 +11,6 @@
 !contracts/
 !contracts/state.schema.json
 !contracts/scenarios.json
-!contracts/state.example.json
-!contracts/observation-batch.example.json
 !contracts/plaid.schema.json
 !contracts/experience.schema.json
 !contracts/banking.schema.json

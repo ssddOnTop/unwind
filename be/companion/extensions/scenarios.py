@@ -2,7 +2,8 @@
 from copy import deepcopy
 from datetime import date, timedelta
 
-from ..contracts import EXAMPLE, RULES
+from ..contracts import RULES
+from ..templates import CARDS, SUGGESTIONS
 from ..domain import active, instant, ref, refkey, zone
 
 
@@ -24,7 +25,7 @@ class ScenariosExtension:
         usable = [o for o in active(s["observations"]) if sources[o["source_id"]]["enabled"] and sources[o["source_id"]]["consent"] == "granted"]
         wrong_zone = any(o["timezone"] != p["timezone"] for o in usable)
         usable = [o for o in usable if o["timezone"] == p["timezone"]]
-        cards = deepcopy(EXAMPLE["ledger"])
+        cards = deepcopy(CARDS)
         old = {c["id"]: c for c in s["ledger"]}
         for c in cards:
             c.update(revision=1, evidence=[], feedback_ids=[], suggestion=None, inferred=None,
@@ -63,7 +64,7 @@ class ScenariosExtension:
         if len(eligible_dates) != len(rows):
             purchase["limitations"].append("Shared, unknown, other, or disputed transaction context cannot establish personal suggestion eligibility.")
         if recurrent(set(eligible_dates)):
-            purchase["suggestion"] = deepcopy(EXAMPLE["ledger"][0]["suggestion"])
+            purchase["suggestion"] = deepcopy(SUGGESTIONS["purchase_recurrence"])
         start, end = today - timedelta(days=RULES["recorded_steps"]["completed_local_days"]), today - timedelta(days=1)
         steps["window"].update(start_date=start.isoformat(), end_date=end.isoformat())
         source_id = "healthkit" if sources["healthkit"]["enabled"] and sources["healthkit"]["consent"] == "granted" else "demo"
@@ -76,7 +77,7 @@ class ScenariosExtension:
             label = "synthetic connected" if source_id == "demo" else "connected"
             steps.update(status="observed", recorded_steps=total,
                 observed=f"From {start} through {end}, {label} records contain {total} steps on {days} of 7 dates. That does not mean those dates were fully tracked. Unrecorded activity is unknown.")
-            steps["suggestion"] = deepcopy(EXAMPLE["ledger"][1]["suggestion"])
+            steps["suggestion"] = deepcopy(SUGGESTIONS["recorded_steps"])
             steps["suggestion"].update(status="eligible", reason=None)
         for c in cards[:2]:
             relevant = [f for f in s["feedback"] if f["card_id"] == c["id"] and (f["event_ref"] is None or f["event_ref"] in c["evidence"])]
@@ -109,7 +110,7 @@ class ScenariosExtension:
                         candidate.update(status="unavailable", reason="correctness_feedback")
         pref.update(status="observed", window={"start_date": today.isoformat(), "end_date": today.isoformat(), "timezone": p["timezone"]})
         if p["movement_restriction"]:
-            pref["observed"] = EXAMPLE["ledger"][2]["observed"]
+            pref["observed"] = "You asked us to avoid movement suggestions. Recorded observations are unchanged; the movement suggestion is suppressed."
         else:
             pref["observed"] = "Your explicit preferences apply immediately. Recorded observations are unchanged."
         if not any(c["suggestion"] and c["suggestion"]["status"] == "eligible" for c in cards[:2]):

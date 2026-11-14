@@ -273,10 +273,10 @@ struct CloudConsentSection: View {
         Section {
             Toggle("Allow cloud suggestions", isOn: Binding(get: { isEnabled }, set: { onChange($0) }))
                 .disabled(isBusy)
-            Text("Optional wording from sample records. Separate from your bank and Health connections.")
+            Text("Optional wording from eligible Sandbox coverage summaries. Separate from your bank and Health connections.")
                 .font(.subheadline).foregroundStyle(.secondary)
         } header: {
-            HStack { Text("Cloud sharing"); Spacer(); AccessibleInfoPopover(title: "Cloud sharing", message: "Off by default. Enabling this allows sample records to be sent to an external AI service for optional wording. Live Apple Health records are excluded. Bank consent never turns this on, and you can turn it off at any time.") }
+            HStack { Text("Cloud sharing"); Spacer(); AccessibleInfoPopover(title: "Cloud sharing", message: "Off by default. Enabling this allows eligible Sandbox coverage summaries to be sent to an external AI service for optional wording. Live Apple Health records are excluded. Bank consent never turns this on, and you can turn it off at any time.") }
         }
     }
 }

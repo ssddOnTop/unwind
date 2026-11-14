@@ -9,12 +9,13 @@ from fastapi.testclient import TestClient
 import pytest
 
 from companion.bootstrap import UnavailableSynthesis
-from companion.contracts import BATCH, validate
+from companion.contracts import validate
+from sample_data import BATCH
 from companion.domain import iso
 from companion.experience_contracts import validate_experience
 from companion.extensions.experience import ExperienceExtension
 from companion.extensions.persistence import PersistenceExtension
-from companion.http import create_app
+from sample_data import create_app
 from test_backend import NOW, batch, feedback, prefs, request, revision, state
 from test_plaid import Provider, page, transaction
 from companion.connections.plaid import PlaidSandboxClient, SandboxCredentials

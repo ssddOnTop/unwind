@@ -10,8 +10,6 @@ ROOT = Path(__file__).resolve().parents[2]
 CONTRACTS = ROOT / "contracts"
 SCHEMA = json.loads((CONTRACTS / "state.schema.json").read_text())
 RULES = json.loads((CONTRACTS / "scenarios.json").read_text())
-EXAMPLE = json.loads((CONTRACTS / "state.example.json").read_text())
-BATCH = json.loads((CONTRACTS / "observation-batch.example.json").read_text())
 
 
 class DomainError(Exception):

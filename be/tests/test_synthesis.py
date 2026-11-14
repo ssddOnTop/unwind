@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @pytest.fixture(autouse=True)
 def offline(monkeypatch):
+    from scripted_models import _scripted_models
+    monkeypatch.setattr(module, "_scripted_models", _scripted_models)
     for key in ("COMPANION_LLM_PROVIDER", "COMPANION_LLM_MODEL", "OPENROUTER_API_KEY", "REQUESTY_API_KEY"):
         monkeypatch.delenv(key, raising=False)
 
@@ -43,7 +45,7 @@ def checkpoint():
 
 @pytest.fixture
 def payload():
-    state = json.loads((ROOT / "contracts/state.example.json").read_text())
+    state = json.loads((ROOT / "be/tests/fixtures/state.example.json").read_text())
     return {"mode": "scripted", "run_id": "sdk-test-run", "data_epoch": state["data_epoch"],
             "state_revision": state["revision"], "state": state}
 
@@ -119,7 +121,7 @@ from pathlib import Path
 from companion.extensions import synthesis as m
 socket.socket.connect=lambda *a,**k: (_ for _ in ()).throw(AssertionError('network'))
 p=json.loads(sys.stdin.read())
-original=m._scripted_models
+from scripted_models import _scripted_models as original
 def empty_models(*args):
     parent,child=original(*args)
     parent.responses=[]
@@ -128,7 +130,7 @@ def empty_models(*args):
 m._scripted_models=empty_models
 print(json.dumps(asyncio.run(m.SynthesisExtension(Path(sys.argv[1])).handle('synthesize',p))))
 '''
-    env = {**os.environ, "PYTHONPATH": str(ROOT / "be"), "PYTHONDONTWRITEBYTECODE": "1"}
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "be") + os.pathsep + str(ROOT / "be/tests"), "PYTHONDONTWRITEBYTECODE": "1"}
     completed = subprocess.run([sys.executable, "-c", script, str(checkpoint)], input=json.dumps(payload),
                                text=True, capture_output=True, check=True, env=env, cwd=ROOT, timeout=20)
     assert json.loads(completed.stdout) == first
@@ -948,7 +950,7 @@ def test_sandbox_import_trust_and_public_upload_rejection(checkpoint):
     import httpx
     from companion.connections.plaid import PlaidSandboxClient, SandboxCredentials
     from companion.extensions.plaid import PlaidExtension
-    from companion.http import create_app
+    from sample_data import create_app
 
     async def provider(request):
         assert request.url.host == "sandbox.plaid.com"
@@ -1010,7 +1012,7 @@ def test_sandbox_import_trust_and_public_upload_rejection(checkpoint):
                         "observations": [forged], "source_updates": []})
                     assert response.status_code in {409, 422}, response.text
                     assert (await client.get("/state")).json() == before
-                batch = json.loads((ROOT / "contracts/observation-batch.example.json").read_text())
+                batch = json.loads((ROOT / "be/tests/fixtures/observation-batch.example.json").read_text())
                 update = copy.deepcopy(batch["source_updates"][0])
                 update["source_id"] = "plaid"
                 response = await client.post("/observations", json={**common, "request_id": "forged-source",
@@ -1022,7 +1024,7 @@ def test_sandbox_import_trust_and_public_upload_rejection(checkpoint):
 
 
 def test_bootstrap_process_and_delete_integration(checkpoint):
-    from companion.bootstrap import build_service
+    from sample_data import build_service
 
     async def exercise():
         service = build_service(checkpoint.parent)

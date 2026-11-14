@@ -10,8 +10,9 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from companion import http
-from companion.bootstrap import build_service
-from companion.contracts import BATCH, DomainError, EXAMPLE, validate
+from sample_data import build_service, create_app
+from companion.contracts import DomainError, validate
+from sample_data import BATCH, EXAMPLE
 from companion.daily import DailyCoordinator
 from companion.domain import iso, synthesis
 
@@ -21,6 +22,9 @@ DAY = timedelta(hours=24)
 
 @pytest.fixture(autouse=True)
 def offline(monkeypatch):
+    from companion.extensions import synthesis as module
+    from scripted_models import _scripted_models
+    monkeypatch.setattr(module, "_scripted_models", _scripted_models)
     for name in ("COMPANION_DAILY_SYNTHESIS_MODE", "COMPANION_LLM_PROVIDER", "COMPANION_LLM_MODEL",
                  "OPENROUTER_API_KEY", "REQUESTY_API_KEY", "LANGSMITH_API_KEY"):
         monkeypatch.delenv(name, raising=False)
@@ -377,7 +381,7 @@ async def test_lifespan_immediate_tick_on_persisted_seed(persisted_demo, houseke
         return result
 
     monkeypatch.setattr(DailyCoordinator, "tick", observe_tick)
-    app = http.create_app(path, clock=lambda: NOW + DAY, housekeeping_interval=86400)
+    app = create_app(path, clock=lambda: NOW + DAY, housekeeping_interval=86400)
     async with app.router.lifespan_context(app):
         await asyncio.wait_for(housekeeping_sleep.wait(), timeout=5)
         assert ticked.is_set(), "Coordinator must tick before the first housekeeping sleep"
@@ -416,7 +420,7 @@ async def test_lifespan_shutdown_cancels_active_daily_work(persisted_demo, house
 
     extension = BlockingSynthesis()
     extension.release.clear()
-    app = http.create_app(path, replacements={"synthesis": extension}, clock=lambda: NOW + DAY)
+    app = create_app(path, replacements={"synthesis": extension}, clock=lambda: NOW + DAY)
     lifespan = app.router.lifespan_context(app)
     await lifespan.__aenter__()
     try:

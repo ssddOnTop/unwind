@@ -123,7 +123,7 @@ struct CardSummary: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(verbatim: card.title).font(.headline)
             Text(verbatim: card.observed).foregroundStyle(.secondary)
-            if card.mode == "fixture" { Text("Sample data").font(.caption) }
+            if card.mode == "fixture" { Text("Sandbox records").font(.caption) }
         }.padding(.vertical, 4)
     }
 }
@@ -133,16 +133,79 @@ struct LedgerView: View {
     var body: some View {
         NavigationStack {
             List {
-                if let state = model.state {
-                    ForEach(state.ledger, id: \.id) { card in
-                        NavigationLink { LedgerDetail(model: model, cardID: card.id) } label: { CardSummary(card: card) }
+                if let value = model.experience {
+                    ForEach(value.inference_history.reversed(), id: \.id) { entry in
+                        NavigationLink { InferenceHistoryDetail(entry: entry) } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(verbatim: entry.title).font(.headline)
+                                Text(verbatim: entry.inference).foregroundStyle(.secondary)
+                                Text(verbatim: entry.status.capitalized).font(.caption)
+                                InferenceTimestamp(value: entry.inferred_at)
+                            }.padding(.vertical, 4)
+                        }
                     }
-                    if state.ledger.isEmpty { Text("Your records will appear here when available.") }
-                } else { Text("Your records are not available yet. Try refreshing.") }
-            }.navigationTitle("Ledger").accessibilityIdentifier("app.ledger")
+                    if value.inference_history.isEmpty {
+                        Text("No inferences yet.").font(.headline)
+                        Text("When your records support a possible pattern, its explanation and supporting evidence will appear here.")
+                    }
+                } else {
+                    Text("Inference history is not available yet. Try refreshing.")
+                }
+                if let issue = model.message { Text(verbatim: issue).foregroundStyle(.red) }
+            }.navigationTitle("Inference history").accessibilityIdentifier("app.ledger")
+                // Home may open a current supported suggestion directly; it is
+                // not an activity-feed row or a fabricated history entry.
                 .navigationDestination(item: $selectedCard) { id in LedgerDetail(model: model, cardID: id) }
                 .refreshable { await model.refresh() }
-                .toolbar { AccessibleInfoPopover(title: "Ledger", message: "Evidence behind your observations lives here. Records may be incomplete; purchases do not prove what you ate, and missing activity is not zero activity.") }
+                .toolbar { AccessibleInfoPopover(title: "Inference history", message: "What was inferred, why, and when it was saved. Historical interpretations may no longer apply. Disabled bank accounts can remain in history without supporting new suggestions.") }
         }
+    }
+}
+
+private struct InferenceTimestamp: View {
+    let value: String?
+    var body: some View {
+        if let value, let date = ISO8601DateFormatter().date(from: value) ?? fractionalDate(value) {
+            Text(date.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+                .accessibilityLabel("Inferred " + date.formatted(date: .complete, time: .standard))
+        } else {
+            Text("Inference time not recorded").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+    private func fractionalDate(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: value)
+    }
+}
+
+private struct InferenceHistoryDetail: View {
+    let entry: ExperienceInferenceEntry
+    var body: some View {
+        List {
+            Section("What was inferred") {
+                Text(verbatim: entry.inference)
+                Text(verbatim: entry.status.capitalized).font(.caption)
+            }
+            Section("Why") {
+                Text(verbatim: entry.explanation)
+                ForEach(entry.context, id: \.self) { Text(verbatim: $0) }
+            }
+            Section("When") { InferenceTimestamp(value: entry.inferred_at) }
+            Section("Supporting observed evidence") {
+                ForEach(entry.evidence, id: \.observation_id) { evidence in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(verbatim: evidence.date).font(.headline)
+                        Text(verbatim: evidence.source).font(.caption)
+                        Text(verbatim: evidence.summary)
+                    }
+                }
+            }
+            Section("How it was produced") {
+                Text(verbatim: entry.method)
+                Text("Rule version " + entry.rule_version).font(.caption)
+                AccessibleInfoPopover(title: "Historical interpretation", message: "This is a saved interpretation, not a current recommendation or diagnosis. Evidence and your corrections can change what applies now.")
+            }
+        }.navigationTitle(entry.title)
     }
 }

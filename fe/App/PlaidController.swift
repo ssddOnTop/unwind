@@ -216,7 +216,7 @@ import LinkKit
                 let reply = try await request(.disconnect, epoch: epoch)
                 stateChanged?()
                 guard id == ticket, case .disconnected(let status) = reply.result else { return }
-                message = status == "disconnected" ? "Sandbox disconnected. Historical fixture evidence remains until retention/deletion." : "Consent revoked; remote removal pending. Retry Disconnect explicitly. No further collection is allowed."
+                message = status == "disconnected" ? "Sandbox disconnected. Historical Sandbox evidence remains until retention/deletion." : "Consent revoked; remote removal pending. Retry Disconnect explicitly. No further collection is allowed."
             } catch { await handleFailure(error, id: id) }
             if id == ticket { working = false; revoking = false }
         }
@@ -252,7 +252,7 @@ struct PlaidSettingsSection: View {
             Button("Consent and open native Sandbox Link") { controller.connect() }
             Button("Cancel", role: .cancel) {}
         }
-        .confirmationDialog("Revoke Sandbox consent and remove the connection? Historical normalized fixtures remain until deletion or retention.", isPresented: $revoke, titleVisibility: .visible) {
+        .confirmationDialog("Revoke Sandbox consent and remove the connection? Historical Sandbox records remain until deletion or retention.", isPresented: $revoke, titleVisibility: .visible) {
             Button("Disconnect Sandbox", role: .destructive) { controller.disconnect() }
             Button("Cancel", role: .cancel) {}
         }

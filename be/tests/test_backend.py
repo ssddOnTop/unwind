@@ -12,11 +12,13 @@ from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator, FormatChecker
 import pytest
 
-from companion.bootstrap import UnavailableSynthesis, build_service
-from companion.contracts import BATCH, EXAMPLE, SCHEMA, validate
+from companion.bootstrap import UnavailableSynthesis
+from sample_data import build_service
+from companion.contracts import SCHEMA, validate
+from sample_data import BATCH, EXAMPLE
 from companion.core import Registry
 from companion.domain import iso, synthesis
-from companion.http import create_app
+from sample_data import create_app
 from companion.scheduling import NotificationScheduler
 
 NOW = datetime(2026, 11, 14, 12, tzinfo=timezone.utc)

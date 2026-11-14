@@ -21,7 +21,7 @@ RUN groupadd --gid 10001 companion \
 WORKDIR /app/be
 COPY --from=dependencies /app/be/.venv /app/be/.venv
 COPY be/companion /app/be/companion
-# Source imports resolve parents[2] to /app; these seven JSON files are loaded at runtime.
+# Only schemas and rules ship; example records live exclusively in test targets.
 COPY contracts/*.json /app/contracts/
 USER 10001:10001
 EXPOSE 8000

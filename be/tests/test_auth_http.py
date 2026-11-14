@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from companion.auth import AuthConfig, AuthConfigurationError, AuthVerifier, JWKSCache
 from companion.auth_http import create_authenticated_app
 from companion.bootstrap import UnavailableSynthesis
-from companion.contracts import BATCH
+from sample_data import BATCH
 from companion.http import create_app
 
 NOW = datetime(2026, 11, 14, 12, tzinfo=timezone.utc)
@@ -100,6 +100,8 @@ class Harness:
             housekeeping_interval=3600, plaid_profile=self.plaid_profile,
             experience_profile=self.experience_profile)
         service = child.state.service
+        from sample_data import enable_test_fixtures
+        enable_test_fixtures(service)
         original_start, original_close, original_housekeep = service.start, service.close, service.housekeep
 
         async def start():
@@ -334,6 +336,8 @@ async def seed(h, user):
     """Seed via internal service handle, not an HTTP demo/seed endpoint."""
     handle = await h.handle(user)
     service = handle.service.app.state.service
+    from sample_data import enable_test_fixtures
+    enable_test_fixtures(service)
     async with service.lock:
         document = deepcopy(service.document)
         document["state"]["data_epoch"] = EPOCH

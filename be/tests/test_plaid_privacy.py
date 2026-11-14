@@ -11,7 +11,8 @@ import httpx
 import pytest
 
 from companion.connections.plaid import PlaidSandboxClient, SandboxCredentials
-from companion.contracts import BATCH, DomainError
+from companion.contracts import DomainError
+from sample_data import BATCH
 from companion.domain import iso
 from companion.plaid_contracts import validate_profile
 from test_backend import NOW
@@ -24,7 +25,7 @@ def test_401_disables_provider_without_other_environment(tmp_path):
         paths.append(str(request.url))
         return httpx.Response(401, json={"error_code":"INVALID_API_KEYS", "error_message":"PRIVATE_ERROR"})
     from companion.extensions.plaid import PlaidExtension
-    from companion.http import create_app
+    from sample_data import create_app
     from companion.bootstrap import UnavailableSynthesis
     extension=PlaidExtension(tmp_path, PlaidSandboxClient(SandboxCredentials('synthetic','synthetic'),httpx.MockTransport(handler)))
     app=create_app(tmp_path,plaid_profile=True,replacements={'plaid':extension,'synthesis':UnavailableSynthesis()},clock=lambda:NOW)
@@ -77,7 +78,10 @@ def test_profile_all_existing_state_routes_and_forged_observations(tmp_path):
 
 def test_demo_to_plaid_exits_fixed_clock_and_does_not_merge_purchase_sources(tmp_path):
     provider=Provider(); clock=[NOW+timedelta(hours=18)]
-    with TestClient(app_for(tmp_path,provider,clock=lambda:clock[0]),base_url='http://127.0.0.1') as c:
+    from sample_data import enable_test_fixtures
+    app = app_for(tmp_path,provider,clock=lambda:clock[0])
+    enable_test_fixtures(app.state.service)
+    with TestClient(app,base_url='http://127.0.0.1') as c:
         s=get_state(c)
         r=c.post('/demo',json={'schema_version':'1','request_id':'demo','data_epoch':s['data_epoch'],'action':'seed','fixture_set':'representative-v1','consent_demo':True})
         assert r.status_code==200 and r.json()['ledger'][0]['purchase_count']==3

@@ -12,8 +12,10 @@ from uuid import uuid4
 
 import pytest
 
-from companion.bootstrap import UnavailableSynthesis, build_service
-from companion.contracts import BATCH, RULES, validate
+from companion.bootstrap import UnavailableSynthesis
+from sample_data import build_service
+from companion.contracts import RULES, validate
+from sample_data import BATCH
 
 
 NOW = datetime(2026, 11, 14, 12, tzinfo=timezone.utc)

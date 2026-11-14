@@ -6,7 +6,8 @@ import json
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 
-from companion.contracts import EXAMPLE, RULES
+from companion.contracts import RULES
+from sample_data import EXAMPLE
 from companion.domain import iso, ref
 from companion.experience_contracts import EXPERIENCE_SCHEMA, validate_experience
 from companion.extensions.experience import project, ExperienceExtension, DEMO_LABEL

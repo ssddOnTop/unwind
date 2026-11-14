@@ -27,7 +27,7 @@ CARD_IDS = ["purchase_recurrence", "recorded_steps", "preference_filter"]
 
 
 def fixture(name):
-    return json.loads((CONTRACTS / name).read_text())
+    return json.loads((ROOT / "be/tests/fixtures" / name).read_text())
 
 
 def schema_errors(definition, value):

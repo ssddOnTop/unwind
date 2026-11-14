@@ -19,6 +19,7 @@ class CompanionService:
         self.document = {}
         self.synthesis_task = None
         self.required_failure = False
+        self.allow_fixture_data = False  # Test adapters may explicitly opt in; never a deployment flag.
         self.plaid_coordinator = None
         self.experience_coordinator = None
         self.banking_coordinator = None
@@ -34,11 +35,14 @@ class CompanionService:
 
     def now(self, document=None):
         doc = document or self.document
-        frozen = doc.get("meta", {}).get("fixture_session") and self.demo_only(doc)
+        frozen = self.allow_fixture_data and doc.get("meta", {}).get("fixture_session") and self.demo_only(doc)
         return instant(RULES["demo"]["now_utc"]) if frozen else self.clock()
 
     def eligible_state(self, doc):
         state = deepcopy(doc['state'])
+        if not self.allow_fixture_data:
+            state['observations'] = [o for o in state['observations']
+                if o['source_id'] != 'demo' and o['provenance']['adapter'] != 'demo_fixture']
         excluded = set(doc.get('meta', {}).get('banking_excluded_ids', []))
         if excluded:
             state['observations'] = [o for o in state['observations'] if o['id'] not in excluded]
@@ -65,6 +69,7 @@ class CompanionService:
         if self.experience_coordinator:
             doc["meta"]["experience_review_ready"] = True
             await self.experience_coordinator.reconcile(doc)
+            await self.experience_coordinator.capture_history(doc)
 
     async def commit(self, doc, receipt=None, erase=False, recover=False, bump=True):
         if bump:
@@ -74,6 +79,7 @@ class CompanionService:
         if self.experience_coordinator:
             previous = self.document.get("meta", {}).get("experience_answers", [])
             await self.experience_coordinator.reconcile(doc)
+            await self.experience_coordinator.capture_history(doc)
             current_keys = {a["key"] for a in doc["meta"]["experience_answers"]}
             erase_experience = any(a["key"] not in current_keys for a in previous)
             # A cached brief can include a different source from the answer's
@@ -191,6 +197,11 @@ class CompanionService:
         return None
 
     async def mutate(self, route, body):
+        if not self.allow_fixture_data:
+            if route == '/demo' or route == '/preferences' and 'demo' in body['preferences']['enabled_source_ids']:
+                raise DomainError('not_configured', 409)
+            if route == '/observations' and any(o['source_id'] == 'demo' for o in body['observations']):
+                raise DomainError('not_configured', 409)
         if self.plaid_coordinator:
             if route == "/connections/plaid":
                 return await self.plaid_coordinator.request(body)
@@ -251,6 +262,8 @@ class CompanionService:
             return deepcopy(receipt["response"])
 
     async def process(self, body):
+        if body['synthesis_mode'] == 'scripted' and not self.allow_fixture_data:
+            raise DomainError('not_configured', 409)
         receipt = self.receipt("/process", body)
         async with self.lock:
             replay = await self.replay(receipt)

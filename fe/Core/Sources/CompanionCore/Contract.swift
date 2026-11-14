@@ -2066,7 +2066,8 @@ public struct ExperienceV1: Codable, Equatable, Sendable {
     public var concern: ExperienceConcern
     public var clarification: ExperienceClarification?
     public var visit: ExperienceVisit
-    public init(schema_version: String, data_epoch: String, revision: Int, generated_at: String, evaluation_date: String, timezone: String, is_demo: Bool, provenance: String, home: ExperienceHome, concern: ExperienceConcern, clarification: ExperienceClarification?, visit: ExperienceVisit) {
+    public var inference_history: [ExperienceInferenceEntry]
+    public init(schema_version: String, data_epoch: String, revision: Int, generated_at: String, evaluation_date: String, timezone: String, is_demo: Bool, provenance: String, home: ExperienceHome, concern: ExperienceConcern, clarification: ExperienceClarification?, visit: ExperienceVisit, inference_history: [ExperienceInferenceEntry] = []) {
         self.schema_version = schema_version
         self.data_epoch = data_epoch
         self.revision = revision
@@ -2079,14 +2080,15 @@ public struct ExperienceV1: Codable, Equatable, Sendable {
         self.concern = concern
         self.clarification = clarification
         self.visit = visit
+        self.inference_history = inference_history
     }
     enum CodingKeys: String, CodingKey, CaseIterable {
-        case schema_version, data_epoch, revision, generated_at, evaluation_date, timezone, is_demo, provenance, home, concern, clarification, visit
+        case schema_version, data_epoch, revision, generated_at, evaluation_date, timezone, is_demo, provenance, home, concern, clarification, visit, inference_history
     }
     public init(from decoder: Decoder) throws {
         let keys = try decoder.container(keyedBy: AnyKey.self)
         let allowed = Set(CodingKeys.allCases.map(\.rawValue))
-        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+        guard Set(keys.allKeys.map(\.stringValue)).isSubset(of: allowed), allowed.subtracting(["inference_history"]).isSubset(of: Set(keys.allKeys.map(\.stringValue))) else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
         }
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -2108,6 +2110,7 @@ public struct ExperienceV1: Codable, Equatable, Sendable {
         concern = try c.decode(ExperienceConcern.self, forKey: .concern)
         clarification = try c.decodeIfPresent(ExperienceClarification.self, forKey: .clarification)
         visit = try c.decode(ExperienceVisit.self, forKey: .visit)
+        inference_history = c.contains(.inference_history) ? try c.decode([ExperienceInferenceEntry].self, forKey: .inference_history) : []
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -2123,6 +2126,7 @@ public struct ExperienceV1: Codable, Equatable, Sendable {
         try c.encode(concern, forKey: .concern)
         try c.encode(clarification, forKey: .clarification)
         try c.encode(visit, forKey: .visit)
+        try c.encode(inference_history, forKey: .inference_history)
     }
 }
 
@@ -2195,6 +2199,107 @@ public struct ExperienceErrorEnvelope: Codable, Equatable, Sendable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(error, forKey: .error)
+    }
+}
+
+public struct ExperienceInferenceEvidence: Codable, Equatable, Sendable {
+    public var observation_id: String
+    public var revision: Int
+    public var date: String
+    public var source: String
+    public var summary: String
+    public init(observation_id: String, revision: Int, date: String, source: String, summary: String) {
+        self.observation_id = observation_id
+        self.revision = revision
+        self.date = date
+        self.source = source
+        self.summary = summary
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case observation_id, revision, date, source, summary
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        observation_id = try c.decode(String.self, forKey: .observation_id)
+        revision = try c.decode(Int.self, forKey: .revision)
+        date = try c.decode(String.self, forKey: .date)
+        source = try c.decode(String.self, forKey: .source)
+        summary = try c.decode(String.self, forKey: .summary)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(observation_id, forKey: .observation_id)
+        try c.encode(revision, forKey: .revision)
+        try c.encode(date, forKey: .date)
+        try c.encode(source, forKey: .source)
+        try c.encode(summary, forKey: .summary)
+    }
+}
+
+public struct ExperienceInferenceEntry: Codable, Equatable, Sendable {
+    public var id: String
+    public var inferred_at: String?
+    public var title: String
+    public var inference: String
+    public var explanation: String
+    public var status: String
+    public var method: String
+    public var rule_version: String
+    public var context: [String]
+    public var evidence: [ExperienceInferenceEvidence]
+    public init(id: String, inferred_at: String?, title: String, inference: String, explanation: String, status: String, method: String, rule_version: String, context: [String], evidence: [ExperienceInferenceEvidence]) {
+        self.id = id
+        self.inferred_at = inferred_at
+        self.title = title
+        self.inference = inference
+        self.explanation = explanation
+        self.status = status
+        self.method = method
+        self.rule_version = rule_version
+        self.context = context
+        self.evidence = evidence
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case id, inferred_at, title, inference, explanation, status, method, rule_version, context, evidence
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        inferred_at = try c.decodeIfPresent(String.self, forKey: .inferred_at)
+        title = try c.decode(String.self, forKey: .title)
+        inference = try c.decode(String.self, forKey: .inference)
+        explanation = try c.decode(String.self, forKey: .explanation)
+        status = try c.decode(String.self, forKey: .status)
+        do { let value = status;
+            guard ["unconfirmed", "corrected"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .status, in: c, debugDescription: "Invalid contract value") }
+        }
+        method = try c.decode(String.self, forKey: .method)
+        rule_version = try c.decode(String.self, forKey: .rule_version)
+        context = try c.decode([String].self, forKey: .context)
+        evidence = try c.decode([ExperienceInferenceEvidence].self, forKey: .evidence)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(inferred_at, forKey: .inferred_at)
+        try c.encode(title, forKey: .title)
+        try c.encode(inference, forKey: .inference)
+        try c.encode(explanation, forKey: .explanation)
+        try c.encode(status, forKey: .status)
+        try c.encode(method, forKey: .method)
+        try c.encode(rule_version, forKey: .rule_version)
+        try c.encode(context, forKey: .context)
+        try c.encode(evidence, forKey: .evidence)
     }
 }
 
