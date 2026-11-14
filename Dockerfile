@@ -23,6 +23,8 @@ COPY --from=dependencies /app/be/.venv /app/be/.venv
 COPY be/companion /app/be/companion
 # Only schemas and rules ship; example records live exclusively in test targets.
 COPY contracts/*.json /app/contracts/
+# Host checkout permissions can be private; runtime code stays root-owned and read-only.
+RUN chmod -R a=rX /app/be/companion /app/contracts
 USER 10001:10001
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
