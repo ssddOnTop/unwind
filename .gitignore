@@ -3,6 +3,12 @@
 *
 !/.gitignore
 
+# Reviewed monolith packaging and public empty configuration template.
+!/Dockerfile
+!/.dockerignore
+!/compose.yaml
+!/container.env.example
+
 # Backend code, tests, dependency lock and local runner.
 !/be/
 !/be/companion/

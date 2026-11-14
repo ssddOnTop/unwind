@@ -200,6 +200,53 @@ Do not deploy multiple machines with unrelated ephemeral copies of these files a
 
 Tests use a newly initialized isolated local PostgreSQL server and disposable databases only; never the ambient `DATABASE_URL`. If no server binary is available these tests explicitly skip instead of masquerading as real DB verification. PostgreSQL test evidence and sanitized read-only remote diagnostics are under `evidence/postgres-monolith/`. Live hosted migration, public webhook delivery, native Link callbacks and conventional-host TLS configuration remain separate release checks.
 
+## Container monolith (local demo, no deployment)
+
+From the repository root, copy `container.env.example` to `.env`, restrict it to mode
+0600, and fill the empty values privately. Then run `docker compose up --build -d`.
+One nonroot process/one Uvicorn worker serves authenticated PostgreSQL + banking +
+experience, including the existing signed Plaid webhook inbox/tasks; no separate
+worker, queue or database container is started. Daily LLM synthesis is disabled by
+default; optional free-model settings use the existing provider validation.
+
+`DATABASE_URL` must use a direct/session-mode PostgreSQL endpoint and verified TLS;
+`CLERK_ISSUER`, Sandbox credentials and HTTPS `PLAID_WEBHOOK_URL` are required.
+Optional `CLERK_AUTHORIZED_PARTIES` is a JSON array; the actual audience variable is
+`CLERK_AUDIENCE` (omit it when unused). No anonymous/SQLite fallback or automatic
+DDL/migration/account seeding is performed. The existing startup check requires an
+already migrated schema. Do not run this against the migration owner's database
+until that owner approves the coordinated handoff.
+
+Set `SUPABASE_CA_FILE` to the existing host CA (for example the operator's
+`/Users/ssdd/hackpctn/prod-ca-2021.crt`). Compose mounts it read-only at
+`/run/certs/supabase-ca.crt`; the entrypoint overrides only the DSN's `sslrootcert`
+with this container path, never embeds a host path or certificate in the image.
+Set `COMPANION_DATA_DIR` to the **prepared PostgreSQL residual root**, with its
+existing `.postgres-root` marker and `users/<UUID>/` keys, pending exchanges and
+SDK checkpoints. The bind source must already exist, be owned by UID/GID 10001,
+and be mode 0700; private files must remain mode 0600. Coordinate ownership/copying
+with the migration owner, never recursively chown an active other worktree.
+The launcher sets umask 077 and refuses a missing/unprepared root. It never
+copies or regenerates existing keys; the existing vault fails closed when a
+persisted token's key is missing. **Losing this volume means existing bank tokens
+cannot be decrypted**, even if PostgreSQL survives. Back up/restore both together.
+Do not scale this service or run concurrent copies of the migrated residuals.
+
+The image preserves `/app/be/companion` and `/app/contracts` so source-relative
+contract loading works. Only the seven required public JSON contracts (including
+normative examples imported by the backend) enter the image; no frontend, tests,
+private data, dotenv, certificates or evidence enters the build context. Existing
+locked project dependencies include pytest; packaging does not rewrite that lock.
+
+Container binding is `0.0.0.0:8000`, published only as `127.0.0.1:8000` on the host.
+`curl --fail http://127.0.0.1:8000/health` is a pure liveness check returning only
+`{"status":"ok"}`, not a database/provider readiness probe. Existing localhost
+Host validation is unchanged: a future operator-managed TLS reverse proxy must
+send `Host: 127.0.0.1:8000` upstream, preserve Authorization and signed webhook
+bodies, and terminate public HTTPS itself. Forwarded headers remain untrusted.
+The local Compose demo alone cannot receive public Plaid webhooks. No native
+endpoint settings, public server, cloud resource or deployment is changed here.
+
 ## Explicit multi-bank management profile
 
 `--banking` / `banking_profile=True` enables the frozen additive `contracts/banking.schema.json` and `contracts/banking.md` interface: GET `/banking/v1` and POST `/banking/v1/actions`. It implies Sandbox support and composes with authentication, PostgreSQL and `--experience`. No frontend fixture, client-owned selection policy, new public-token shortcut, account seeding or public migration route is added. Credentials and models are not needed to run the offline tests. Existing processes and data are not changed merely by installing this code.
