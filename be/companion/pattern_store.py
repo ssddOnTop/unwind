@@ -130,7 +130,7 @@ class PatternCoordinator:
             refresh={'status':'not_requested','last_updated':schedule.last_full_success(service.document),'message':'Using saved bank data; no bank fetch requested.'}
             should_analyze=not interrupted
             if interrupted:
-                refresh.update(status='failed',message='The previous action was interrupted. Bank and AI calls were not repeated; start a new action to retry.')
+                refresh.update(status='failed',message='The previous action response expired or was interrupted. Bank and AI calls were not repeated; start a new action to retry.')
             elif body.fetch_latest_bank_data:
                 bank=service.banking_coordinator
                 refresh.update(status='unavailable',message='No eligible linked bank is available. Analysis was not run.')
@@ -156,7 +156,7 @@ class PatternCoordinator:
             value['bank_refresh']=refresh
             async with service.lock:
                 if service.document['state']['data_epoch']!=epoch:raise DomainError('epoch_mismatch',409)
-                receipt.update(response=value,preserve_response=True)
+                receipt.update(response=None if interrupted else value,preserve_response=True)
                 await service.commit(deepcopy(service.document),receipt,bump=False)
             return value
 

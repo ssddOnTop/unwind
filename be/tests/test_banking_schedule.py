@@ -142,3 +142,59 @@ async def test_analyze_off_on_replay_partial_failure_epoch_and_concurrent(tmp_pa
         await service.close();await service.start()
         r=await post(orphan);assert r.status_code==200,r.text
         assert r.json()['bank_refresh']['status']=='failed' and count(provider)==n
+
+@pytest.mark.parametrize('interrupted',[False,True])
+async def test_action_binding_survives_observation_prune_and_receipt_age_until_reset(tmp_path,signing_key,runtime,monkeypatch,interrupted):
+    from companion.patterns import AnalyzeRequest
+    h,providers=await prepared(tmp_path,signing_key,runtime)
+    async with h.client() as client:
+        await add(client,h);handle=await h.handle('a');service=handle.service.app.state.service
+        provider=providers[handle.account_id];state=await consent(client,h)
+        for page in health_pages(state['data_epoch']):assert (await send(client,h,page)).status_code==200
+        calls=[]
+        class Model:
+            async def ainvoke(self,*args,**kwargs):
+                calls.append(True);return SimpleNamespace(content='{"concern_ids":["sleep","activity"]}')
+        coordinator=service.pattern_coordinator;coordinator.model_factory=lambda:Model()
+        body={'schema_version':'1','request_id':str(uuid4()),'data_epoch':state['data_epoch'],'fetch_latest_bank_data':True}
+        if interrupted:
+            async def crash(*args,**kwargs):raise RuntimeError('Simulated stop after bank commit')
+            with monkeypatch.context() as patch:
+                patch.setattr(coordinator,'analyze',crash)
+                with pytest.raises(RuntimeError):await coordinator.execute(AnalyzeRequest.model_validate(body))
+        else:
+            response=await client.post('/patterns/v1/analyze',headers=h.headers(),json=body)
+            assert response.status_code==200,response.text
+            assert response.json()['bank_refresh']['status']=='complete'
+        n=count(provider);m=len(calls);assert n==2 and m==(0 if interrupted else 1)
+        # Exercise the real housekeep -> prune -> commit(erase=True) path without epoch rotation.
+        async with service.lock:
+            doc=deepcopy(service.document);expired=deepcopy(doc['state']['observations'][0])
+            expired['id']='unrelated-expired-observation';expired['local_date']=(NOW-timedelta(days=200)).date().isoformat()
+            doc['state']['observations'].append(expired)
+            await service.commit(doc)
+        await service.housekeep()
+        assert service.document['state']['data_epoch']==body['data_epoch']
+        assert all(o['id']!=expired['id'] for o in service.document['state']['observations'])
+        async with coordinator.transaction() as c:
+            rows=await (await c.execute("SELECT request_id,response FROM companion_private.receipts WHERE request_id IN (%s,%s)",(body['request_id'],'pattern-bank:'+body['request_id']))).fetchall()
+            assert len(rows)==2 and all(row[1] is None for row in rows)
+            await c.execute("UPDATE companion_private.receipts SET created_at=now()-interval '400 days' WHERE request_id IN (%s,%s)",(body['request_id'],'pattern-bank:'+body['request_id']))
+        # The normal 90-day receipt cutoff cannot re-admit the request in the same epoch either.
+        async with service.lock:await service.commit(deepcopy(service.document),bump=False,recover=True)
+        await service.close();await service.start()
+        replay=await client.post('/patterns/v1/analyze',headers=h.headers(),json=body)
+        assert replay.status_code==200,replay.text
+        assert replay.json()['bank_refresh']['status']=='failed'
+        assert count(provider)==n and len(calls)==m
+        conflict=await client.post('/patterns/v1/analyze',headers=h.headers(),json={**body,'fetch_latest_bank_data':False})
+        assert conflict.status_code==409 and conflict.json()['error']['code']=='idempotency_conflict'
+        async with coordinator.transaction() as c:
+            rows=await (await c.execute("SELECT response FROM companion_private.receipts WHERE request_id IN (%s,%s)",(body['request_id'],'pattern-bank:'+body['request_id']))).fetchall()
+            assert len(rows)==2 and all(row[0] is None for row in rows)  # no private full response rehydrated
+        deleted=await client.request('DELETE','/data',headers=h.headers(),json={'schema_version':'1','request_id':str(uuid4()),'data_epoch':body['data_epoch'],'confirm':'delete_all'})
+        assert deleted.status_code==200,deleted.text
+        async with coordinator.transaction() as c:
+            assert (await (await c.execute("SELECT count(*) FROM companion_private.receipts WHERE request_id IN (%s,%s)",(body['request_id'],'pattern-bank:'+body['request_id']))).fetchone())[0]==0
+        assert (await client.post('/patterns/v1/analyze',headers=h.headers(),json=body)).status_code==409
+        assert count(provider)==n and len(calls)==m

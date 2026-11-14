@@ -72,12 +72,19 @@ class PostgresPersistenceExtension:
                         await stage_health(self.conn,self.account_id,payload['health_ingest'])
                     from ..pattern_banking import persist_bank_patterns
                     await persist_bank_patterns(self.conn,self.account_id,payload['document'],payload.get('pattern_bank_changes') or [])
+                    # Side-effect admission outlives response/observation retention. Keep only
+                    # the ID + digest binding for this epoch; reset removes it in _ownership.
+                    protected="(epoch=%s AND (route='/patterns/v1/analyze' OR (route='/banking/v1/actions' AND request_id LIKE 'pattern-bank:%%')))"
+                    epoch=payload['document']['state']['data_epoch']
                     if payload.get('erase_receipts'):
-                        await self.conn.execute("DELETE FROM companion_private.receipts WHERE account_id=%s", (self.account_id,))
+                        await self.conn.execute("DELETE FROM companion_private.receipts WHERE account_id=%s AND NOT "+protected,(self.account_id,epoch))
+                        await self.conn.execute("UPDATE companion_private.receipts SET response=NULL WHERE account_id=%s AND "+protected,(self.account_id,epoch))
                     for route in payload.get('erase_receipt_routes',[]):
                         await self.conn.execute("DELETE FROM companion_private.receipts WHERE account_id=%s AND route=%s", (self.account_id,route))
                     if payload.get('receipt_cutoff'):
-                        await self.conn.execute("DELETE FROM companion_private.receipts WHERE account_id=%s AND created_at < %s", (self.account_id,payload['receipt_cutoff']))
+                        args=(self.account_id,payload['receipt_cutoff'],epoch)
+                        await self.conn.execute("DELETE FROM companion_private.receipts WHERE account_id=%s AND created_at < %s AND NOT "+protected,args)
+                        await self.conn.execute("UPDATE companion_private.receipts SET response=NULL WHERE account_id=%s AND created_at < %s AND "+protected,args)
                     await self.conn.execute("INSERT INTO companion_private.snapshots(account_id,body) VALUES(%s,%s) ON CONFLICT(account_id) DO UPDATE SET body=EXCLUDED.body WHERE companion_private.snapshots.account_id=%s",
                         (self.account_id,Jsonb(payload['document']),self.account_id))
                     r=payload.get('receipt')
@@ -88,7 +95,7 @@ class PostgresPersistenceExtension:
                             WHERE companion_private.receipts.account_id=%s""",
                             (self.account_id,r['epoch'],r['route'],r['request_id'],r['digest'],Jsonb(r['response']) if r['response'] is not None else None,r['created_at'],self.account_id))
                     if payload.get('recover_pending'):
-                        await self.conn.execute("UPDATE companion_private.receipts SET response=%s WHERE account_id=%s AND response IS NULL AND route<>'/patterns/v1/analyze'", (Jsonb(payload['document']['state']),self.account_id))
+                        await self.conn.execute("UPDATE companion_private.receipts SET response=%s WHERE account_id=%s AND response IS NULL AND route<>'/patterns/v1/analyze' AND NOT (route='/banking/v1/actions' AND request_id LIKE 'pattern-bank:%%')", (Jsonb(payload['document']['state']),self.account_id))
                     return {"committed":True}
             except asyncio.CancelledError:
                 raise
@@ -154,6 +161,7 @@ class PostgresPersistenceExtension:
             await self.conn.execute("""UPDATE companion_private.webhook_jobs SET account_id=%s,epoch=%s,owner_generation=%s
                 WHERE environment='sandbox' AND item_id=%s AND account_id IS NULL AND expires_at>now()""",(self.account_id,epoch,generation,identifier))
         if epoch_changed:
+            await self.conn.execute("DELETE FROM companion_private.receipts WHERE account_id=%s",(self.account_id,))
             ready=await (await self.conn.execute("SELECT to_regclass('companion_private.pattern_batches') IS NOT NULL")).fetchone()
             if ready[0]:
                 pages=await (await self.conn.execute("SELECT to_regclass('companion_private.health_import_pages') IS NOT NULL")).fetchone()
