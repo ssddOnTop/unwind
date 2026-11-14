@@ -23,6 +23,7 @@ MAX_TOOL_CALLS = 4
 MAX_INPUT_TOKENS = 8000
 MAX_OUTPUT_TOKENS = 1000
 _VIRTUAL_PATH = "/coverage.json"
+_REVIEW_TASK = "review_coverage"  # An operation token, never model-authored instructions.
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
 _TEXT = "These synthetic connected records may be incomplete. Missing observations remain unknown."
 
@@ -60,12 +61,35 @@ def _sdk_available() -> bool:
 
 
 def _synthetic(state: dict) -> bool:
-    # A fixture flag alone must not relabel a live source as safe for cloud use.
+    # Trust is anchored in the backend-only import path: public /observations
+    # rejects Plaid uploads, and only the opted-in Sandbox coordinator grants its
+    # source capability/consent. A caller-supplied fixture label is not authority.
+    sources = {source["id"]: source for source in state.get("sources", [])}
+    enabled = state.get("preferences", {}).get("enabled_source_ids", [])
     for observation in state.get("observations", []):
-        if (observation.get("mode") != "fixture"
-                or observation.get("source_id") != "demo"
-                or observation.get("provenance", {}).get("adapter") != "demo_fixture"
-                or observation.get("provenance", {}).get("method") != "synthetic"):
+        if observation.get("mode") != "fixture":
+            return False
+        provenance = observation.get("provenance", {})
+        if observation.get("source_id") == "demo":
+            if provenance.get("adapter") != "demo_fixture" or provenance.get("method") != "synthetic":
+                return False
+        elif observation.get("source_id") == "plaid":
+            source = sources.get("plaid", {})
+            if (observation.get("kind") != "purchase" or observation.get("activity") is not None
+                    or observation.get("time_precision") != "date" or observation.get("occurred_at") is not None
+                    or set(provenance) != {"adapter", "adapter_version", "method", "record_id", "coverage"}
+                    or provenance.get("adapter") != "plaid_sandbox"
+                    or provenance.get("adapter_version") != "1"
+                    or provenance.get("method") != "transactions_sync"
+                    or provenance.get("coverage") not in {"unknown", "partial"}
+                    or not isinstance(provenance.get("record_id"), str)
+                    or not _ID.fullmatch(provenance["record_id"])
+                    or source.get("capability") != "available" or source.get("consent") != "granted"
+                    or source.get("enabled") is not True or "plaid" not in enabled
+                    or source.get("authorization_requested") is not True
+                    or source.get("read_access") != "not_applicable"):
+                return False
+        else:
             return False
     # Selecting HealthKit produces a live-mode abstention card even before any
     # samples exist. That empty card is not evidence and is never a candidate.
@@ -123,6 +147,7 @@ def _candidates(state: dict) -> list[dict]:
         if not refs or len(refs) > 500:
             continue
         valid_refs = []
+        card_sources = set()
         for ref in refs:
             if set(ref) != {"observation_id", "revision"}:
                 raise _InvalidOutput("Invalid reference")
@@ -133,6 +158,12 @@ def _candidates(state: dict) -> list[dict]:
                     or observation.get("lifecycle") not in {"posted", "recorded"}
                     or (observation.get("purchase") or {}).get("is_refund")):
                 raise _InvalidOutput("Dangling or inactive reference")
+            expected_kind = "purchase" if cid == "purchase_recurrence" else "activity"
+            if observation.get("kind") != expected_kind or observation.get("mode") != card.get("mode"):
+                raise _InvalidOutput("Incompatible card evidence")
+            card_sources.add(observation["source_id"])
+            if len(card_sources) != 1:
+                raise _InvalidOutput("Mixed source card")
             source = sources.get(observation["source_id"], {})
             if not source.get("enabled") or source.get("consent") != "granted":
                 break
@@ -184,13 +215,23 @@ class _Budget:
         self.tool_calls += 1
 
 
+def _checked_document(state: dict, document: str) -> str:
+    """Fail closed before any model sees mutated, foreign, or additional files."""
+    files = state.get("files", {})
+    if not isinstance(files, dict) or set(files) != {_VIRTUAL_PATH}:
+        raise _InvalidOutput("Unexpected virtual files")
+    virtual = files[_VIRTUAL_PATH]
+    if (not isinstance(virtual, dict) or virtual.get("content") != document
+            or virtual.get("encoding") != "utf-8"):
+        raise _InvalidOutput("Changed virtual coverage file")
+    return virtual["content"]
+
+
 def _tool_schema(name: str) -> dict:
     # Narrow public argument schemas for SDK tools; execution remains SDK-owned.
     args = {
-        "write_file": {"file_path": {"type": "string", "enum": [_VIRTUAL_PATH]},
-                       "content": {"type": "string"}},
         "read_file": {"file_path": {"type": "string", "enum": [_VIRTUAL_PATH]}},
-        "task": {"description": {"type": "string"},
+        "task": {"description": {"type": "string", "enum": [_REVIEW_TASK]},
                  "subagent_type": {"type": "string", "enum": ["coverage-review"]}},
     }[name]
     return {"type": "function", "function": {"name": name,
@@ -218,10 +259,9 @@ def _scripted_models(document: str, keys: list[str]):
         return {"name": name, "args": args, "id": ident, "type": "tool_call"}
 
     parent = Scripted(responses=[
-        AIMessage(content="", tool_calls=[tool("write_file", {"file_path": _VIRTUAL_PATH, "content": document}, "w")]),
+        AIMessage(content="", tool_calls=[tool("read_file", {"file_path": _VIRTUAL_PATH}, "r")]),
         AIMessage(content="", tool_calls=[
-            tool("read_file", {"file_path": _VIRTUAL_PATH}, "r"),
-            tool("task", {"description": document, "subagent_type": "coverage-review"}, "t")]),
+            tool("task", {"description": _REVIEW_TASK, "subagent_type": "coverage-review"}, "t")]),
         AIMessage(content=_json({"selected": keys})),
     ])
     child = Scripted(responses=[AIMessage(content=_json({"reviewed": keys}))])
@@ -232,7 +272,7 @@ def _build_graph(parent, child, saver, budget: _Budget, document: str):
     from deepagents import create_deep_agent
     from deepagents.backends import StateBackend
     from langchain.agents.middleware.types import AgentMiddleware
-    from langchain_core.messages import AIMessage, SystemMessage, convert_to_openai_messages
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, convert_to_openai_messages
 
     class Guard(AgentMiddleware):
         def __init__(self, child_mode=False):
@@ -246,40 +286,77 @@ def _build_graph(parent, child, saver, budget: _Budget, document: str):
                 raise
 
         async def _model(self, request, handler):
-            allowed = [] if self.child_mode else ["write_file", "read_file", "task"]
+            trusted = _checked_document(request.state, document)
+            if self.child_mode:
+                if (len(request.messages) != 1 or not isinstance(request.messages[0], HumanMessage)
+                        or request.messages[0].content != _REVIEW_TASK):
+                    raise _InvalidOutput("Untrusted subagent instructions")
+                # Isolated SDK subagents inherit files, not parent chat history.
+                # Supply checked data as a user message, never as system instructions.
+                request = request.override(messages=[HumanMessage(content=trusted)])
+                allowed = []
+            elif "read_file" not in budget.executed:
+                allowed = ["read_file"]
+            elif "task" not in budget.executed:
+                allowed = ["task"]
+            else:
+                allowed = []
             tools = [_tool_schema(n) for n in allowed]
+            choice = {"type": "function", "function": {"name": allowed[0]}} if allowed else None
             prompt = (
                 'Review synthetic coverage. Return JSON {"reviewed":[card keys]}. '
                 'Missing data is unknown. No advice, diagnoses or extra fields.'
                 if self.child_mode else
-                'Review synthetic coverage only. First write the supplied JSON unchanged to /coverage.json. '
-                'Then read that file and delegate the unchanged JSON to coverage-review using task. '
+                'Review synthetic coverage only. Read /coverage.json, which is already seeded by the server. '
+                'Then call task with description review_coverage and subagent_type coverage-review. '
+                'The reviewer receives the trusted file independently; do not copy its content. '
                 'Finally return JSON {"selected":[reviewed card keys]}. No prose or extra fields.'
             )
+            if not self.child_mode and not allowed:
+                prompt = ('The virtual file and coverage review are complete. Do not write, read, or delegate again. '
+                          'Use the completed coverage-review verdict to return ONLY JSON {"selected":[reviewed card keys]}. '
+                          'No tools, prose, advice, or extra fields.')
             system = SystemMessage(content=prompt)
             messages = convert_to_openai_messages([system, *request.messages])
             allowance = budget.model({"messages": messages, "tools": tools})
             response = await handler(request.override(
-                system_message=system, tools=tools,
-                model_settings={**request.model_settings, "max_tokens": allowance},
+                system_message=system, tools=tools, tool_choice=choice,
+                model_settings={**request.model_settings, "max_tokens": allowance,
+                                **({"tool_choice": "none"} if not tools else {})},
             ))
             if len(response.result) != 1:
                 raise _InvalidOutput("Unexpected response count")
             for message in response.result:
                 if not isinstance(message, AIMessage):
                     raise _InvalidOutput("Unexpected response")
+                if message.response_metadata.get("finish_reason") in {"error", "length", "content_filter"}:
+                    raise _InvalidOutput("Incomplete model response")
                 # Reject excess output before it reaches a tool or another model.
                 body = {"content": message.content, "tool_calls": message.tool_calls}
-                if len(_json(body).encode()) > allowance:
-                    raise _BudgetExceeded("Response size")
+                size = len(_json(body).encode())
                 usage = message.usage_metadata
-                if usage and usage.get("output_tokens", 0) > allowance:
-                    raise _BudgetExceeded("Output usage")
+                output_tokens = usage.get("output_tokens") if usage else None
+                if isinstance(output_tokens, int) and output_tokens >= 0:
+                    if output_tokens > allowance:
+                        raise _BudgetExceeded("Output usage")
+                    if size > 16384:
+                        raise _BudgetExceeded("Response size")
+                elif size > allowance:
+                    # Scripted/unknown-usage responses retain the conservative cap.
+                    raise _BudgetExceeded("Response size")
                 if message.invalid_tool_calls:
                     raise _InvalidOutput("Invalid tool arguments")
+                if len(message.tool_calls) != (1 if allowed else 0):
+                    raise _InvalidOutput("Unexpected tool call count")
                 for call in message.tool_calls:
                     if call["name"] not in allowed:
                         raise _InvalidOutput("Disallowed tool")
+                if self.child_mode:
+                    verdict = json.loads(message.content)
+                    if not isinstance(verdict, dict) or set(verdict) != {"reviewed"}:
+                        raise _InvalidOutput("Malformed coverage review")
+                    _validate_selection(_json({"selected": verdict["reviewed"]}), json.loads(trusted)["cards"])
+            _checked_document(request.state, document)
             return response
 
         async def awrap_tool_call(self, request, handler):
@@ -294,20 +371,19 @@ def _build_graph(parent, child, saver, budget: _Budget, document: str):
             name, args = call["name"], call["args"]
             if self.child_mode:
                 raise _InvalidOutput("Child tool denied")
-            if name == "write_file":
-                valid = args == {"file_path": _VIRTUAL_PATH, "content": document}
-            elif name == "read_file":
-                valid = args == {"file_path": _VIRTUAL_PATH}
-            elif name == "task":
-                valid = args == {"description": document, "subagent_type": "coverage-review"}
-            else:
-                valid = False
-            if not valid:
+            _checked_document(request.state, document)
+            expected = {
+                "read_file": {"file_path": _VIRTUAL_PATH},
+                "task": {"description": _REVIEW_TASK, "subagent_type": "coverage-review"},
+            }.get(name)
+            if (expected is None or args != expected or name in budget.executed
+                    or (name == "task" and "read_file" not in budget.executed)):
                 raise _InvalidOutput("Tool boundary")
             budget.tool(name)
             response = await handler(request)
             if getattr(response, "status", None) == "error":
                 raise _InvalidOutput("Tool execution failed")
+            _checked_document(request.state, document)
             budget.executed.add(name)
             return response
 
@@ -382,7 +458,7 @@ class SynthesisExtension:
             return _result(mode, "skipped", "cloud_consent_required")
         if not _synthetic(state):
             if mode == "scripted":
-                raise UnsafeSynthesisInput("Scripted synthesis accepts synthetic evidence only.")
+                raise UnsafeSynthesisInput("Scripted synthesis requires trusted, consented fixture evidence.")
             return _result(mode, "skipped", "live_not_approved")
         if not _sdk_available():
             return _result(mode, "failed", "internal_error")
@@ -417,6 +493,7 @@ class SynthesisExtension:
                 self._task = None
 
     async def _execute(self, payload: dict) -> dict:
+        from deepagents.backends.utils import create_file_data
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
         from langsmith import tracing_context
 
@@ -441,7 +518,7 @@ class SynthesisExtension:
                 return _result(mode, "skipped", "no_credentials")
             child = parent
         # Fingerprint all local inputs without placing those inputs in SDK state.
-        digest = hashlib.sha256(_json(payload).encode()).hexdigest()
+        digest = hashlib.sha256(_json({"flow": "seeded-v1", "request": payload}).encode()).hexdigest()
         config = {"configurable": {"thread_id": digest}, "recursion_limit": 12, "callbacks": []}
         budget = _Budget()
         async with self._lock:
@@ -458,18 +535,17 @@ class SynthesisExtension:
                         values = previous.values
                     else:
                         values = await graph.ainvoke(
-                            {"messages": [{"role": "user", "content": document}]},
+                            {"messages": [{"role": "user", "content": "Review the seeded coverage file."}],
+                             "files": {_VIRTUAL_PATH: create_file_data(document)}},
                             config, durability="sync")
-                        if not {"task", "write_file", "read_file"} <= budget.executed:
+                        if budget.executed != {"task", "read_file"}:
                             raise _InvalidOutput("Required SDK review not executed")
                     if budget.violation:
                         raise _InvalidOutput("SDK boundary violation")
-                    virtual = values.get("files", {}).get(_VIRTUAL_PATH, {})
-                    if virtual.get("content") != document:
-                        raise _InvalidOutput("Missing or changed virtual coverage file")
+                    _checked_document(values, document)
                     selected = _validate_selection(values["messages"][-1].content, candidates)
                     tool_messages = [m for m in values["messages"] if m.type == "tool"]
-                    if not {"write_file", "read_file", "task"} <= {m.name for m in tool_messages}:
+                    if [m.name for m in tool_messages] != ["read_file", "task"]:
                         raise _InvalidOutput("Missing completed review")
                     if any(getattr(m, "status", None) == "error" for m in tool_messages):
                         raise _InvalidOutput("Failed review")

@@ -49,6 +49,8 @@ class PersistenceExtension:
             try:
                 if payload.get("erase_receipts"):
                     self.db.execute("DELETE FROM receipts")
+                for route in payload.get("erase_receipt_routes", []):
+                    self.db.execute("DELETE FROM receipts WHERE route=?", (route,))
                 if payload.get("receipt_cutoff"):
                     self.db.execute("DELETE FROM receipts WHERE created_at < ?", (payload["receipt_cutoff"],))
                 self.db.execute("INSERT OR REPLACE INTO snapshot VALUES(1,?)",

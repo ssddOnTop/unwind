@@ -19,6 +19,10 @@ class CompanionService:
         self.document = {}
         self.synthesis_task = None
         self.required_failure = False
+        self.plaid_coordinator = None
+        self.experience_coordinator = None
+        self.banking_coordinator = None
+        self.state_validator = lambda s: validate("state", s)
 
     @staticmethod
     def demo_only(doc):
@@ -33,7 +37,16 @@ class CompanionService:
         frozen = doc.get("meta", {}).get("fixture_session") and self.demo_only(doc)
         return instant(RULES["demo"]["now_utc"]) if frozen else self.clock()
 
+    def eligible_state(self, doc):
+        state = deepcopy(doc['state'])
+        excluded = set(doc.get('meta', {}).get('banking_excluded_ids', []))
+        if excluded:
+            state['observations'] = [o for o in state['observations'] if o['id'] not in excluded]
+        return state
+
     async def evaluate(self, doc):
+        if self.plaid_coordinator:
+            self.plaid_coordinator.initialize(doc)
         # Persist the transition: pruning or disconnecting live sources must not
         # reactivate the frozen demo clock. now() also protects legacy documents
         # before startup retention runs and this migration is committed.
@@ -41,17 +54,37 @@ class CompanionService:
             doc["meta"]["fixture_session"] = False
         s = doc["state"]
         s["evaluation_date"] = self.now(doc).astimezone(zone(s["preferences"]["timezone"])).date().isoformat()
-        doc["state"] = (await self.registry.dispatch("scenarios", "evaluate", {"state": s}))["state"]
-        plan = await self.scheduler.handle("plan", {"state": doc["state"], "issued": doc["meta"]["issued"], "now": iso(self.now(doc))})
+        if self.banking_coordinator:
+            await self.banking_coordinator.prepare(doc)
+        stored = deepcopy(doc['state']['observations'])
+        doc["state"] = (await self.registry.dispatch("scenarios", "evaluate", {"state": self.eligible_state(doc), "purchase_source_id": "plaid" if doc["meta"].get("plaid_connected") else "demo"}))["state"]
+        doc['state']['observations'] = stored
+        plan = await self.scheduler.handle("plan", {"state": self.eligible_state(doc), "issued": doc["meta"]["issued"], "now": iso(self.now(doc))})
         doc["state"]["notification_intents"] = plan["intents"]
         doc["meta"]["issued"] = plan["issued"]
+        if self.experience_coordinator:
+            doc["meta"]["experience_review_ready"] = True
+            await self.experience_coordinator.reconcile(doc)
 
     async def commit(self, doc, receipt=None, erase=False, recover=False, bump=True):
         if bump:
             doc["state"]["revision"] += 1
             doc["state"]["generated_at"] = iso(self.clock())
-        validate("state", doc["state"])
-        if receipt is not None and receipt["response"] is not None:
+        erase_experience = False
+        if self.experience_coordinator:
+            previous = self.document.get("meta", {}).get("experience_answers", [])
+            await self.experience_coordinator.reconcile(doc)
+            current_keys = {a["key"] for a in doc["meta"]["experience_answers"]}
+            erase_experience = any(a["key"] not in current_keys for a in previous)
+            # A cached brief can include a different source from the answer's
+            # purchase evidence. Never replay that brief after its consent/read
+            # authority changed, even when the purchase answer remains valid.
+            old_sources = {s["id"]: (s["enabled"], s["consent"], s["read_access"])
+                           for s in self.document.get("state", {}).get("sources", [])}
+            erase_experience |= any(old_sources.get(s["id"]) != (s["enabled"], s["consent"], s["read_access"])
+                                    for s in doc["state"]["sources"])
+        self.state_validator(doc["state"])
+        if receipt is not None and receipt["response"] is not None and not receipt.get("preserve_response"):
             if receipt["route"] == "/observations":
                 receipt["response"]["state"] = deepcopy(doc["state"])
             else:
@@ -59,18 +92,25 @@ class CompanionService:
         await self.registry.dispatch("persistence", "commit", {
             "document": doc, "receipt": receipt, "erase_receipts": erase,
             "recover_pending": recover,
+            "erase_receipt_routes": ["/experience/v1/answers"] if erase_experience else [],
             "receipt_cutoff": iso(self.clock() - timedelta(days=90))})
         self.document = deepcopy(doc)
 
     async def start(self):
         async with self.lock:
             loaded = await self.registry.dispatch("persistence", "load", {})
+            if loaded and loaded.get('meta',{}).get('banking_vault') and self.banking_coordinator is None:
+                raise RuntimeError('Banking profile is required for this private format; no downgrade is performed.')
             if not loaded:
                 loaded = {"state": defaults(self.clock()), "meta": {"fixture_session": False, "issued": []}}
+                if self.plaid_coordinator:
+                    self.plaid_coordinator.initialize(loaded)
                 await self.evaluate(loaded)
                 await self.commit(loaded, bump=False)
                 return
             self.document = deepcopy(loaded)
+            if self.plaid_coordinator:
+                await self.plaid_coordinator.recover(loaded)
             s = loaded["state"]
             interrupted = s["process"]["status"] == "running"
             if interrupted:
@@ -78,12 +118,19 @@ class CompanionService:
                 s["process"]["synthesis"] = synthesis(s["process"]["synthesis"]["mode"], "failed", "internal_error")
                 await self.clear_checkpoints()
             erased = prune(s, self.now(loaded))
+            await self.prune_private(loaded, erased)
             if erased:
                 self.invalidate(s)
                 await self.clear_checkpoints()
             await self.evaluate(loaded)
             if loaded != self.document or interrupted:
                 await self.commit(loaded, erase=erased, recover=interrupted)
+            if self.banking_coordinator:
+                await self.banking_coordinator.call('finish_recovery',self.banking_coordinator.payload(self.document))
+
+    async def prune_private(self, doc, erased):
+        if erased and self.plaid_coordinator:
+            await self.plaid_coordinator.prune_private(doc)
 
     async def close(self):
         await self.cancel_synthesis()
@@ -113,6 +160,7 @@ class CompanionService:
         async with self.lock:
             doc = deepcopy(self.document)
             erased = prune(doc["state"], self.now(doc))
+            await self.prune_private(doc, erased)
             await self.evaluate(doc)
             if doc != self.document:
                 self.invalidate(doc["state"])
@@ -143,6 +191,16 @@ class CompanionService:
         return None
 
     async def mutate(self, route, body):
+        if self.plaid_coordinator:
+            if route == "/connections/plaid":
+                return await self.plaid_coordinator.request(body)
+            if route == "/data":
+                return await self.plaid_coordinator.delete(body)
+            if route == "/preferences":
+                await self.plaid_coordinator.before_preferences(body)
+        return await self._mutate_local(route, body)
+
+    async def _mutate_local(self, route, body):
         if route == "/process":
             return await self.process(body)
         receipt = self.receipt(route, body)
@@ -153,13 +211,14 @@ class CompanionService:
             doc = deepcopy(self.document)
             s = doc["state"]
             erased = prune(s, self.now(doc))
+            await self.prune_private(doc, erased)
             await self.evaluate(doc)
             s = doc["state"]
             counts = None
             if route == "/observations":
                 counts = await ingest(self.registry, s, body)
             elif route == "/preferences":
-                preference_update(s, body["preferences"])
+                preference_update(s, body["preferences"], allow_plaid=bool(doc["meta"].get("plaid_connected")))
             elif route == "/feedback":
                 doc["state"] = (await self.registry.dispatch("feedback", "apply", {
                     "state": s, "request": body, "created_at": iso(self.clock())}))["state"]
@@ -204,6 +263,7 @@ class CompanionService:
             if mode == "scripted" and any(o["mode"] == "live" for o in doc["state"]["observations"]):
                 raise DomainError("invalid_request", 409)
             erased = prune(doc["state"], self.now(doc))
+            await self.prune_private(doc, erased)
             if erased:
                 await self.clear_checkpoints()
             try:
@@ -228,7 +288,7 @@ class CompanionService:
                 "synthesis": synthesis(mode, "running")}
             await self.commit(doc, receipt, erase=erased)
             payload = {"mode": mode, "run_id": run_id, "data_epoch": epoch,
-                       "state_revision": admission_revision, "state": deepcopy(doc["state"])}
+                       "state_revision": admission_revision, "state": self.eligible_state(doc)}
             self.synthesis_task = asyncio.create_task(self.registry.dispatch("synthesis", "synthesize", deepcopy(payload)))
             task = self.synthesis_task
         # No application mutation lock or SQLite transaction is held across model work.
