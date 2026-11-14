@@ -1,6 +1,7 @@
 """Global PG identity mapping, private-volume per-user residuals; no SQLite registry."""
 import asyncio
 import inspect
+from contextlib import asynccontextmanager
 from pathlib import Path
 from .accounts import AccountManager, AccountError, UserServiceHandle, _private_dir, _secure_tree
 from .auth import Principal
@@ -10,6 +11,8 @@ class PostgresAccountManager(AccountManager):
     def __init__(self, auth_root, service_factory, runtime, *, max_accounts=8):
         super().__init__(auth_root, service_factory, max_accounts=max_accounts)
         self.runtime = runtime
+        self._borrowed={}
+        self._temporary=set()
 
     def _initialize(self):
         marker=self.root/'.postgres-root'
@@ -61,6 +64,49 @@ class PostgresAccountManager(AccountManager):
         row=await self.runtime.identity(account_id=account_id)
         if row is None: raise AccountError()
         return await self._open_account(str(row[0]))
+
+    @asynccontextmanager
+    async def borrow(self,principal):
+        self._require_principal(principal)
+        account=await self.runtime.identity(principal)
+        async with self.borrow_account(account) as handle:yield handle
+
+    @asynccontextmanager
+    async def borrow_account(self,account_id,*,temporary=False):
+        """Pin HTTP/worker use; close worker-only unloaded accounts after their last borrower.
+
+        Two bounded overflow slots avoid filling the interactive cache with nightly users.
+        HTTP may share a worker's handle safely without it closing during the request.
+        """
+        row=await self.runtime.identity(account_id=account_id)
+        if row is None or self._closing:raise AccountError()
+        account_id=str(row[0])
+        async with self._lock:
+            self._initialize()
+            handle=self._handles.get(account_id)
+            if handle is None:
+                if len(self._handles)>=self._maximum+(2 if temporary else 0):raise AccountError('account_capacity')
+                directory=self.root/'users'/account_id;_private_dir(directory)
+                service=None
+                try:
+                    service=self._factory(directory)
+                    if inspect.isawaitable(service):service=await service
+                    await service.start();_secure_tree(directory)
+                    handle=UserServiceHandle(account_id,directory,service)
+                    self._handles[account_id]=handle
+                    if temporary or len(self._handles)>self._maximum:self._temporary.add(account_id)
+                except BaseException:
+                    if service is not None:await service.close()
+                    raise AccountError() from None
+            self._borrowed[account_id]=self._borrowed.get(account_id,0)+1
+        try:yield handle
+        finally:
+            async with self._lock:
+                self._borrowed[account_id]-=1
+                if not self._borrowed[account_id]:
+                    del self._borrowed[account_id]
+                    if account_id in self._temporary:
+                        await handle.service.close();self._handles.pop(account_id,None);self._temporary.discard(account_id)
 
     async def close_account(self, principal):
         self._require_principal(principal)

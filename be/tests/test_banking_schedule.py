@@ -15,6 +15,16 @@ from test_auth_http import NOW
 from test_pattern_bridges import consent,health_pages,send
 
 
+async def internal_post(h,body):
+    """Retained legacy core replay tests; public direct execution is now forbidden."""
+    import httpx
+    from companion.patterns import AnalyzeRequest
+    from companion.contracts import DomainError
+    try:
+        coordinator=(await h.handle('a')).service.app.state.service.pattern_coordinator
+        return httpx.Response(200,json=await coordinator.execute(AnalyzeRequest.model_validate(body)))
+    except DomainError as exc:return httpx.Response(exc.status,json={'error':{'code':exc.code}})
+
 def count(provider):return sum(p=='/transactions/sync' for p,_ in provider.calls)
 
 async def prepared(tmp_path,signing_key,runtime):
@@ -115,7 +125,7 @@ async def test_analyze_off_on_replay_partial_failure_epoch_and_concurrent(tmp_pa
                 return SimpleNamespace(content='{"concern_ids":["sleep","activity"]}')
         service.pattern_coordinator.model_factory=lambda:Model()
         def request(fetch):return {'schema_version':'1','request_id':str(uuid4()),'data_epoch':state['data_epoch'],'fetch_latest_bank_data':fetch}
-        async def post(body):return await client.post('/patterns/v1/analyze',headers=h.headers(),json=body)
+        async def post(body):return await internal_post(h,body)
         off=request(False);r=await post(off);assert r.status_code==200,r.text
         assert count(provider)==0 and len(calls)==1 and r.json()['bank_refresh']['status']=='not_requested'
         on=request(True);provider.entered=asyncio.Event();provider.release=asyncio.Event()
@@ -163,7 +173,7 @@ async def test_action_binding_survives_observation_prune_and_receipt_age_until_r
                 patch.setattr(coordinator,'analyze',crash)
                 with pytest.raises(RuntimeError):await coordinator.execute(AnalyzeRequest.model_validate(body))
         else:
-            response=await client.post('/patterns/v1/analyze',headers=h.headers(),json=body)
+            response=await internal_post(h,body)
             assert response.status_code==200,response.text
             assert response.json()['bank_refresh']['status']=='complete'
         n=count(provider);m=len(calls);assert n==2 and m==(0 if interrupted else 1)
@@ -183,11 +193,11 @@ async def test_action_binding_survives_observation_prune_and_receipt_age_until_r
         # The normal 90-day receipt cutoff cannot re-admit the request in the same epoch either.
         async with service.lock:await service.commit(deepcopy(service.document),bump=False,recover=True)
         await service.close();await service.start()
-        replay=await client.post('/patterns/v1/analyze',headers=h.headers(),json=body)
+        replay=await internal_post(h,body)
         assert replay.status_code==200,replay.text
         assert replay.json()['bank_refresh']['status']=='failed'
         assert count(provider)==n and len(calls)==m
-        conflict=await client.post('/patterns/v1/analyze',headers=h.headers(),json={**body,'fetch_latest_bank_data':False})
+        conflict=await internal_post(h,{**body,'fetch_latest_bank_data':False})
         assert conflict.status_code==409 and conflict.json()['error']['code']=='idempotency_conflict'
         async with coordinator.transaction() as c:
             rows=await (await c.execute("SELECT response FROM companion_private.receipts WHERE request_id IN (%s,%s)",(body['request_id'],'pattern-bank:'+body['request_id']))).fetchall()
@@ -196,5 +206,5 @@ async def test_action_binding_survives_observation_prune_and_receipt_age_until_r
         assert deleted.status_code==200,deleted.text
         async with coordinator.transaction() as c:
             assert (await (await c.execute("SELECT count(*) FROM companion_private.receipts WHERE request_id IN (%s,%s)",(body['request_id'],'pattern-bank:'+body['request_id']))).fetchone())[0]==0
-        assert (await client.post('/patterns/v1/analyze',headers=h.headers(),json=body)).status_code==409
+        assert (await internal_post(h,body)).status_code==409
         assert count(provider)==n and len(calls)==m

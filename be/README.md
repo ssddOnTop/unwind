@@ -365,3 +365,54 @@ The strict analysis request now requires `schema_version`, UUID `request_id`, th
 No DDL is required for this update: pacing uses existing private account snapshots, actions use existing scoped receipts, and scheduling uses existing webhook tables/ownership. After review, the parent must coordinate backend/native rollout with daily synthesis still disabled. Do not restart or deploy during in-flight Sandbox backfill. Provider-side injection is untouched by this code; newly injected rows become visible through the next due sync or an explicit Update / toggle-ON Analyze. Code validation used only disposable local databases and mocked providers; no live provider/model calls, database changes, runtime restart or simulator installation were performed.
 
 Analysis-action admission has a separate retention lifetime from cached responses. Ordinary observation pruning and the 90-day generic receipt cutoff **discard response bodies but preserve the current-epoch request ID/digest bindings** for Analyze and its derived bank action. These minimal tombstones persist until account epoch rotation/reset/deletion; they are not time-expired, since expiring them would permit an old request to cause another bank fetch. Replaying a tombstone returns an explicit expired/interrupted-action status using currently available saved findings, without another bank/model call or re-caching a private response. Changing its payload still conflicts. Actual epoch rotation deletes these bindings atomically with account data, and the old epoch is rejected. No DDL or analysis-scheduling change is involved.
+
+### UTC nightly workflows (supersedes synchronous app Analyze)
+
+This version changes **analysis authority**, not the bank-fetch cadence. Every eligible account is queued once per UTC date, beginning at **00:00 UTC**. The scheduler scans the immutable account registry in bounded 100-account pages, reading each account under its own forced-RLS scope, including accounts not loaded in memory. Its independent scheduler loop checks at most ten seconds after completing a scan; slow work does not block the next midnight scan. Startup catches up **today only**. Older queued nightly jobs are marked superseded, not executed in a historical burst; queued manual/operator work expires after 24 hours. Service downtime delays work. This is a backend queue, not a device timer or an exact-delivery promise.
+
+Eligibility requires the existing explicit **cloud consent** plus at least one enabled/granted Health or bank source. Permission to read Health does not itself grant cloud review. Only coarse approved aggregates reach the existing configured free model; source records, identities, merchants, notes, queue IDs/dates and consent hashes do not. A missing or unavailable source is not zero activity. Legacy daily synthesis must remain **disabled** so there is no second AI scheduler.
+
+#### Schema and safe activation
+
+Apply the reviewed v4 migration **after v3**. It adds only `companion_private.pattern_jobs`: account/epoch/job/request IDs, UTC date, trusted origin, database actor role, digest, state, attempt/lease metadata and nullable local analysis-run reference. It stores no raw records, prompt, response copy or private reasoning. Forced RLS and account foreign keys apply; PUBLIC/anon/authenticated receive no table grants. The operator grants DML on this exact new table to the existing non-superuser/non-BYPASSRLS runtime role. No migration runs at application startup.
+
+```sh
+# From be/, using the existing private operator environment and reviewed code.
+python -m companion.workflow_migrations --confirm-utc-workflow-schema --runtime-role "$RESTRICTED_RUNTIME_ROLE"
+# Set in the trusted server environment only, after reviewing the affected accounts' consent:
+COMPANION_PATTERN_WORKFLOWS=enabled
+COMPANION_PATTERN_MANUAL_ACCOUNTS="$VERIFIED_CURRENT_TEST_ACCOUNT_UUID"
+COMPANION_DAILY_SYNTHESIS_MODE=disabled
+```
+
+`COMPANION_PATTERN_WORKFLOWS` defaults to `disabled`; the manual allowlist defaults empty. Malformed UUIDs are rejected. Configure the current test account's UUID only after checking its immutable issuer/subject registry mapping. No first-user lookup, email matching, client role flag or client identity selector exists. Enabling the worker starts current-date catch-up for **all eligible accounts**; do not enable it as a harmless diagnostic. Preserve the existing private root, both banks, account selection, Health dataset and provider/model configuration during coordinated rollout. No new seed/import is needed.
+
+#### Public contract and thin native renderer
+
+- `GET /workflows/v1`: schema version, enabled/eligible flags, next UTC midnight, nullable **self-only** action, server-owned Home/Ledger/brief/Settings page copy, consent notice, attribution question/options, latest active/recent job status and the current persisted pattern report.
+- `POST /workflows/v1/enqueue`: only `schema_version: "1"`, UUID `request_id`, and unchanged `data_epoch`. Only server-allowlisted accounts may call it, and the target is always the verified account. Extra target/origin/role/fetch fields are rejected. It returns queue/report status immediately, not a long synchronous model response.
+- Direct `POST /patterns/v1/analyze` and authenticated legacy live `/process` are rejected even for the app admin. Existing read, clarification and private brief-save routes remain scoped to the caller.
+
+Native normal users have no manual analysis button or fetch toggle. The allowlisted account sees the backend's **Queue my pattern review** action. The app renders typed text/choices, submits answers or Health batches, and polls GET status every two seconds while work is pending (bounded to four minutes; refresh resumes observation). No script, arbitrary endpoint or executable server content is accepted. New nightly reports appear on the next query/refresh; there is no push-notification delivery guarantee. Reports and imported records belong to the backend; device storage is limited to the existing protected cache and necessary pending Health uploads. Deploy backend, JSON schema/generated Swift contract and native renderer together.
+
+#### Worker, bank cadence and recovery
+
+One bounded worker processes accounts serially, with a 180-second execution timeout and five-minute durable lease. A database constraint and account claim lock prevent simultaneous running jobs for the same account. Temporary background account handles are pinned with HTTP/webhook borrowers and closed when unused, so processing unloaded accounts does not fill the interactive account cache indefinitely. Up to two background overflow slots are allowed; account-capacity failures before execution retry at most three admissions with bounded delays. Once execution may have begun, failure or an expired lease is terminal unavailable rather than an unsafe external-call retry.
+
+A due bank refresh goes through the existing coordinator's **automatic rolling 24-hour gate**. The workflow waits for an already-running bank cycle rather than launching a duplicate or reading before its commit. It never uses the former Analyze fetch override. If banks are not due, saved rows are used; partial/unavailable refresh is explicitly labeled and only eligible available evidence supports the review. Normal bank Update remains a separate explicit data-refresh action, not permission to run an AI review.
+
+Manual/operator jobs use stable request IDs. Nightly jobs are unique per account/epoch/UTC date. Concurrent manual/nightly jobs serialize through the existing analysis reservation/cache; unchanged input reuses a result without a model call. Crash uncertainty never causes a repeat call. Consent and epoch are checked before admission and after provider awaits, with a cancellation monitor during work. Source/ownership-consent changes cancel the job. Deletion rotates the epoch and removes all scoped jobs, reservations and pattern data. Queue IDs/digests and audit metadata remain minimal lifetime-of-epoch tombstones so old requests cannot be re-admitted; they are not private response archives.
+
+#### Separate protected operator enqueue
+
+There is **no public cross-user endpoint**. A trusted operator with private restricted database credentials may enqueue one explicitly selected, consented account using all three immutable selectors and an explicit current UTC date. This CLI only enqueues; it never invokes Plaid or a model. Keep the same request UUID on transport/operator retry. Origin and the database actor role are audited privately on the queue row; no selectors or credentials are printed.
+
+```sh
+python -m companion.workflow_operator \
+  --account-id "$VERIFIED_TARGET_ACCOUNT_UUID" \
+  --issuer "$VERIFIED_TARGET_ISSUER" --subject "$VERIFIED_TARGET_SUBJECT" \
+  --request-id "$WORKFLOW_REQUEST_UUID" \
+  --confirm-enqueue-utc-date "$TODAY_UTC_DATE"
+```
+
+The app's self-enqueue capability grants no database access or unrelated account-management privilege. The CLI rejects mismatched selectors, missing consent, a wrong confirmation date, and a superuser/BYPASSRLS connection. Implementation validation uses disposable local PostgreSQL and mocked providers only. No live roles, migrations, queue runs, runtime restarts, simulator installations or publications are part of these checks.

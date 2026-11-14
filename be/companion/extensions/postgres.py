@@ -161,6 +161,8 @@ class PostgresPersistenceExtension:
             await self.conn.execute("""UPDATE companion_private.webhook_jobs SET account_id=%s,epoch=%s,owner_generation=%s
                 WHERE environment='sandbox' AND item_id=%s AND account_id IS NULL AND expires_at>now()""",(self.account_id,epoch,generation,identifier))
         if epoch_changed:
+            jobs=await (await self.conn.execute("SELECT to_regclass('companion_private.pattern_jobs') IS NOT NULL")).fetchone()
+            if jobs[0]:await self.conn.execute('DELETE FROM companion_private.pattern_jobs WHERE account_id=%s',(self.account_id,))
             await self.conn.execute("DELETE FROM companion_private.receipts WHERE account_id=%s",(self.account_id,))
             ready=await (await self.conn.execute("SELECT to_regclass('companion_private.pattern_batches') IS NOT NULL")).fetchone()
             if ready[0]:

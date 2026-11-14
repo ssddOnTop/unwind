@@ -708,6 +708,278 @@
       ],
       "title": "HealthIngestRequest",
       "type": "object"
+    },
+    "WorkflowAction": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "const": "enqueue",
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "title": "WorkflowAction",
+      "type": "object"
+    },
+    "WorkflowChoice": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "enum": [
+            "for_me",
+            "not_for_me",
+            "unsure"
+          ],
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "title": "WorkflowChoice",
+      "type": "object"
+    },
+    "WorkflowJob": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "utc_date": {
+          "title": "Utc Date",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running",
+            "complete",
+            "unavailable",
+            "cancelled",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "bank_status": {
+          "enum": [
+            "not_checked",
+            "saved",
+            "refreshed",
+            "partial",
+            "unavailable"
+          ],
+          "title": "Bank Status",
+          "type": "string"
+        },
+        "updated_at": {
+          "title": "Updated At",
+          "type": "string"
+        },
+        "bank_message": {
+          "title": "Bank Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "utc_date",
+        "status",
+        "message",
+        "bank_status",
+        "updated_at",
+        "bank_message"
+      ],
+      "title": "WorkflowJob",
+      "type": "object"
+    },
+    "WorkflowPage": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "enum": [
+            "home",
+            "ledger",
+            "brief",
+            "settings"
+          ],
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "paragraphs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Paragraphs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "paragraphs"
+      ],
+      "title": "WorkflowPage",
+      "type": "object"
+    },
+    "WorkflowQuestion": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "const": "attribution",
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "choices": {
+          "items": {
+            "$ref": "#/$defs/WorkflowChoice"
+          },
+          "title": "Choices",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "choices"
+      ],
+      "title": "WorkflowQuestion",
+      "type": "object"
+    },
+    "WorkflowOverview": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1",
+          "default": "1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "eligible": {
+          "title": "Eligible",
+          "type": "boolean"
+        },
+        "next_scheduled_at": {
+          "title": "Next Scheduled At",
+          "type": "string"
+        },
+        "consent_label": {
+          "title": "Consent Label",
+          "type": "string"
+        },
+        "consent_notice": {
+          "title": "Consent Notice",
+          "type": "string"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkflowAction"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pages": {
+          "items": {
+            "$ref": "#/$defs/WorkflowPage"
+          },
+          "title": "Pages",
+          "type": "array"
+        },
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/WorkflowQuestion"
+          },
+          "title": "Questions",
+          "type": "array"
+        },
+        "job": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkflowJob"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "report": {
+          "$ref": "#/$defs/Overview"
+        }
+      },
+      "required": [
+        "enabled",
+        "eligible",
+        "next_scheduled_at",
+        "consent_label",
+        "consent_notice",
+        "action",
+        "pages",
+        "questions",
+        "job",
+        "report"
+      ],
+      "title": "WorkflowOverview",
+      "type": "object"
+    },
+    "EnqueueRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "data_epoch": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
+          "title": "Data Epoch",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch"
+      ],
+      "title": "EnqueueRequest",
+      "type": "object"
     }
   }
 }

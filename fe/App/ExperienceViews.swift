@@ -267,16 +267,18 @@ struct ConnectionsSection: View {
 struct CloudConsentSection: View {
     var isEnabled = false
     var isBusy = false
+    var label = "Allow nightly cloud review"
+    var notice = "Only coarse pattern summaries are sent. Source permissions and cloud consent remain separate."
     let onChange: (Bool) -> Void
 
     var body: some View {
         Section {
-            Toggle("Allow cloud suggestions", isOn: Binding(get: { isEnabled }, set: { onChange($0) }))
+            Toggle(label, isOn: Binding(get: { isEnabled }, set: { onChange($0) }))
                 .disabled(isBusy)
-            Text("Optional wording from eligible Sandbox coverage summaries. Separate from your bank and Health connections.")
+            Text(verbatim: notice)
                 .font(.subheadline).foregroundStyle(.secondary)
         } header: {
-            HStack { Text("Cloud sharing"); Spacer(); AccessibleInfoPopover(title: "Cloud sharing", message: "Off by default. Enabling this allows eligible Sandbox coverage summaries to be sent to an external AI service for optional wording. Live Apple Health records are excluded. Bank consent never turns this on, and you can turn it off at any time.") }
+            HStack { Text("Cloud sharing"); Spacer(); AccessibleInfoPopover(title: "Cloud sharing", message: notice) }
         }
     }
 }

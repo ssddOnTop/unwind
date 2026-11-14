@@ -2859,6 +2859,287 @@ public struct HealthIngestRequest: Codable, Equatable, Sendable {
     }
 }
 
+public struct WorkflowAction: Codable, Equatable, Sendable {
+    public var id: String
+    public var label: String
+    public init(id: String, label: String) {
+        self.id = id
+        self.label = label
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case id, label
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        do { let value = id;
+            guard value == "enqueue" else { throw DecodingError.dataCorruptedError(forKey: .id, in: c, debugDescription: "Invalid contract value") }
+        }
+        label = try c.decode(String.self, forKey: .label)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(label, forKey: .label)
+    }
+}
+
+public struct WorkflowChoice: Codable, Equatable, Sendable {
+    public var id: String
+    public var label: String
+    public init(id: String, label: String) {
+        self.id = id
+        self.label = label
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case id, label
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        do { let value = id;
+            guard ["for_me", "not_for_me", "unsure"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .id, in: c, debugDescription: "Invalid contract value") }
+        }
+        label = try c.decode(String.self, forKey: .label)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(label, forKey: .label)
+    }
+}
+
+public struct WorkflowJob: Codable, Equatable, Sendable {
+    public var id: String
+    public var utc_date: String
+    public var status: String
+    public var message: String
+    public var bank_status: String
+    public var updated_at: String
+    public var bank_message: String
+    public init(id: String, utc_date: String, status: String, message: String, bank_status: String, updated_at: String, bank_message: String) {
+        self.id = id
+        self.utc_date = utc_date
+        self.status = status
+        self.message = message
+        self.bank_status = bank_status
+        self.updated_at = updated_at
+        self.bank_message = bank_message
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case id, utc_date, status, message, bank_status, updated_at, bank_message
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        utc_date = try c.decode(String.self, forKey: .utc_date)
+        status = try c.decode(String.self, forKey: .status)
+        do { let value = status;
+            guard ["queued", "running", "complete", "unavailable", "cancelled", "failed"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .status, in: c, debugDescription: "Invalid contract value") }
+        }
+        message = try c.decode(String.self, forKey: .message)
+        bank_status = try c.decode(String.self, forKey: .bank_status)
+        do { let value = bank_status;
+            guard ["not_checked", "saved", "refreshed", "partial", "unavailable"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .bank_status, in: c, debugDescription: "Invalid contract value") }
+        }
+        updated_at = try c.decode(String.self, forKey: .updated_at)
+        bank_message = try c.decode(String.self, forKey: .bank_message)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(utc_date, forKey: .utc_date)
+        try c.encode(status, forKey: .status)
+        try c.encode(message, forKey: .message)
+        try c.encode(bank_status, forKey: .bank_status)
+        try c.encode(updated_at, forKey: .updated_at)
+        try c.encode(bank_message, forKey: .bank_message)
+    }
+}
+
+public struct WorkflowPage: Codable, Equatable, Sendable {
+    public var id: String
+    public var title: String
+    public var paragraphs: [String]
+    public init(id: String, title: String, paragraphs: [String]) {
+        self.id = id
+        self.title = title
+        self.paragraphs = paragraphs
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case id, title, paragraphs
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        do { let value = id;
+            guard ["home", "ledger", "brief", "settings"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .id, in: c, debugDescription: "Invalid contract value") }
+        }
+        title = try c.decode(String.self, forKey: .title)
+        paragraphs = try c.decode([String].self, forKey: .paragraphs)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(title, forKey: .title)
+        try c.encode(paragraphs, forKey: .paragraphs)
+    }
+}
+
+public struct WorkflowQuestion: Codable, Equatable, Sendable {
+    public var id: String
+    public var label: String
+    public var choices: [WorkflowChoice]
+    public init(id: String, label: String, choices: [WorkflowChoice]) {
+        self.id = id
+        self.label = label
+        self.choices = choices
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case id, label, choices
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        do { let value = id;
+            guard value == "attribution" else { throw DecodingError.dataCorruptedError(forKey: .id, in: c, debugDescription: "Invalid contract value") }
+        }
+        label = try c.decode(String.self, forKey: .label)
+        choices = try c.decode([WorkflowChoice].self, forKey: .choices)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(label, forKey: .label)
+        try c.encode(choices, forKey: .choices)
+    }
+}
+
+public struct WorkflowOverview: Codable, Equatable, Sendable {
+    public var schema_version: String
+    public var enabled: Bool
+    public var eligible: Bool
+    public var next_scheduled_at: String
+    public var consent_label: String
+    public var consent_notice: String
+    public var action: WorkflowAction?
+    public var pages: [WorkflowPage]
+    public var questions: [WorkflowQuestion]
+    public var job: WorkflowJob?
+    public var report: PatternOverview
+    public init(schema_version: String, enabled: Bool, eligible: Bool, next_scheduled_at: String, consent_label: String, consent_notice: String, action: WorkflowAction?, pages: [WorkflowPage], questions: [WorkflowQuestion], job: WorkflowJob?, report: PatternOverview) {
+        self.schema_version = schema_version
+        self.enabled = enabled
+        self.eligible = eligible
+        self.next_scheduled_at = next_scheduled_at
+        self.consent_label = consent_label
+        self.consent_notice = consent_notice
+        self.action = action
+        self.pages = pages
+        self.questions = questions
+        self.job = job
+        self.report = report
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schema_version, enabled, eligible, next_scheduled_at, consent_label, consent_notice, action, pages, questions, job, report
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema_version = try c.decode(String.self, forKey: .schema_version)
+        do { let value = schema_version;
+            guard value == "1" else { throw DecodingError.dataCorruptedError(forKey: .schema_version, in: c, debugDescription: "Invalid contract value") }
+        }
+        enabled = try c.decode(Bool.self, forKey: .enabled)
+        eligible = try c.decode(Bool.self, forKey: .eligible)
+        next_scheduled_at = try c.decode(String.self, forKey: .next_scheduled_at)
+        consent_label = try c.decode(String.self, forKey: .consent_label)
+        consent_notice = try c.decode(String.self, forKey: .consent_notice)
+        action = try c.decodeIfPresent(WorkflowAction.self, forKey: .action)
+        pages = try c.decode([WorkflowPage].self, forKey: .pages)
+        questions = try c.decode([WorkflowQuestion].self, forKey: .questions)
+        job = try c.decodeIfPresent(WorkflowJob.self, forKey: .job)
+        report = try c.decode(PatternOverview.self, forKey: .report)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schema_version, forKey: .schema_version)
+        try c.encode(enabled, forKey: .enabled)
+        try c.encode(eligible, forKey: .eligible)
+        try c.encode(next_scheduled_at, forKey: .next_scheduled_at)
+        try c.encode(consent_label, forKey: .consent_label)
+        try c.encode(consent_notice, forKey: .consent_notice)
+        try c.encode(action, forKey: .action)
+        try c.encode(pages, forKey: .pages)
+        try c.encode(questions, forKey: .questions)
+        try c.encode(job, forKey: .job)
+        try c.encode(report, forKey: .report)
+    }
+}
+
+public struct EnqueueRequest: Codable, Equatable, Sendable {
+    public var schema_version: String
+    public var request_id: String
+    public var data_epoch: String
+    public init(schema_version: String, request_id: String, data_epoch: String) {
+        self.schema_version = schema_version
+        self.request_id = request_id
+        self.data_epoch = data_epoch
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schema_version, request_id, data_epoch
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema_version = try c.decode(String.self, forKey: .schema_version)
+        do { let value = schema_version;
+            guard value == "1" else { throw DecodingError.dataCorruptedError(forKey: .schema_version, in: c, debugDescription: "Invalid contract value") }
+        }
+        request_id = try c.decode(String.self, forKey: .request_id)
+        data_epoch = try c.decode(String.self, forKey: .data_epoch)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schema_version, forKey: .schema_version)
+        try c.encode(request_id, forKey: .request_id)
+        try c.encode(data_epoch, forKey: .data_epoch)
+    }
+}
+
 public struct PreferencesNotifications: Codable, Equatable, Sendable {
     public var enabled: Bool
     public var local_time: String

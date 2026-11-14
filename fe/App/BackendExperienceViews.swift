@@ -17,24 +17,25 @@ struct BackendHomeView: View {
                         Button("Try again") { Task { await model.refresh() } }
                     }
                     if let patterns = model.patternOverview {
-                        Text("Patterns worth reviewing").font(.title2.bold())
+                        if let page = model.workflowPage("home") {
+                            Text(verbatim: page.title).font(.title2.bold())
+                            ForEach(page.paragraphs, id: \.self) { Text(verbatim: $0).font(.caption) }
+                        }
                         Text(verbatim: patterns.source_label).font(.caption).foregroundStyle(.secondary)
-                        Text("Only a pattern summary is sent for AI review.").font(.caption)
                         AccessibleInfoPopover(title: "Pattern privacy", message: patterns.privacy_notice)
-                        Toggle("Fetch latest bank data", isOn: $model.fetchLatestBankData)
-                            .disabled(model.busy || model.patternRetryPending)
-                            .accessibilityIdentifier("patterns.fetchBanks")
-                        Text("Off uses saved bank data. On refreshes linked banks before analysis, even within 24 hours.").font(.caption)
-                        if model.patternRetryPending && !model.patternBusy { Text("Retry keeps the original fetch choice.").font(.caption) }
-                        Text(verbatim: patterns.bank_refresh.message).font(.caption)
-                        if let updated = patterns.bank_refresh.last_updated { Text("All linked banks last refreshed: " + updated).font(.caption) }
-                        Button(model.patternBusy ? (model.fetchLatestBankData ? "Fetching banks, then analyzing…" : "Analyzing patterns…") : "Analyze patterns") {
-                            Task { await model.analyzePatterns() }
-                        }.buttonStyle(.borderedProminent).disabled(model.busy || model.hasPending || (!patterns.can_analyze && !model.fetchLatestBankData))
-                            .accessibilityIdentifier("patterns.analyze")
+                        if let action = model.workflowOverview?.action {
+                            Button(action.label) { Task { await model.analyzePatterns() } }
+                                .buttonStyle(.borderedProminent).disabled(model.busy || model.hasPending)
+                                .accessibilityIdentifier("patterns.enqueue")
+                        }
+                        if let job = model.workflowOverview?.job {
+                            Text(verbatim: job.message).font(.caption)
+                            Text(verbatim: job.bank_message).font(.caption)
+                            if job.status == "queued" || job.status == "running" { ProgressView() }
+                        }
                         PatternSummaryView(model: model, value: patterns)
                         if !patterns.findings.isEmpty {
-                            Button("Prepare an optional doctor question") { showVisit = true }
+                            Button(model.workflowPage("brief")?.title ?? "Review notes") { showVisit = true }
                             Button("Review saved patterns") { openLedger(nil) }
                         }
                     }
@@ -232,11 +233,11 @@ private struct PatternFindingDetail: View {
                     }
                 }
                 Section("Optional context") {
-                    Button("Were these records mostly about you?") { showContext.toggle() }
+                    Button(model.workflowOverview?.questions.first?.label ?? "Optional context") { showContext.toggle() }
                     if showContext {
-                        Button("Mostly about me") { Task { await model.clarifyPattern(concernID, attribution: "for_me") } }
-                        Button("Not mostly about me") { Task { await model.clarifyPattern(concernID, attribution: "not_for_me") } }
-                        Button("Not sure") { Task { await model.clarifyPattern(concernID, attribution: "unsure") } }
+                        ForEach(model.workflowOverview?.questions.first?.choices ?? [], id: \.id) { choice in
+                            Button(choice.label) { Task { await model.clarifyPattern(concernID, attribution: choice.id) } }
+                        }
                     }
                     Text("Your choice is saved only when tapped. It is not sent for AI review.").font(.caption)
                 }.disabled(model.busy)

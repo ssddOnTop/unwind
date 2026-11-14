@@ -43,6 +43,8 @@ names['pattern_ClarifyRequest'] = 'PatternClarifyRequest'
 names['pattern_HealthRecord'] = 'NormalizedHealthSample'
 names['pattern_HealthIngestRequest'] = 'HealthIngestRequest'
 names['pattern_BriefRequest'] = 'PatternBriefRequest'
+for name in ['WorkflowOverview','WorkflowAction','WorkflowPage','WorkflowChoice','WorkflowQuestion','WorkflowJob','EnqueueRequest']:
+    names['pattern_'+name]=name
 objects = []
 def typ(p, name):
     if 'anyOf' in p:
