@@ -4,12 +4,15 @@ import asyncio
 import calendar
 from datetime import datetime, timedelta, timezone
 import json
+import hashlib
 import os
 from pathlib import Path
-from uuid import UUID, uuid5, NAMESPACE_URL
+from uuid import UUID, uuid4, uuid5, NAMESPACE_URL
 import psycopg
 from .postgres import PostgresConfig, lock_key
-from .patterns import HealthSample, Transaction
+from .patterns import HealthSample, Transaction, VERSION, concerns, findings, area_results
+from .pattern_store import current_evidence, source_label
+from psycopg.types.json import Jsonb
 
 DATASET='six-month-pattern-demo-v1'
 SOURCE='Synthetic operator wearable — not Apple device provenance'
@@ -62,10 +65,12 @@ async def load(conn, *, account_id, issuer, subject, now, remove=False, transact
         if not locked[0]: raise ValueError('Stop the selected account runtime before operator load')
         await conn.execute("SELECT set_config('companion.account_id',%s,true)",(account,))
         batch=str(uuid5(NAMESPACE_URL,account+':'+DATASET))
-        # Erase analyses before changing evidence; never show stale/corrected records as current.
-        await conn.execute('DELETE FROM companion_private.pattern_runs WHERE account_id=%s',(account,)) if remove else None
         if remove:
-            await conn.execute("DELETE FROM companion_private.pattern_batches WHERE account_id=%s AND dataset IN (%s,'provider-sandbox-import-v1')",(account,DATASET))
+            # Dataset cleanup is not account-erasure consent. Its raw rows may
+            # cascade, but completed runs, revisions and request bindings never do.
+            removed=await (await conn.execute('DELETE FROM companion_private.pattern_batches WHERE account_id=%s AND dataset=%s RETURNING batch_id',(account,DATASET))).fetchall()
+            if removed:
+                await append_cleanup_assessment(conn,account,now)
             return {'removed':True}
         existing=await (await conn.execute('SELECT 1 FROM companion_private.pattern_batches WHERE account_id=%s AND batch_id=%s',(account,batch))).fetchone()
         if existing:return {'loaded':True,'reused':True}
@@ -85,6 +90,25 @@ async def load(conn, *, account_id, issuer, subject, now, remove=False, transact
         async with conn.cursor() as cursor:
             await cursor.executemany('INSERT INTO companion_private.pattern_transactions(account_id,batch_id,'+','.join(columns)+') VALUES('+','.join(['%s']*8)+')',[(account,txbatch,*(t[k] for k in columns)) for t in tx])
         return {'loaded':True,'reused':False,'health_samples':len(samples),'transactions':len(tx)}
+
+
+async def append_cleanup_assessment(conn, account, now):
+    """Append a deterministic replacement in the same locked cleanup transaction.
+
+    Re-evaluate remaining eligible sources, not just the removed dataset's areas.
+    A separate cache version cannot impersonate a model-reviewed cached result.
+    """
+    dto=await current_evidence(conn,account,now)
+    batches=await (await conn.execute('SELECT provenance FROM companion_private.pattern_batches WHERE account_id=%s AND active',(account,))).fetchall()
+    provenances=[r[0] for r in batches]
+    ids=concerns(dto)
+    snapshot={'areas':[a.model_dump() for a in area_results(dto)],'findings':[f.model_dump() for f in findings(ids,dto)]}
+    digest=hashlib.sha256(json.dumps({'aggregate':dto.model_dump(),'provenance':sorted(provenances)},sort_keys=True).encode()).hexdigest()
+    run,request=str(uuid4()),str(uuid4())
+    await conn.execute("INSERT INTO companion_private.pattern_runs(account_id,run_id,request_id,input_digest,input_version,status,engine,evidence,is_demo,source_label,assessment,analyzed_at) VALUES(%s,%s,%s,%s,%s,'complete','deterministic',%s,%s,%s,%s,clock_timestamp())",(account,run,request,digest,VERSION+':dataset-cleanup',Jsonb(dto.model_dump()),'synthetic' in provenances,source_label(set(provenances)),Jsonb(snapshot)))
+    await conn.execute('INSERT INTO companion_private.pattern_requests(account_id,request_id,run_id) VALUES(%s,%s,%s)',(account,request,run))
+    for rank,area in enumerate(ids):
+        await conn.execute('INSERT INTO companion_private.pattern_insights(account_id,run_id,concern_id,rank) VALUES(%s,%s,%s,%s)',(account,run,area,rank))
 
 
 def main():

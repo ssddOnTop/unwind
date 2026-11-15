@@ -22,6 +22,16 @@ def source_label(provenances):
     return 'Normalized connected records — coverage is limited'
 
 
+async def current_evidence(conn, account, now):
+    """Shared eligible-source aggregation; no model or runtime effects."""
+    rows=await (await conn.execute("SELECT h.hk_type,h.start_at,h.end_at,h.timezone,h.value,h.category FROM companion_private.health_samples h JOIN companion_private.pattern_batches b USING(account_id,batch_id) WHERE h.account_id=%s AND b.active AND NOT h.deleted AND h.end_at>=now()-interval '190 days' AND (b.provenance='synthetic' OR NOT EXISTS(SELECT 1 FROM companion_private.pattern_batches sb WHERE sb.account_id=h.account_id AND sb.active AND sb.provenance='synthetic' AND EXISTS(SELECT 1 FROM companion_private.health_samples sh WHERE sh.account_id=sb.account_id AND sh.batch_id=sb.batch_id AND NOT sh.deleted)))",(account,))).fetchall()
+    samples=[dict(zip(('hk_type','start_at','end_at','timezone','value','category'),r)) for r in rows]
+    rows=await (await conn.execute('SELECT t.event_at,t.category,t.amount FROM companion_private.pattern_transactions t JOIN companion_private.pattern_batches b USING(account_id,batch_id) WHERE t.account_id=%s AND b.active AND NOT t.deleted',(account,))).fetchall()
+    tx=[dict(zip(('event_at','category','amount'),r)) for r in rows]
+    dto=aggregate(samples,tx,now)
+    return dto
+
+
 class PatternCoordinator:
     def __init__(self, service, persistence, model_factory=None):
         self.service,self.store=service,persistence
@@ -208,11 +218,7 @@ class PatternCoordinator:
                 await self._recover_orphans(c)
                 row=await (await c.execute('SELECT run_id,status,engine,analyzed_at,evidence,is_demo FROM companion_private.pattern_runs WHERE account_id=%s AND run_id IN (SELECT run_id FROM companion_private.pattern_requests WHERE account_id=%s AND request_id=%s)',(account,account,request_id))).fetchone()
                 if row: return await self._view(c,row)
-                rows=await (await c.execute("SELECT h.hk_type,h.start_at,h.end_at,h.timezone,h.value,h.category FROM companion_private.health_samples h JOIN companion_private.pattern_batches b USING(account_id,batch_id) WHERE h.account_id=%s AND b.active AND NOT h.deleted AND h.end_at>=now()-interval '190 days' AND (b.provenance='synthetic' OR NOT EXISTS(SELECT 1 FROM companion_private.pattern_batches sb WHERE sb.account_id=h.account_id AND sb.active AND sb.provenance='synthetic' AND EXISTS(SELECT 1 FROM companion_private.health_samples sh WHERE sh.account_id=sb.account_id AND sh.batch_id=sb.batch_id AND NOT sh.deleted)))",(account,))).fetchall()
-                samples=[dict(zip(('hk_type','start_at','end_at','timezone','value','category'),r)) for r in rows]
-                rows=await (await c.execute('SELECT t.event_at,t.category,t.amount FROM companion_private.pattern_transactions t JOIN companion_private.pattern_batches b USING(account_id,batch_id) WHERE t.account_id=%s AND b.active AND NOT t.deleted',(account,))).fetchall()
-                tx=[dict(zip(('event_at','category','amount'),r)) for r in rows]
-                dto=aggregate(samples,tx,self.service.clock())
+                dto=await current_evidence(c,account,self.service.clock())
                 batches=await (await c.execute('SELECT provenance FROM companion_private.pattern_batches WHERE account_id=%s AND active',(account,))).fetchall()
                 demo=any(r[0]=='synthetic' for r in batches)
                 # Model choice participates in the local cache key but never the model prompt as user identity.

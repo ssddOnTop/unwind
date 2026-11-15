@@ -81,3 +81,55 @@ DROP TRIGGER IF EXISTS immutable_revision ON companion_private.pattern_revisions
 CREATE TRIGGER immutable_revision BEFORE UPDATE ON companion_private.pattern_revisions
  FOR EACH ROW EXECUTE FUNCTION companion_private.guard_assessment_update();
 """
+
+
+ASSESSMENT_TABLES = ('pattern_runs', 'pattern_insights', 'pattern_requests', 'pattern_revisions')
+
+
+def validate_runtime_role(conn, role):
+    if role in {'anon', 'authenticated', 'postgres', 'PUBLIC'}:
+        raise ValueError('A dedicated restricted runtime role is required')
+    flags = conn.execute('SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=%s', (role,)).fetchone()
+    if flags is None or any(flags):
+        raise ValueError('A dedicated restricted runtime role is required')
+
+
+def upgrade_assessments(conn, runtime_role):
+    """Explicit operator entry point; atomically upgrade v3/v4 without rewriting its marker."""
+    from psycopg import sql
+    with conn.transaction():
+        conn.execute('LOCK TABLE companion_private.schema_version IN EXCLUSIVE MODE')
+        versions = conn.execute('SELECT version FROM companion_private.schema_version').fetchall()
+        if versions not in ([(3,)], [(4,)]):
+            raise ValueError('Assessment upgrade requires private schema 3 or 4')
+        validate_runtime_role(conn, runtime_role)
+        # Fail rather than silently backfill only the operator's RLS-visible rows.
+        # This does not grant BYPASSRLS to either the operator or runtime role.
+        conn.execute('SET LOCAL row_security=off')
+        conn.execute(ASSESSMENT_MIGRATION)
+        for table in ASSESSMENT_TABLES:
+            conn.execute(sql.SQL('GRANT SELECT,INSERT,UPDATE,DELETE ON companion_private.{} TO {}').format(sql.Identifier(table), sql.Identifier(runtime_role)))
+        return versions[0][0]
+
+
+def main():
+    import argparse
+    import json
+    import os
+    import psycopg
+    from .postgres import PostgresConfig
+    parser = argparse.ArgumentParser(description='Assessment-only upgrade for existing private schema v3 or v4; preserves schema version and data')
+    parser.add_argument('--confirm-current-assessment-schema', action='store_true', required=True)
+    parser.add_argument('--runtime-role', required=True)
+    args = parser.parse_args()
+    try:
+        with psycopg.connect(PostgresConfig(os.environ.get('DATABASE_URL', '')).dsn, autocommit=True) as conn:
+            version = upgrade_assessments(conn, args.runtime_role)
+        print(json.dumps({'migration': 'completed', 'version': version, 'runtime_grants': 'assessment-scoped'}))
+    except Exception:
+        print('{"migration":"rejected","details":"Verify schema v3/v4 and restricted operator authority."}')
+        raise SystemExit(1)
+
+
+if __name__ == '__main__':
+    main()

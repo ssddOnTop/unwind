@@ -216,7 +216,7 @@ async def test_authenticated_http_vertical_slice_and_delete(pg_dsn,tmp_path):
         assert (await client.get('/patterns/v1',headers=h.headers('a'))).json()['findings']==[]
         assert len(model.calls)==1
 
-async def test_operator_lock_provider_batch_removal_and_unknown_fields(configured):
+async def test_operator_lock_named_dataset_cleanup_preserves_provider_batch_and_rejects_unknown_fields(configured):
     runtime,a,b,store,c,model=configured
     async with runtime.pool.connection() as conn:
         with pytest.raises(ValueError,match='Stop the selected account runtime'):
@@ -235,7 +235,8 @@ async def test_operator_lock_provider_batch_removal_and_unknown_fields(configure
         await load(conn,account_id=a,issuer='https://issuer.invalid',subject='private-subject',now=NOW,remove=True)
         async with conn.transaction():
             await conn.execute("SELECT set_config('companion.account_id',%s,true)",(a,))
-            assert (await (await conn.execute('SELECT count(*) FROM companion_private.pattern_batches')).fetchone())[0]==0
+            assert (await (await conn.execute('SELECT dataset FROM companion_private.pattern_batches')).fetchall())==[('provider-sandbox-import-v1',)]
+            assert (await (await conn.execute('SELECT count(*) FROM companion_private.pattern_transactions')).fetchone())[0]==1
 
 
 async def test_190_day_retention_preserves_unaffected_review_attribution_and_request_binding(configured):
