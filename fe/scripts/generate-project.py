@@ -12,7 +12,7 @@ files=[]; builds=[]
 for source in sorted((root/'App').glob('*.swift')):
     f=obj(source.name,f'isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = {source.name}; sourceTree = "<group>";')
     files.append(f); builds.append(obj('build-'+source.name,f'isa = PBXBuildFile; fileRef = {f};'))
-for name,kind in [('Info.plist','text.plist.xml'),('LocalCompanion.entitlements','text.plist.entitlements'),('ReportNotifications.entitlements','text.plist.entitlements')]:
+for name,kind in [('Info.plist','text.plist.xml'),('LocalCompanion.entitlements','text.plist.entitlements'),('ReportNotifications.entitlements','text.plist.entitlements'),('HealthBackground.entitlements','text.plist.entitlements'),('HealthBackgroundNotifications.entitlements','text.plist.entitlements')]:
     files.append(obj(name,f'isa = PBXFileReference; lastKnownFileType = {kind}; path = {name}; sourceTree = "<group>";'))
 app=obj('app-group',f'isa = PBXGroup; children = {refs(files)}; path = App; sourceTree = "<group>";')
 product=obj('product','isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LocalCompanion.app; sourceTree = BUILT_PRODUCTS_DIR;')

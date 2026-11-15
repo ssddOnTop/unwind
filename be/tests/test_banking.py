@@ -104,7 +104,7 @@ def test_explicit_profile_contract_openapi_and_private_inventory(bank):
     client,provider,app=bank
     assert banking(client)['connections']==[]
     spec=client.get('/openapi.json').json()
-    assert len(spec['paths'])==25 and '/banking/v1/actions' in spec['paths']
+    assert len(spec['paths'])==27 and '/banking/v1/actions' in spec['paths']
     operation=spec['paths']['/banking/v1/actions']['post']
     assert operation['requestBody']['content']['application/json']['schema']['discriminator']['propertyName']=='action'
     assert '/banking/v1/demo' not in spec['paths']

@@ -80,12 +80,13 @@ class Boundary:
                 requests[('POST', '/patterns/v1/analyze')] = 'pattern_request'
                 requests[('POST', '/patterns/v1/clarify')] = 'pattern_clarify'
                 requests[('POST','/patterns/v1/brief')] = 'pattern_brief'
+                requests[('POST','/health/v1/incremental')]='health_incremental'
                 requests[('POST','/workflows/v1/enqueue')] = 'workflow_enqueue'
                 for action in ('status','register','revoke','logout'):requests[('POST','/report-notifications/v1/'+action)]='notification_request'
                 requests[('POST','/health/v1/samples')] = 'health_samples'
             if self.banking_profile:
                 requests[('POST','/banking/v1/actions')] = 'banking_request'
-            reads = {"/health", "/state"} | ({"/experience/v1", '/patterns/v1', '/workflows/v1','/report-notifications/v1'} if self.experience_profile else set()) | ({'/banking/v1'} if self.banking_profile else set())
+            reads = {"/health", "/state"} | ({"/experience/v1", '/patterns/v1', '/workflows/v1','/report-notifications/v1','/health/v1/incremental/status'} if self.experience_profile else set()) | ({'/banking/v1'} if self.banking_profile else set())
             if scope.get("query_string") and scope["path"] in {*reads, *(r[1] for r in requests)}:
                 raise DomainError()
             chunks, size = [], 0
@@ -122,6 +123,9 @@ class Boundary:
                     from .health_ingestion import HealthIngestRequest
                     try: HealthIngestRequest.model_validate_json(raw)
                     except Exception: raise DomainError() from None
+                elif route == ('POST','/health/v1/incremental'):
+                    from .health_incremental import parse_request
+                    parse_request(body)
                 elif route[1].startswith('/report-notifications/v1/'):
                     from .report_notification_contracts import NotificationRegister,NotificationRevoke,NotificationLogout,NotificationStatusRequest
                     try: {'status':NotificationStatusRequest,'register':NotificationRegister,'revoke':NotificationRevoke,'logout':NotificationLogout}[route[1].split('/')[-1]].model_validate(body)
@@ -295,6 +299,23 @@ def create_app(data_dir: Path | None = None, *, replacements=None, scheduler=Non
         @app.post('/patterns/v1/analyze', response_model=PatternOverview, responses=experience_errors)
         async def analyze_patterns(body: AnalyzeRequest):
             raise DomainError('consent_required',403,'Direct manual analysis is disabled. Use the authorized workflow action.')
+
+        from .health_incremental import HealthIncrementalRequest,HealthIncrementalReceipt,ingest_health_incremental
+        from .health_incremental_service import HealthIncrementalStatus
+
+        def incremental():
+            value=getattr(service,'incremental_health',None)
+            if value is None:raise DomainError('not_configured',409)
+            return value
+
+        @app.get('/health/v1/incremental/status',response_model=HealthIncrementalStatus,responses=experience_errors)
+        async def health_incremental_status():
+            return await incremental().status(service)
+
+        @app.post('/health/v1/incremental',response_model=HealthIncrementalReceipt,responses=experience_errors)
+        async def health_incremental_ingest(body: HealthIncrementalRequest):
+            await incremental().require(service)
+            return await ingest_health_incremental(service,body)
 
         from .report_notification_contracts import NotificationStatus,NotificationRegister,NotificationRegistration,NotificationRevoke,NotificationLogout,NotificationLogoutResult,NotificationStatusRequest
         from .auth import Principal

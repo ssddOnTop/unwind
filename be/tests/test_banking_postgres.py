@@ -16,7 +16,7 @@ from test_postgres import local_pg_cluster,pg_dsn,runtime,event,receipt
 from test_postgres_http import signing_key,VerifyEvents
 
 
-def setup(tmp_path,key,runtime,*,collision=False,workflow_config=None):
+def setup(tmp_path,key,runtime,*,collision=False,workflow_config=None,health_incremental_enabled=None):
     h=Harness(tmp_path/'residual',key);providers={}
     def replacements(path):
         provider=BankProvider();providers[path.name]=provider
@@ -29,7 +29,7 @@ def setup(tmp_path,key,runtime,*,collision=False,workflow_config=None):
                 claim_item=lambda item,epoch:runtime.reserve_item(path.name,item,epoch))}
     h.app=create_authenticated_app(tmp_path/'residual',verifier=h.verifier,clock=lambda:NOW,housekeeping_interval=3600,
         postgres_runtime=runtime,banking_profile=True,experience_profile=True,replacements_factory=replacements,
-        webhook_url='https://receiver.example/webhooks/plaid',webhook_verifier=VerifyEvents(),webhook_worker_enabled=False,workflow_config=workflow_config,workflow_worker_enabled=False)
+        webhook_url='https://receiver.example/webhooks/plaid',webhook_verifier=VerifyEvents(),webhook_worker_enabled=False,workflow_config=workflow_config,workflow_worker_enabled=False,health_incremental_enabled=health_incremental_enabled,health_retention_worker_enabled=False)
     h.app.state.webhook_worker.periodic=False  # Explicit ticks in these tests exercise notification targeting only.
     return h,providers
 

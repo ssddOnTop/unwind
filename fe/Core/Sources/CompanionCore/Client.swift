@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 public enum Wire {
     public static func encode<T: Encodable>(_ value: T) throws -> Data {
@@ -27,10 +28,11 @@ public struct PendingMutation: Codable, Equatable, Sendable, Identifiable {
     public var blocksDisplay: Bool { path == "/data" || (path == "/demo" && (try? Wire.decode(DemoRequest.self, body).action) == "reset") }
     public init<T: Encodable>(path: String, method: String = "POST", request: T, now: Date = Date()) throws {
         let body = try Wire.encode(request)
-        let methods = ["/health/v1/samples": "POST", "/observations": "POST", "/feedback": "POST", "/preferences": "PUT", "/process": "POST", "/demo": "POST", "/data": "DELETE", "/experience/v1/answers": "POST"]
+        let methods = ["/health/v1/incremental": "POST", "/health/v1/samples": "POST", "/observations": "POST", "/feedback": "POST", "/preferences": "PUT", "/process": "POST", "/demo": "POST", "/data": "DELETE", "/experience/v1/answers": "POST"]
         guard methods[path] == method, body.count <= 1_048_576 else { throw ClientFailure.rejected("invalid_request", false) }
         // Round-trip through exact required-key/enum decoders before persisting a request.
         switch path {
+        case "/health/v1/incremental": _ = try Wire.decode(HealthIncrementalRequest.self, body)
         case "/health/v1/samples": _ = try Wire.decode(HealthIngestRequest.self, body)
         case "/observations": _ = try Wire.decode(ObservationBatch.self, body)
         case "/feedback": _ = try Wire.decode(FeedbackRequest.self, body)
@@ -50,13 +52,17 @@ public struct PendingMutation: Codable, Equatable, Sendable, Identifiable {
 public struct LocalSnapshot: Codable, Equatable, Sendable {
     public var state: State?
     public var outbox: [PendingMutation]
+    public var healthStreams: [String: HealthIncrementalStream]?
+    public var healthAuthorizationEpoch: String?
+    public var healthCollectionPaused: Bool?
     public init(state: State? = nil, outbox: [PendingMutation] = []) { self.state = state; self.outbox = outbox }
     /// No retagging: the old queue and cached records die at the epoch boundary.
     public mutating func accept(_ incoming: State) {
-        if state?.data_epoch != incoming.data_epoch { outbox.removeAll() }
+        if state?.data_epoch != incoming.data_epoch { outbox.removeAll(); healthStreams = nil; healthAuthorizationEpoch = nil; healthCollectionPaused = nil }
         else if let state, state.revision > incoming.revision { return }
         state = incoming
     }
+    public var hasGeneralPendingChanges: Bool { outbox.contains { $0.path != "/health/v1/incremental" } }
     public var hidesCachedData: Bool { outbox.contains(where: \.blocksDisplay) }
 }
 
@@ -150,6 +156,7 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
         bankingGeneration += 1; bankingFlight = nil; bankingSnapshot = nil
     }
     private var sessionActive = true
+    private var healthSessionValidator: (@MainActor @Sendable () throws -> Void)?
     private let sessionValidator: @MainActor @Sendable () throws -> Void
     private var plaidGeneration = 0
     private var plaidFlight: UUID?
@@ -225,7 +232,7 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
     }
     public func workflows(requestID: String? = nil) async throws -> WorkflowOverview {
         try validateSession()
-        guard !busy, snapshot.outbox.isEmpty else { throw ClientFailure.busy }
+        guard !busy, !snapshot.hasGeneralPendingChanges else { throw ClientFailure.busy }
         guard let epoch = snapshot.state?.data_epoch else { throw ClientFailure.noState }
         let body = try requestID.map { try Wire.encode(EnqueueRequest(schema_version: "1", request_id: $0, data_epoch: epoch)) }
         let value = try Wire.decode(WorkflowOverview.self, await send(request(path: requestID == nil ? "/workflows/v1" : "/workflows/v1/enqueue", method: requestID == nil ? "GET" : "POST", body: body)))
@@ -235,7 +242,7 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
     }
     public func patterns(requestID: String? = nil, fetchLatestBankData: Bool = false) async throws -> PatternOverview {
         try validateSession()
-        guard !busy, snapshot.outbox.isEmpty else { throw ClientFailure.busy }
+        guard !busy, !snapshot.hasGeneralPendingChanges else { throw ClientFailure.busy }
         let epoch = snapshot.state?.data_epoch
         let body = try requestID.map { try Wire.encode(PatternAnalyzeRequest(schema_version: "1", request_id: $0, data_epoch: epoch ?? "", fetch_latest_bank_data: fetchLatestBankData)) }
         let value = try Wire.decode(PatternOverview.self, await send(request(path: requestID == nil ? "/patterns/v1" : "/patterns/v1/analyze", method: requestID == nil ? "GET" : "POST", body: body)))
@@ -245,7 +252,7 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
     }
     public func clarifyPattern(runID: String, concernID: String, attribution: String) async throws -> PatternOverview {
         try validateSession()
-        guard !busy, snapshot.outbox.isEmpty else { throw ClientFailure.busy }
+        guard !busy, !snapshot.hasGeneralPendingChanges else { throw ClientFailure.busy }
         let epoch = snapshot.state?.data_epoch
         let body = try Wire.encode(PatternClarifyRequest(schema_version: "1", run_id: runID, concern_id: concernID, attribution: attribution))
         let value = try Wire.decode(PatternOverview.self, await send(request(path: "/patterns/v1/clarify", method: "POST", body: body)))
@@ -254,7 +261,7 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
     }
     public func savePatternBrief(runID: String, expectedBrief: String, text: String) async throws -> PatternOverview {
         try validateSession()
-        guard !busy, snapshot.outbox.isEmpty else { throw ClientFailure.busy }
+        guard !busy, !snapshot.hasGeneralPendingChanges else { throw ClientFailure.busy }
         let epoch = snapshot.state?.data_epoch
         let body = try Wire.encode(PatternBriefRequest(schema_version: "1", run_id: runID, expected_brief: expectedBrief, text: text))
         let value = try Wire.decode(PatternOverview.self, await send(request(path: "/patterns/v1/brief", method: "POST", body: body)))
@@ -290,7 +297,7 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
     public func refreshBanking() async throws -> BankingOverview {
         try validateSession()
         guard !busy, bankingFlight == nil else { throw ClientFailure.busy }
-        guard snapshot.outbox.isEmpty else { bankingSnapshot = nil; throw ClientFailure.pendingChanges }
+        guard !snapshot.hasGeneralPendingChanges else { bankingSnapshot = nil; throw ClientFailure.pendingChanges }
         return try await fetchBanking()
     }
     /// One logical action, one immutable body and request ID. Nothing is queued or cached.
@@ -299,7 +306,7 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
     public func banking(_ action: BankingRequest) async throws -> BankingOverview {
         try validateSession()
         guard !busy, bankingFlight == nil else { throw ClientFailure.busy }
-        guard snapshot.outbox.isEmpty else { throw ClientFailure.pendingChanges }
+        guard !snapshot.hasGeneralPendingChanges else { throw ClientFailure.pendingChanges }
         guard let state = snapshot.state, let current = bankingSnapshot,
               current.version == action.version, state.data_epoch == action.version.data_epoch,
               state.revision == action.version.revision else { throw BankingTransportFailure.staleAction }
@@ -309,7 +316,7 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
         func check() throws {
             try Task.checkCancellation(); try validateSession()
             guard generation == bankingGeneration, snapshot.state?.data_epoch == action.version.data_epoch,
-                  snapshot.outbox.isEmpty else { throw BankingTransportFailure.interrupted }
+                  !snapshot.hasGeneralPendingChanges else { throw BankingTransportFailure.interrupted }
         }
         let body = try action.body()
         let outgoing = request(path: "/banking/v1/actions", method: "POST", body: body)
@@ -345,7 +352,7 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
     /// A caller must carry the Link-origin epoch into exchange, never substitute the current one.
     public func plaid(_ action: PlaidAction, epoch: String, requestID: String = UUID().uuidString) async throws -> PlaidReply {
         guard !busy, plaidFlight == nil else { throw ClientFailure.busy }
-        guard snapshot.outbox.isEmpty else { throw ClientFailure.pendingChanges }
+        guard !snapshot.hasGeneralPendingChanges else { throw ClientFailure.pendingChanges }
         guard snapshot.state?.data_epoch == epoch else { throw PlaidFailure.staleWork }
         if action.name == "exchange" || action.name == "sync" {
             guard snapshot.state?.sources.contains(where: { $0.id == "plaid" && $0.enabled && $0.consent == "granted" }) == true else { throw ClientFailure.rejected("consent_required", false) }
@@ -356,7 +363,7 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
         func check() throws {
             try Task.checkCancellation()
             guard generation == plaidGeneration, snapshot.state?.data_epoch == epoch,
-                  snapshot.outbox.isEmpty else { throw PlaidFailure.staleWork }
+                  !snapshot.hasGeneralPendingChanges else { throw PlaidFailure.staleWork }
         }
         let body = try action.body(epoch: epoch, requestID: requestID)
         let outgoing = request(path: "/connections/plaid", method: "POST", body: body)
@@ -426,25 +433,30 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
         guard mutation.epoch == state.data_epoch else { throw ClientFailure.rejected("epoch_mismatch", false) }
         if mutation.blocksDisplay { invalidatePlaidWork() }
         var next = snapshot
-        if replacingQueue { next.outbox.removeAll() }
+        if replacingQueue { next.outbox.removeAll { $0.path != "/health/v1/incremental" } }
         if let existing = next.outbox.first(where: { $0.id == mutation.id }) {
             guard existing == mutation else { throw ClientFailure.rejected("idempotency_conflict", false) }
             return
         }
-        next.outbox.append(mutation); try persist(next)
+        if mutation.path == "/health/v1/samples" && incrementalHealthHasState { throw ClientFailure.rejected("incremental_cutover", false) }
+        if mutation.blocksDisplay { next.outbox.insert(mutation, at: 0) }
+        else if mutation.path != "/health/v1/incremental", let firstHealth = next.outbox.firstIndex(where: { $0.path == "/health/v1/incremental" }) { next.outbox.insert(mutation, at: firstHealth) }
+        else { next.outbox.append(mutation) }
+        try persist(next)
     }
     public func discardPending() throws {
         guard !busy else { throw ClientFailure.busy }
-        var next = snapshot; next.outbox.removeAll(); try persist(next)
+        var next = snapshot; next.outbox.removeAll { $0.path != "/health/v1/incremental" }; try persist(next)
     }
     public func synchronize(now: Date = Date()) async throws {
         guard !busy else { throw ClientFailure.busy }; busy = true; defer { busy = false }
         // Refresh first: another client may have erased/reset the server while we were offline.
         try await fetch()
         while let item = snapshot.outbox.first {
+            if item.path == "/health/v1/incremental", snapshot.state?.sources.contains(where: { $0.id == "healthkit" && $0.enabled && $0.consent == "granted" }) != true { return }
             guard item.epoch == snapshot.state?.data_epoch else { throw ClientFailure.rejected("epoch_mismatch", false) }
-            guard now.timeIntervalSince(item.createdAt) < 90 * 86_400 else {
-                var next = snapshot; next.outbox.removeAll(); try persist(next); throw ClientFailure.expiredRequest
+            guard item.path == "/health/v1/incremental" || now.timeIntervalSince(item.createdAt) < 90 * 86_400 else {
+                var next = snapshot; next.outbox.removeAll { $0.path != "/health/v1/incremental" }; try persist(next); throw ClientFailure.expiredRequest
             }
             if let code = item.blockedCode { throw ClientFailure.rejected(code, false) }
             let r = request(path: item.path, method: item.method, body: item.body)
@@ -479,7 +491,9 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
             var next = snapshot
             var receivedExperience: ExperienceV1?
             next.outbox.removeAll { $0.id == item.id }
-            if item.path == "/experience/v1/answers" {
+            if item.path == "/health/v1/incremental" {
+                try validateHealthReceipt(HTTPResult(status: 200, body: result), item: item)
+            } else if item.path == "/experience/v1/answers" {
                 let returned = try Wire.decode(ExperienceV1.self, result)
                 guard returned.data_epoch == item.epoch else { throw ClientFailure.rejected("stale_experience", false) }
                 // Preserve the server response only after current state confirms it is not an old receipt.
@@ -498,6 +512,103 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
                receivedExperience.revision >= (experienceSnapshot?.revision ?? 0) {
                 experienceSnapshot = receivedExperience
             }
+        }
+    }
+}
+
+extension CompanionClient {
+    public func setHealthSessionValidator(_ validate: @escaping @MainActor @Sendable () throws -> Void) { healthSessionValidator = validate }
+    private func persistHealth(_ next: LocalSnapshot) throws {
+        guard sessionActive else { throw AuthenticationFailure.locked }
+        try (healthSessionValidator ?? sessionValidator)()
+        guard snapshot.state?.data_epoch == next.state?.data_epoch else { throw ClientFailure.invalidResponse }
+        try storage.save(next); snapshot = next
+    }
+    public func incrementalHealthStatus() async throws -> HealthIncrementalStatus {
+        try validateSession()
+        let result = try await transport.send(request(path: "/health/v1/incremental/status", method: "GET", body: nil))
+        return try healthStatus(result)
+    }
+    public func backgroundHealthStatus(using background: any HTTPTransport) async throws -> HealthIncrementalStatus {
+        guard sessionActive, snapshot.state != nil else { throw AuthenticationFailure.locked }
+        return try healthStatus(await background.send(request(path: "/health/v1/incremental/status", method: "GET", body: nil)))
+    }
+    private func healthStatus(_ result: HTTPResult) throws -> HealthIncrementalStatus {
+        guard sessionActive, result.status == 200 else { throw ClientFailure.invalidResponse }
+        let status = try Wire.decode(HealthIncrementalStatus.self, result.body)
+        guard status.data_epoch == snapshot.state?.data_epoch else { throw ClientFailure.invalidResponse }
+        return status
+    }
+    public var incrementalHealthHasState: Bool { !(snapshot.healthStreams ?? [:]).isEmpty }
+    public func setHealthCollectionPaused(_ paused: Bool) throws {
+        try validateSession(); var next = snapshot; next.healthCollectionPaused = paused; try persist(next)
+    }
+    public func recordHealthAuthorizationRequested() throws {
+        try validateSession(); var next = snapshot; next.healthAuthorizationEpoch = snapshot.state?.data_epoch; try persistHealth(next)
+    }
+    public var healthAuthorizationRequestedOnDevice: Bool { snapshot.state?.data_epoch != nil && snapshot.healthAuthorizationEpoch == snapshot.state?.data_epoch }
+    public func validateHealthJournal(_ status: HealthIncrementalStatus) throws {
+        guard sessionActive, snapshot.state?.data_epoch == status.data_epoch, status.enabled, status.schema_ready, status.baseline_supported, status.source_allowed else { throw ClientFailure.invalidResponse }
+        guard !snapshot.hasGeneralPendingChanges else { throw ClientFailure.busy }
+        for remote in status.streams {
+            let local = snapshot.healthStreams?[remote.hk_type]
+            if let id = remote.stream_id {
+                guard let local, local.epoch == status.data_epoch, local.streamID == id,
+                      remote.next_sequence <= local.nextSequence else { throw ClientFailure.invalidResponse }
+            } else if let local, local.nextSequence > 0 {
+                guard snapshot.outbox.contains(where: { item in
+                    guard item.path == "/health/v1/incremental", let body = try? Wire.decode(HealthIncrementalRequest.self,item.body) else { return false }
+                    return body.hk_type == remote.hk_type && body.stream_id == local.streamID && body.sequence == 0
+                }) else { throw ClientFailure.invalidResponse }
+            }
+        }
+    }
+    public func healthCheckpoint(type: String) -> HealthIncrementalCheckpoint? { snapshot.healthStreams?[type]?.checkpoint }
+    public func saveHealthCheckpoint(type: String, checkpoint: HealthIncrementalCheckpoint, epoch: String) throws {
+        guard sessionActive, snapshot.state?.data_epoch == epoch else { throw AuthenticationFailure.locked }
+        var next = snapshot
+        var stream = next.healthStreams?[type] ?? HealthIncrementalStream(epoch: epoch, streamID: UUID().uuidString.lowercased(), nextSequence: 0, checkpoint: checkpoint, lastAdmission: nil)
+        guard stream.epoch == epoch, stream.checkpoint.start == checkpoint.start,
+              stream.checkpoint.anchor == checkpoint.anchor else { throw ClientFailure.invalidResponse }
+        // Anchor progression happens only in the same atomic write as its typed outbox row.
+        stream.checkpoint = checkpoint
+        if next.healthStreams == nil { next.healthStreams = [:] }
+        next.healthStreams?[type] = stream; try persistHealth(next)
+    }
+    public func admitHealthDelta(type: String, epoch: String, samples: [IncrementalSample], deletedUUIDs: [String], anchor: Data, hasMore: Bool) throws {
+        guard sessionActive, snapshot.state?.data_epoch == epoch, !anchor.isEmpty,
+              var stream = snapshot.healthStreams?[type], stream.epoch == epoch else { throw ClientFailure.invalidResponse }
+        guard !snapshot.outbox.contains(where: { $0.blocksDisplay }) else { throw ClientFailure.busy }
+        let body = HealthIncrementalRequest(schema_version: "1", request_id: UUID().uuidString.lowercased(), data_epoch: epoch, hk_type: type, stream_id: stream.streamID, sequence: stream.nextSequence, has_more: hasMore, samples: samples, deleted_uuids: deletedUUIDs)
+        var identity = body; identity.request_id = "00000000-0000-0000-0000-000000000000"; identity.sequence = 0
+        let digest = SHA256.hash(data: try Wire.encode(identity)).map { String(format: "%02x", $0) }.joined()
+        let admission = HealthIncrementalAdmission(anchor: anchor, hasMore: hasMore, digest: digest)
+        if stream.lastAdmission == admission { return }
+        guard snapshot.outbox.count < 512 else { throw ClientFailure.busy }
+        let mutation = try PendingMutation(path: "/health/v1/incremental", request: body)
+        stream.nextSequence += 1; stream.lastAdmission = admission
+        stream.checkpoint = HealthIncrementalCheckpoint(start: stream.checkpoint.start, anchor: anchor, terminalPending: hasMore)
+        var next = snapshot; next.healthStreams?[type] = stream; next.outbox.append(mutation)
+        try persistHealth(next) // One protected atomic file: no advanced anchor without the data obligation.
+    }
+    private func validateHealthReceipt(_ result: HTTPResult, item: PendingMutation) throws {
+        guard sessionActive, result.status == 200 else { throw ClientFailure.invalidResponse }
+        let expected = try Wire.decode(HealthIncrementalRequest.self, item.body)
+        let received = try Wire.decode(HealthIncrementalReceipt.self, result.body)
+        guard received.request_id == expected.request_id, received.data_epoch == expected.data_epoch,
+              received.data_epoch == snapshot.state?.data_epoch, received.stream_id == expected.stream_id,
+              received.sequence == expected.sequence, received.hk_type == expected.hk_type else { throw ClientFailure.invalidResponse }
+    }
+    public func drainHealthDeltas(using background: any HTTPTransport) async throws {
+        guard sessionActive else { throw AuthenticationFailure.locked }
+        guard !busy else { throw ClientFailure.busy }
+        busy = true; defer { busy = false }
+        while let item = snapshot.outbox.first {
+            guard item.path == "/health/v1/incremental" else { return } // Never send general queued writes under the background lease.
+            let result = try await background.send(request(path: item.path, method: item.method, body: item.body))
+            try validateHealthReceipt(result, item: item)
+            guard snapshot.outbox.first == item else { throw AuthenticationFailure.locked }
+            var next = snapshot; next.outbox.removeFirst(); try persistHealth(next)
         }
     }
 }
