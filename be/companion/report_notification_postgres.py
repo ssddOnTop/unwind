@@ -15,6 +15,7 @@ from typing import Protocol
 from uuid import UUID, uuid4, uuid5, NAMESPACE_URL
 
 from .auth import Principal
+from .pattern_store import notification_candidate
 from .report_notifications import APNsTransport, Job, MAX_ATTEMPTS, LEASE_SECONDS
 
 
@@ -50,20 +51,15 @@ class Admission:
     environment: str
 
 
-# Every dispatch and claim must still have a meaningful, COMPLETE persisted report.
-# "Meaningful" means at least one persisted insight not rejected as not-for-me.
+# SQL gates registration/session/freshness. The shared notification_candidate
+# authority additionally binds every enqueue, claim and send to the current run/key.
 VALID = """
  o.epoch=s.epoch AND o.scope_revision=s.revision
  AND r.epoch=s.epoch AND r.scope_revision=s.revision AND r.enabled
  AND o.consent_revision=r.consent_revision AND NOT ns.revoked
- AND p.status='complete'
+ AND o.actionability_key IS NOT NULL
  AND e.completed_at>=clock_timestamp()-interval '24 hours'
- AND NOT EXISTS(SELECT 1 FROM companion_private.report_notification_events newer
-   JOIN companion_private.pattern_runs np ON np.account_id=newer.account_id AND np.run_id=newer.run_id
-   WHERE newer.account_id=o.account_id AND newer.epoch=o.epoch AND np.status='complete'
-     AND (newer.completed_at,newer.run_id)>(e.completed_at,e.run_id))
- AND EXISTS(SELECT 1 FROM companion_private.pattern_insights i
-            WHERE i.account_id=o.account_id AND i.run_id=o.run_id AND i.attribution<>'not_for_me')
+
 """
 JOINS = """
  JOIN companion_private.report_notification_events e ON e.account_id=o.account_id AND e.epoch=o.epoch AND e.run_id=o.run_id
@@ -90,8 +86,10 @@ class PostgresReportNotifications:
         async with self.runtime.pool.connection() as c:
             row = await (await c.execute("SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='companion_private' AND c.relname IN ('report_notification_scopes','report_notification_sessions','report_notification_registrations','report_notification_events','report_notification_outbox') AND c.relrowsecurity AND c.relforcerowsecurity")).fetchone()
             role = await (await c.execute('SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user')).fetchone()
-            triggers = await (await c.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='companion_private' AND NOT t.tgisinternal AND t.tgenabled='O' AND ((c.relname='pattern_runs' AND t.tgname='report_notification_terminal') OR (c.relname='snapshots' AND t.tgname='report_notification_invalidate'))")).fetchone()
-            if row[0] != 5 or any(role) or triggers[0] != 2:
+            triggers = await (await c.execute("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='companion_private' AND NOT t.tgisinternal AND t.tgenabled='O' AND ((c.relname='pattern_runs' AND t.tgname='report_notification_terminal') OR (c.relname='snapshots' AND t.tgname='report_notification_invalidate') OR (c.relname='pattern_revisions' AND t.tgname='report_notification_correction'))")).fetchone()
+            columns=await (await c.execute("SELECT count(*) FROM information_schema.columns WHERE table_schema='companion_private' AND table_name='report_notification_outbox' AND column_name='actionability_key'")).fetchone()
+            index=await (await c.execute("SELECT count(*) FROM pg_index i WHERE i.indexrelid=to_regclass('companion_private.report_notification_actionability') AND i.indisunique AND i.indisvalid")).fetchone()
+            if row[0] != 5 or any(role) or triggers[0] != 3 or columns[0]!=1 or index[0]!=1:
                 raise NotificationError('notification_migration_or_restricted_role_required')
 
     async def _identity(self, principal):
@@ -236,35 +234,39 @@ class PostgresReportNotifications:
             await c.execute("UPDATE companion_private.report_notification_registrations SET enabled=false,ciphertext='',consent_revision=consent_revision+1 WHERE account_id=%s AND session_key=%s", (account,key))
             await c.execute("UPDATE companion_private.report_notification_outbox o SET status='cancelled',lease_token=NULL,lease_until=NULL FROM companion_private.report_notification_registrations r WHERE o.account_id=%s AND r.account_id=o.account_id AND r.installation_id=o.installation_id AND r.session_key=%s AND o.status IN ('pending','sending')", (account,key))
 
-    async def reconcile(self, account: str) -> int:
-        """Trusted worker only. Terminal-event trigger closes the commit/enqueue gap.
+    async def _candidate(self,c,account):
+        value=await notification_candidate(c,account,None,None)
+        return await notification_candidate(c,account,value['current_run_id'],value['actionability_key'])
 
-        New registration/re-opt-in never backfills already-completed reports. Token
-        rotation preserves installation identity. Repeated cached runs have one
-        terminal event and the UNIQUE account/epoch/run/installation tombstone.
-        """
+    async def _cancel_obsolete(self,c,account,current):
+        await c.execute("UPDATE companion_private.report_notification_outbox SET status='cancelled',lease_token=NULL,lease_until=NULL WHERE account_id=%s AND status IN ('pending','sending') AND (%s=false OR run_id IS DISTINCT FROM %s::uuid OR actionability_key IS DISTINCT FROM %s)",
+                        (account,current['eligible'],current['current_run_id'],current['actionability_key']))
+
+    async def reconcile(self, account: str) -> int:
+        """Reserve one overall current concern-set, never an historical insight."""
         async with self.scoped(account) as c:
             doc, epoch, revision = await self._state(c, account)
-            if not permitted(doc):
-                await c.execute("UPDATE companion_private.report_notification_outbox SET status='cancelled',lease_token=NULL,lease_until=NULL WHERE account_id=%s AND status IN ('pending','sending')", (account,))
-                return 0
-            result = await c.execute('''INSERT INTO companion_private.report_notification_outbox
-                (account_id,epoch,run_id,installation_id,scope_revision,consent_revision)
-                SELECT e.account_id,e.epoch,e.run_id,r.installation_id,%s,r.consent_revision
+            current=await self._candidate(c,account)
+            if not permitted(doc):current['eligible']=False
+            await self._cancel_obsolete(c,account,current)
+            if not current['eligible']:return 0
+            result=await c.execute('''INSERT INTO companion_private.report_notification_outbox
+                (account_id,epoch,run_id,installation_id,scope_revision,consent_revision,actionability_key)
+                SELECT e.account_id,e.epoch,e.run_id,r.installation_id,%s,r.consent_revision,%s
                 FROM companion_private.report_notification_events e
-                JOIN companion_private.pattern_runs p ON p.account_id=e.account_id AND p.run_id=e.run_id
                 JOIN companion_private.report_notification_registrations r ON r.account_id=e.account_id
                 JOIN companion_private.report_notification_sessions ns ON ns.account_id=r.account_id AND ns.session_key=r.session_key
-                WHERE e.account_id=%s AND e.epoch=%s AND p.status='complete'
-                  AND r.epoch=e.epoch AND r.scope_revision=%s AND r.enabled AND NOT ns.revoked
-                  AND r.opted_at<=e.completed_at
-                  AND e.completed_at>=clock_timestamp()-interval '24 hours'
-                  AND NOT EXISTS(SELECT 1 FROM companion_private.report_notification_events newer
-                    JOIN companion_private.pattern_runs np ON np.account_id=newer.account_id AND np.run_id=newer.run_id
-                    WHERE newer.account_id=e.account_id AND newer.epoch=e.epoch AND np.status='complete'
-                      AND (newer.completed_at,newer.run_id)>(e.completed_at,e.run_id))
-                  AND EXISTS(SELECT 1 FROM companion_private.pattern_insights i WHERE i.account_id=e.account_id AND i.run_id=e.run_id AND i.attribution<>'not_for_me')
-                ON CONFLICT(account_id,epoch,run_id,installation_id) DO NOTHING''', (revision,account,epoch,revision))
+                WHERE e.account_id=%s AND e.epoch=%s AND e.run_id=%s AND r.epoch=e.epoch
+                  AND r.scope_revision=%s AND r.enabled AND NOT ns.revoked
+                  AND r.opted_at<=e.completed_at AND e.completed_at>=clock_timestamp()-interval '24 hours'
+                ON CONFLICT(account_id,epoch,installation_id,actionability_key) WHERE actionability_key IS NOT NULL
+                DO UPDATE SET run_id=excluded.run_id,scope_revision=excluded.scope_revision,consent_revision=excluded.consent_revision,
+                  status='pending',due_at=clock_timestamp(),available_at=clock_timestamp(),lease_token=NULL,lease_until=NULL
+                WHERE companion_private.report_notification_outbox.attempts=0
+                  AND companion_private.report_notification_outbox.status IN ('pending','cancelled')
+                  AND (companion_private.report_notification_outbox.run_id IS DISTINCT FROM excluded.run_id
+                       OR companion_private.report_notification_outbox.status='cancelled')''',
+                (revision,current['actionability_key'],account,epoch,current['current_run_id'],revision))
             return result.rowcount
 
     async def claim(self, account: str) -> Job | None:
@@ -275,6 +277,9 @@ class PostgresReportNotifications:
             await c.execute("UPDATE companion_private.report_notification_outbox SET status=CASE WHEN attempts>=5 THEN 'failed' ELSE 'pending' END,lease_token=NULL,lease_until=NULL WHERE account_id=%s AND status='sending' AND lease_until<=clock_timestamp()", (account,))
             # Revoked content/registration jobs never sit indefinitely pending.
             await c.execute("UPDATE companion_private.report_notification_outbox x SET status='cancelled',lease_token=NULL,lease_until=NULL WHERE x.account_id=%s AND x.status IN ('pending','sending') AND NOT EXISTS(SELECT 1 FROM companion_private.report_notification_outbox o " + JOINS + " WHERE o.account_id=x.account_id AND o.notification_id=x.notification_id AND " + VALID + ')', (account,))
+            current=await self._candidate(c,account)
+            await self._cancel_obsolete(c,account,current)
+            if not current['eligible']:return None
             lease = str(uuid4())
             row = await (await c.execute('''WITH candidate AS (
                 SELECT o.account_id,o.notification_id FROM companion_private.report_notification_outbox o ''' + JOINS + '''
@@ -284,11 +289,11 @@ class PostgresReportNotifications:
                 UPDATE companion_private.report_notification_outbox o SET status='sending',attempts=o.attempts+1,
                     lease_token=%s,lease_until=clock_timestamp()+make_interval(secs=>%s)
                 FROM candidate x WHERE o.account_id=x.account_id AND o.notification_id=x.notification_id AND o.status='pending'
-                RETURNING o.notification_id,o.account_id,o.epoch,o.run_id,o.installation_id,o.scope_revision,o.due_at,o.attempts,o.lease_token''',
+                RETURNING o.notification_id,o.account_id,o.epoch,o.run_id,o.installation_id,o.scope_revision,o.due_at,o.attempts,o.lease_token,o.actionability_key''',
                 (account,lease,LEASE_SECONDS))).fetchone()
             if not row:
                 return None
-            return Job(str(row[0]),str(row[1]),row[2],str(row[3]),str(row[4]),row[5],row[6].timestamp(),row[7],str(row[8]))
+            return Job(str(row[0]),str(row[1]),row[2],str(row[3]),str(row[4]),row[5],row[6].timestamp(),row[7],str(row[8]),row[9])
 
     async def authorize(self, job: Job) -> Admission | None:
         """Resolve encrypted token only after a fresh authoritative admission read."""
@@ -296,8 +301,12 @@ class PostgresReportNotifications:
             doc, _, _ = await self._state(c, job.account)
             if not permitted(doc):
                 return None
-            row = await (await c.execute('SELECT r.ciphertext,r.token_version,r.topic,r.environment FROM companion_private.report_notification_outbox o ' + JOINS + " WHERE o.account_id=%s AND o.notification_id=%s AND o.lease_token=%s AND o.status='sending' AND o.lease_until>clock_timestamp() AND " + VALID,
-                (job.account,job.id,job.lease))).fetchone()
+            current=await self._candidate(c,job.account)
+            await self._cancel_obsolete(c,job.account,current)
+            verified=await notification_candidate(c,job.account,job.report,job.actionability_key)
+            if not verified['eligible']:return None
+            row = await (await c.execute('SELECT r.ciphertext,r.token_version,r.topic,r.environment FROM companion_private.report_notification_outbox o ' + JOINS + " WHERE o.account_id=%s AND o.notification_id=%s AND o.lease_token=%s AND o.run_id=%s AND o.actionability_key=%s AND o.status='sending' AND o.lease_until>clock_timestamp() AND " + VALID,
+                (job.account,job.id,job.lease,job.report,job.actionability_key))).fetchone()
             if not row:
                 return None
             return Admission(job,self.cipher.open(row[0])['token'],row[1],row[2],row[3])

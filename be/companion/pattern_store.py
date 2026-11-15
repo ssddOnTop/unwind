@@ -32,6 +32,28 @@ async def current_evidence(conn, account, now):
     return dto
 
 
+async def notification_candidate(conn, account, expected_run_id, expected_actionability_key):
+    """One read-only current-projection authority shared by API and notification worker.
+
+    Caller owns the scoped transaction. Notification callers additionally hold the
+    snapshot row, which the assessment/correction invalidation trigger also locks.
+    No fallback to historical insight rows or today's raw evidence is permitted.
+    """
+    row=await (await conn.execute('SELECT run_id,status,assessment FROM companion_private.pattern_runs WHERE account_id=%s ORDER BY analyzed_at DESC,sequence DESC LIMIT 1',(account,))).fetchone()
+    run=str(row[0]) if row else None
+    revisions=await (await conn.execute('SELECT revision,kind,concern_id,value FROM companion_private.pattern_revisions WHERE account_id=%s AND run_id=%s ORDER BY revision',(account,run))).fetchall() if run else []
+    cards=[Finding.model_validate(value) for value in row[2]['findings']] if row and row[2] else []
+    for _,kind,area,value in revisions:
+        if kind=='attribution':
+            for card in cards:
+                if card.concern_id==area:card.attribution=value
+    actionable=sorted(c.concern_id for c in cards if c.attribution!='not_for_me') if row and row[1]!='running' else []
+    key=hashlib.sha256(json.dumps(actionable).encode()).hexdigest() if actionable else None
+    return {'current_run_id':run,'revision':revisions[-1][0] if revisions else 0,
+            'actionability_key':key,'actionable_area_ids':actionable,
+            'eligible':bool(actionable and run==expected_run_id and key==expected_actionability_key)}
+
+
 class PatternCoordinator:
     def __init__(self, service, persistence, model_factory=None):
         self.service,self.store=service,persistence
@@ -116,16 +138,9 @@ class PatternCoordinator:
         unchanged-repeat suppression in the owner's durable delivery history.
         Corrections can change the key without changing the assessment run ID.
         """
-        current = await self.get()
-        return {
-            'current_run_id': current['current_run_id'],
-            'revision': current['revision'],
-            'actionability_key': current['actionability_key'],
-            'actionable_area_ids': current['actionable_area_ids'],
-            'eligible': bool(current['is_current'] and current['actionable_area_ids']
-                and current['run_id'] == expected_run_id
-                and current['actionability_key'] == expected_actionability_key),
-        }
+        async with self.service.lock:
+            async with self.transaction() as c:
+                return await notification_candidate(c,self.store.account_id,expected_run_id,expected_actionability_key)
 
     async def clarify(self, body):
         async with self.service.lock:

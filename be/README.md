@@ -427,7 +427,7 @@ The additive notification migration preserves the current global schema version 
 
 ```sh
 # From be/, through the private schema-operator environment, after review:
-python -m companion.report_notification_migrations --confirm-report-notification-schema --runtime-role "$RESTRICTED_RUNTIME_ROLE"
+python -m companion.report_notification_migrations --confirm-report-notification-schema --confirm-current-assessment-authority --runtime-role "$RESTRICTED_RUNTIME_ROLE"
 # Install only the reviewed locked dependency update; HTTP/2 is explicit:
 uv sync --frozen
 ```
@@ -487,7 +487,7 @@ Use `production` only with corresponding provisioning/server environment. The op
 
 ### Incremental Health integration (separate from assessment-policy changes)
 
-This replaces neither the imported helper dataset nor the nightly assessment engine. It connects the reviewed Health UUID-delta module to authenticated HTTP, the existing PostgreSQL account transaction, and a native durable Health journal. **No seed/reset or replacement of the existing helper rows is part of cutover.** PR 20 owns the latest-only per-area assessment projection, append-only assessment history, assessment-age policy and `notification_candidate`. Those changes were not copied here. The combined notification consumer must be reviewed after PR 20 lands to use the current run/actionability key, suppress unchanged overall concerns and cancel superseded warnings; this branch does not claim that cross-merge policy is finished.
+This replaces neither the imported helper dataset nor the nightly assessment engine. It connects the reviewed Health UUID-delta module to authenticated HTTP, the existing PostgreSQL account transaction, and a native durable Health journal. **No seed/reset or replacement of the existing helper rows is part of cutover.** PR 20 owns the latest-only per-area assessment projection, append-only assessment history, assessment-age policy and `notification_candidate`. Those approved policy changes are now integrated through the main merge. The current-assessment notification authority section below describes the completed run/actionability coupling; it supersedes the original deferred-integration note.
 
 #### Migration and activation
 
@@ -537,3 +537,28 @@ REPORT_NOTIFICATIONS_ENTITLEMENTS = App/HealthBackground.entitlements
 If separately approved APNs capability is also needed, select `App/HealthBackgroundNotifications.entitlements` and retain the matching APNs settings from the notification integration. These use the existing entitlement selector; setting a flag is not provisioning. The default original HealthKit entitlement file remains selected and no background/APNs entitlement is forced onto simulator/free-team signing. Observer delivery is opportunistic, not a midnight timer. Incremental mode never falls back to a complete-window snapshot after activation or after detecting a prior journal/stream.
 
 Offline validation covers actual authenticated restricted-PostgreSQL routes, forced RLS, replay/pruning/reset, non-destructive helper cutover, unsupported legacy baselines, atomic native write failure, expiry/discard, terminal replay, source revocation and separate background admission. Signed simulator-target compilation is not device acceptance. No live migration, flag change, data operation, provider/model call, device/simulator operation or runtime restart is performed by these checks.
+
+### Current-assessment notification authority (supersedes historical insight eligibility)
+
+Notifications now use the approved current per-area projection, not a search for any meaningful historical insight. `PatternCoordinator.notification_candidate` and the PostgreSQL worker delegate to the same read-only current-assessment function. It folds immutable assessment findings with append-only attribution revisions, selects the newest run by analyzed time and sequence, and computes the existing stable concern-set key. A running, resolved, wholly insufficient-data or fully corrected-away current assessment cannot produce a warning. A terminal deterministic assessment can be actionable even when its optional AI review was unavailable; this does not imply model success.
+
+Every outbox row persists its expected run in `run_id` and the expected `actionability_key`. Enqueue, claim and token-decryption/send authorization check both against current authority. The payload is still one generic overall report-ready message, never one notification per area; the key, concerns and run are not APNs content. Backend Settings explains the current-actionability policy without changing the native wire schema.
+
+A unique account/epoch/installation/key index is the durable logical-delivery binding across different runs, corrections and token rotation. An **unattempted** pending/cancelled job may be moved to the newer authoritative run using the same opaque notification ID. Once an attempt may have happened, a newer run cannot revive that key. Accepted, failed or uncertain attempts retain their suppression until epoch reset/deletion, even if concerns resolve and later recur. This is intentionally a once-per-concern-set/installation/epoch policy, not an undocumented cooldown. Bounded transport retries for the same current job retain the existing APNs/collapse IDs; exactly-once physical display is not guaranteed.
+
+New-current-run and current-attribution-revision triggers lock the account snapshot and cancel pending/sending admissions in the same transaction. Historical corrections and private note edits do not manufacture a new alert. Reconciliation/send-time reads hold the compatible snapshot lock, so a correction cannot commit invisibly between projection read and durable reservation. After a provider request has already been handed off it cannot be recalled; a concurrent correction still fences its late completion and prevents re-admission. Resolved/insufficient current runs cancel old warnings even though historical concern rows remain in append-only history.
+
+#### Explicit additive upgrade on private schema v3 or v4
+
+Apply the approved assessment upgrade first when that deployment has not yet received PR 20, then this notification authority upgrade. Neither command rewrites the global schema version, resets accounts or executes at application startup.
+
+```sh
+python -m companion.assessment_migrations --confirm-current-assessment-schema --runtime-role "$RESTRICTED_RUNTIME_ROLE"
+python -m companion.report_notification_migrations --confirm-report-notification-schema --confirm-current-assessment-authority --runtime-role "$RESTRICTED_RUNTIME_ROLE"
+```
+
+The notification upgrade adds a nullable legacy-compatible `actionability_key`, replaces run-only uniqueness with scoped actionability uniqueness, and installs the current-run/correction invalidation functions. Old accepted/uncertain rows are backfilled from the old consumer's frozen insight authority; duplicates retain one conservative suppression binding while preserving the other audit rows. Legacy pending/sending leases are cancelled at the first upgrade, not treated as delivered. Only zero-attempt current eligible work can subsequently be reserved again. Re-running the migration preserves already-upgraded pending work and accepted bindings. Migration holds an explicit outbox lock; schedule it as coordinated operator maintenance. The operator must be distinct from the non-superuser/non-BYPASSRLS runtime role, and new trigger execution grants remain scoped. Startup checks the new column, unique index and correction trigger and fails closed if incomplete.
+
+The alert freshness bound still limits stale push delivery to 24 hours from a report/correction event. It **does not expire or invalidate the current assessment or its append-only history**. No missing-data, resolved, old-opt-in or unchanged-concern notification is synthesized to compensate for downtime. Consent/session/epoch/token-revision rules and encrypted token storage are unchanged. APNs switches and build capabilities stay disabled by default.
+
+This branch merges approved main assessment changes while retaining the reviewed Health and notification branches. Parent merge order remains PR 19, PR 21, then this coupling change (PR 20 is already on main). No live migration, delivery, runtime restart, device installation or model call is required by the offline tests. Physical APNs provisioning and acceptance remain separate; provider acceptance is not physical delivery.

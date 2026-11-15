@@ -53,6 +53,7 @@ class Job:
     due: float
     attempts: int
     lease: str
+    actionability_key: str | None = None
 
 
 class Authority(Protocol):

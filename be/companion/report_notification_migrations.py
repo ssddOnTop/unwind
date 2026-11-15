@@ -10,7 +10,7 @@ from psycopg import sql
 TABLES = ('report_notification_scopes', 'report_notification_sessions',
           'report_notification_registrations', 'report_notification_events',
           'report_notification_outbox')
-FUNCTIONS = ('report_notification_terminal', 'report_notification_invalidate')
+FUNCTIONS = ('report_notification_terminal', 'report_notification_invalidate', 'report_notification_correction')
 
 DDL = r"""
 LOCK TABLE companion_private.schema_version IN EXCLUSIVE MODE;
@@ -110,6 +110,72 @@ CREATE TRIGGER report_notification_invalidate AFTER UPDATE OF body ON companion_
 """
 
 
+CURRENT_ASSESSMENT_DDL = r"""
+DO $$ BEGIN
+ IF to_regclass('companion_private.pattern_revisions') IS NULL OR NOT EXISTS(
+  SELECT 1 FROM information_schema.columns WHERE table_schema='companion_private' AND table_name='pattern_runs' AND column_name='assessment') THEN
+  RAISE EXCEPTION 'Apply the reviewed current-assessment migration first';
+ END IF;
+END $$;
+LOCK TABLE companion_private.report_notification_outbox IN EXCLUSIVE MODE;
+SELECT set_config('companion.notification_upgrade',CASE WHEN EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='companion_private' AND table_name='report_notification_outbox' AND column_name='actionability_key') THEN '0' ELSE '1' END,true);
+ALTER TABLE companion_private.report_notification_outbox ADD COLUMN IF NOT EXISTS actionability_key text CHECK(actionability_key ~ '^[a-f0-9]{64}$');
+DO $$ DECLARE c record; BEGIN
+ FOR c IN SELECT conname FROM pg_constraint WHERE conrelid='companion_private.report_notification_outbox'::regclass
+  AND pg_get_constraintdef(oid)='UNIQUE (account_id, epoch, run_id, installation_id)' LOOP
+  EXECUTE format('ALTER TABLE companion_private.report_notification_outbox DROP CONSTRAINT %I',c.conname);
+ END LOOP;
+END $$;
+-- Preserve existing accepted/uncertain delivery suppression at upgrade. The old
+-- consumer's authority was exactly these frozen insight rows, not revisions.
+SET LOCAL row_security=off;
+DROP INDEX IF EXISTS companion_private.report_notification_actionability;
+UPDATE companion_private.report_notification_outbox o SET actionability_key=k.key FROM (
+ SELECT account_id,run_id,encode(sha256(convert_to(json_agg(concern_id ORDER BY concern_id)::text,'UTF8')),'hex') AS key
+ FROM companion_private.pattern_insights WHERE attribution<>'not_for_me' GROUP BY account_id,run_id
+) k WHERE o.account_id=k.account_id AND o.run_id=k.run_id AND o.actionability_key IS NULL;
+WITH ranked AS (
+ SELECT account_id,notification_id,row_number() OVER(PARTITION BY account_id,epoch,installation_id,actionability_key
+ ORDER BY (status='accepted') DESC,attempts DESC,notification_id) AS n
+ FROM companion_private.report_notification_outbox WHERE actionability_key IS NOT NULL
+) UPDATE companion_private.report_notification_outbox o SET actionability_key=NULL FROM ranked r
+ WHERE o.account_id=r.account_id AND o.notification_id=r.notification_id AND r.n>1;
+UPDATE companion_private.report_notification_outbox SET status='cancelled',lease_token=NULL,lease_until=NULL WHERE status IN ('pending','sending') AND (actionability_key IS NULL OR current_setting('companion.notification_upgrade')='1');
+CREATE UNIQUE INDEX report_notification_actionability ON companion_private.report_notification_outbox(account_id,epoch,installation_id,actionability_key) WHERE actionability_key IS NOT NULL;
+SET LOCAL row_security=on;
+CREATE OR REPLACE FUNCTION companion_private.report_notification_terminal()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog,pg_temp AS $$
+DECLARE current_epoch text; current_run uuid;
+BEGIN
+ SELECT body->'state'->>'data_epoch' INTO current_epoch FROM companion_private.snapshots WHERE account_id=NEW.account_id FOR UPDATE;
+ SELECT run_id INTO current_run FROM companion_private.pattern_runs WHERE account_id=NEW.account_id ORDER BY analyzed_at DESC,sequence DESC LIMIT 1;
+ IF current_run IS DISTINCT FROM NEW.run_id THEN RETURN NEW; END IF;
+ UPDATE companion_private.report_notification_outbox SET status='cancelled',lease_token=NULL,lease_until=NULL
+  WHERE account_id=NEW.account_id AND status IN ('pending','sending');
+ IF NEW.status<>'running' AND current_epoch IS NOT NULL THEN
+  INSERT INTO companion_private.report_notification_events(account_id,epoch,run_id) VALUES(NEW.account_id,current_epoch,NEW.run_id) ON CONFLICT DO NOTHING;
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE OR REPLACE FUNCTION companion_private.report_notification_correction()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog,pg_temp AS $$
+DECLARE current_epoch text; current_run uuid;
+BEGIN
+ IF NEW.kind<>'attribution' THEN RETURN NEW; END IF;
+ SELECT body->'state'->>'data_epoch' INTO current_epoch FROM companion_private.snapshots WHERE account_id=NEW.account_id FOR UPDATE;
+ SELECT run_id INTO current_run FROM companion_private.pattern_runs WHERE account_id=NEW.account_id ORDER BY analyzed_at DESC,sequence DESC LIMIT 1;
+ IF current_run IS DISTINCT FROM NEW.run_id THEN RETURN NEW; END IF;
+ UPDATE companion_private.report_notification_outbox SET status='cancelled',lease_token=NULL,lease_until=NULL
+  WHERE account_id=NEW.account_id AND status IN ('pending','sending');
+ INSERT INTO companion_private.report_notification_events(account_id,epoch,run_id) VALUES(NEW.account_id,current_epoch,NEW.run_id)
+  ON CONFLICT(account_id,epoch,run_id) DO UPDATE SET completed_at=clock_timestamp();
+ RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS report_notification_correction ON companion_private.pattern_revisions;
+CREATE TRIGGER report_notification_correction AFTER INSERT ON companion_private.pattern_revisions FOR EACH ROW EXECUTE FUNCTION companion_private.report_notification_correction();
+"""
+
+
 def migrate(connection, runtime_role: str) -> None:
     """Explicit operator call, all DDL/grants atomic; never opens a connection.
 
@@ -125,6 +191,7 @@ def migrate(connection, runtime_role: str) -> None:
         if row is None or any(row) or runtime_role == owner:
             raise ValueError('Runtime must not be the migration owner or bypass RLS')
         connection.execute(DDL)
+        connection.execute(CURRENT_ASSESSMENT_DDL)
         roles = [r[0] for r in connection.execute("SELECT rolname FROM pg_roles WHERE rolname IN ('anon','authenticated')")]
         for table in TABLES:
             name = sql.Identifier('companion_private', table)
@@ -149,11 +216,12 @@ def main():
     from .postgres import PostgresConfig
     parser=argparse.ArgumentParser(description='Explicit private report-notification migration; no startup DDL')
     parser.add_argument('--confirm-report-notification-schema',action='store_true',required=True)
+    parser.add_argument('--confirm-current-assessment-authority',action='store_true',required=True)
     parser.add_argument('--runtime-role',required=True)
     args=parser.parse_args()
     try:
         with psycopg.connect(PostgresConfig(os.environ.get('DATABASE_URL','')).dsn,autocommit=True) as connection:migrate(connection,args.runtime_role)
-        print('{"migration":"completed","notification_tables":5,"schema_version":"unchanged"}')
+        print('{"migration":"completed","notification_tables":5,"schema_version":"unchanged","authority":"current_assessment"}')
     except Exception:
         print('{"migration":"rejected","details":"Verify schema operator authority, source schema and restricted runtime role."}')
         raise SystemExit(1)
