@@ -23,6 +23,8 @@ from test_postgres import local_pg_cluster,pg_dsn
 from test_postgres_http import signing_key
 from test_auth_http import Harness,NOW
 from test_pattern_bridges import consent
+from test_report_notification_postgres import assessment
+from psycopg.types.json import Jsonb
 
 class Provider:
     def __init__(self):self.calls=[]
@@ -63,7 +65,7 @@ def register_body(s,**values):
 async def report(service,account):
     queue=service.queue;run=str(uuid4())
     async with queue.scoped(account) as c:
-        await c.execute("INSERT INTO companion_private.pattern_runs(account_id,run_id,request_id,input_digest,input_version,status,engine,evidence,is_demo) VALUES(%s,%s,%s,%s,'offline','running','deterministic','{}',false)",(account,run,str(uuid4()),uuid4().hex*2))
+        await c.execute("INSERT INTO companion_private.pattern_runs(account_id,run_id,request_id,input_digest,input_version,status,engine,evidence,is_demo,assessment) VALUES(%s,%s,%s,%s,'offline','running','deterministic','{}',false,%s)",(account,run,str(uuid4()),uuid4().hex*2,Jsonb(assessment())))
         await c.execute("INSERT INTO companion_private.pattern_insights(account_id,run_id,concern_id,rank) VALUES(%s,%s,'activity',0)",(account,run))
         await c.execute("UPDATE companion_private.pattern_runs SET status='complete' WHERE account_id=%s AND run_id=%s",(account,run))
     return run

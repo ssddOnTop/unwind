@@ -6,6 +6,8 @@ use a restricted non-owner role with FORCE RLS (not a superuser SQLite stand-in)
 """
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime,timezone
+from companion.patterns import aggregate,findings
 import json
 from types import SimpleNamespace
 from uuid import uuid4
@@ -49,6 +51,11 @@ def snapshot(epoch='epoch-one'):
                       'sources': [{'id': 'healthkit', 'enabled': True, 'consent': 'granted'}]}, 'meta': {}}
 
 
+def assessment(ids=('activity',)):
+    dto=aggregate([],[],datetime.now(timezone.utc))
+    return {'findings':[v.model_dump() for v in findings(list(ids),dto)],
+            'areas':[{'area':a,'state':'concern' if a in ids else 'no_current_concern','summary':'Offline test assessment.'} for a in ('activity','sleep','food_service')]}
+
 @dataclass
 class Context:
     queue: PostgresReportNotifications
@@ -69,15 +76,15 @@ class Context:
             opt_in=kwargs.pop('opt_in',True),
             token=kwargs.pop('token','ab12'),epoch=state['epoch'],revision=state['revision'],**kwargs)
 
-    async def report(self, *, status='complete', meaningful=True, account=None):
+    async def report(self, *, status='complete', meaningful=True, account=None, ids=('activity',)):
         account = account or self.account
         run = str(uuid4())
         async with self.queue.scoped(account) as c:
             await c.execute('''INSERT INTO companion_private.pattern_runs
-                (account_id,run_id,request_id,input_digest,input_version,status,engine,evidence,is_demo)
-                VALUES(%s,%s,%s,%s,'test','running','deterministic','{}',false)''', (account,run,str(uuid4()),uuid4().hex * 2))
+                (account_id,run_id,request_id,input_digest,input_version,status,engine,evidence,is_demo,assessment)
+                VALUES(%s,%s,%s,%s,'test','running','deterministic','{}',false,%s)''', (account,run,str(uuid4()),uuid4().hex * 2,Jsonb(assessment(ids if meaningful else ()))))
             if meaningful:
-                await c.execute("INSERT INTO companion_private.pattern_insights(account_id,run_id,concern_id,rank) VALUES(%s,%s,'activity',0)", (account,run))
+                for rank,area in enumerate(ids):await c.execute('INSERT INTO companion_private.pattern_insights(account_id,run_id,concern_id,rank) VALUES(%s,%s,%s,%s)',(account,run,area,rank))
             await c.execute('UPDATE companion_private.pattern_runs SET status=%s WHERE account_id=%s AND run_id=%s', (status,account,run))
         return run
 
@@ -94,7 +101,7 @@ async def context(pg_dsn):
         c.execute(MIGRATION_V3)
         c.execute(sql.SQL('CREATE ROLE {} LOGIN NOSUPERUSER NOBYPASSRLS').format(sql.Identifier(role)))
         c.execute(sql.SQL('GRANT USAGE ON SCHEMA companion_private TO {}').format(sql.Identifier(role)))
-        for table in ('accounts','snapshots','pattern_runs','pattern_insights','schema_version'):
+        for table in ('accounts','snapshots','pattern_runs','pattern_insights','pattern_revisions','schema_version'):
             c.execute(sql.SQL('GRANT SELECT,INSERT,UPDATE,DELETE ON companion_private.{} TO {}').format(sql.Identifier(table),sql.Identifier(role)))
         migrate(c,role)
     dsn = make_conninfo(pg_dsn,user=role)
@@ -144,7 +151,7 @@ async def test_verified_identity_only_and_cross_account_rls(context):
 
 
 @pytest.mark.parametrize('status,meaningful,expected', [
-    ('running',True,0), ('unavailable',True,0), ('complete',False,0), ('complete',True,1),
+    ('running',True,0), ('unavailable',True,1), ('complete',False,0), ('complete',True,1),
 ])
 async def test_terminal_meaningful_only_and_commit_gap_reconciliation(context,status,meaningful,expected):
     t = context
@@ -183,16 +190,15 @@ async def test_new_installation_no_historical_alert_and_cached_run_not_realerted
     assert await t.queue.reconcile(t.account) == 1
     job = await t.queue.claim(t.account)
     assert await t.queue.finish(job,'accepted')
-    async with t.queue.scoped(t.account) as c:
-        await c.execute("UPDATE companion_private.pattern_runs SET status='complete' WHERE account_id=%s AND run_id=%s", (t.account,run))
+    # Completed assessment rows are immutable; cached read/reconcile is the replay.
     rotated = await t.enroll(installation_id=first['installation_id'],expected_token_version=first['token_version'],token='cd34')
     assert rotated['installation_id'] == first['installation_id']
     assert rotated['token_version'] == first['token_version'] + 1
     assert await t.queue.reconcile(t.account) == 0
     assert await t.queue.claim(t.account) is None
     await t.report()
-    assert await t.queue.reconcile(t.account) == 1
-    assert (await t.queue.authorize(await t.queue.claim(t.account))).token == 'cd34'
+    assert await t.queue.reconcile(t.account) == 0  # Same concern-set across a new run is not another alert.
+    assert await t.queue.claim(t.account) is None
 
 
 async def test_per_installation_idempotent_registration_and_reconciler(context):
@@ -314,7 +320,7 @@ async def test_content_withdrawal_blocks_delivery(context):
     await t.queue.reconcile(t.account)
     job = await t.queue.claim(t.account)
     async with t.queue.scoped(t.account) as c:
-        await c.execute("UPDATE companion_private.pattern_insights SET attribution='not_for_me' WHERE run_id=%s", (run,))
+        await c.execute("INSERT INTO companion_private.pattern_revisions(account_id,run_id,kind,concern_id,value) VALUES(%s,%s,'attribution','activity','not_for_me')", (t.account,run))
     assert await t.queue.authorize(job) is None
 
 

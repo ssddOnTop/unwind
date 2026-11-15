@@ -97,7 +97,7 @@ class ReportNotificationService:
         if self.worker.last_error or delivery=='ready' and self.worker.provider is None:delivery='unavailable'
         messages={'disabled':'Remote report alerts are not configured on this server. Nothing is sent.',
                   'unavailable':'Remote report delivery is unavailable. No successful delivery is claimed.',
-                  'ready':'Optional generic alerts for newly completed reports. APNs acceptance does not guarantee delivery; report details never appear on the lock screen.'}
+                  'ready':'Optional generic alerts for current actionable lifestyle concerns. Unchanged concern sets are not repeated, and resolved or insufficient-data assessments do not send alerts. APNs acceptance does not guarantee delivery; report details stay private.'}
         if status.get('outcomes',{}).get('failed',0):messages[delivery]+=' Some alert requests failed; delivery is not confirmed.'
         if status['session_revoked']:messages[delivery]='Report alerts are revoked for this sign-in session. Sign in again before enabling them.'
         return NotificationStatus(data_epoch=status['epoch'],scope_revision=status['revision'],session_binding=session_key(principal),session_revoked=status['session_revoked'],selected_installation_id=selected,
