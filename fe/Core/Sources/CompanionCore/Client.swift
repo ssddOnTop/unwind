@@ -182,7 +182,9 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
         try validateSession()
         if snapshot.state?.data_epoch != next.state?.data_epoch { invalidateBankingWork() }
         if snapshot.state?.data_epoch != next.state?.data_epoch || (experienceSnapshot?.revision ?? -1) < (next.state?.revision ?? 0) { experienceSnapshot = nil }
-        try storage.save(next); snapshot = next
+        do { try storage.save(next) }
+        catch { LaunchDiagnostic.failure(error, at: .persistence); throw error }
+        snapshot = next
     }
     private func request(path: String, method: String = "GET", body: Data? = nil) -> URLRequest {
         var r = URLRequest(url: baseURL.appendingPathComponent(String(path.dropFirst())))
@@ -193,10 +195,15 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
     }
     private func send(_ r: URLRequest) async throws -> Data {
         try validateSession()
-        let response = try await transport.send(r)
+        let stage: LaunchDiagnostic.Stage = r.url?.path == "/state" ? .stateRequest
+            : r.url?.path == "/experience/v1" ? .experienceRequest : .otherRequest
+        let response: HTTPResult
+        do { response = try await transport.send(r) }
+        catch { LaunchDiagnostic.failure(error, at: stage); throw error }
         try validateSession()
         if response.status == 200 { return response.body }
-        let envelope = try Wire.decode(APIErrorEnvelope.self, response.body)
+        LaunchDiagnostic.http(response.status, at: stage)
+        let envelope = try LaunchDiagnostic.decode(APIErrorEnvelope.self, response.body, at: stage)
         throw ClientFailure.rejected(envelope.error.code, envelope.error.retryable)
     }
     /// Explicit manual review, never queued, scheduled or automatically transport-retried.
@@ -269,7 +276,7 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
         return value
     }
     private func fetch() async throws {
-        let incoming = try Wire.decode(State.self, await send(request(path: "/state")))
+        let incoming = try LaunchDiagnostic.decode(State.self, await send(request(path: "/state")), at: .stateDecode)
         if snapshot.state?.data_epoch != incoming.data_epoch { invalidatePlaidWork() }
         var next = snapshot; next.accept(incoming); try persist(next)
     }
@@ -407,7 +414,7 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
         return reply
     }
     public func refreshExperience() async throws -> ExperienceV1 {
-        let incoming = try Wire.decode(ExperienceV1.self, await send(request(path: "/experience/v1")))
+        let incoming = try LaunchDiagnostic.decode(ExperienceV1.self, await send(request(path: "/experience/v1")), at: .experienceDecode)
         try validateSession()
         guard incoming.data_epoch == snapshot.state?.data_epoch else {
             experienceSnapshot = nil; throw ClientFailure.rejected("stale_experience", false)
