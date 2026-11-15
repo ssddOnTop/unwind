@@ -182,6 +182,7 @@ import CompanionCore
         guard active, !admissionBlocked, !busy else { return }
         busy = true; message = nil
         defer { busy = false }
+        var diagnosticStage: LaunchDiagnostic.Stage = .synchronize
         do {
             try await action(client)
             guard active else { return }
@@ -189,18 +190,23 @@ import CompanionCore
             if !hasPending, plaid == nil { await banking.refresh(notify: false); publish() }
             if !hasPending {
                 if preferReceivedExperience, let received = client.experienceSnapshot { experience = received }
-                else { experience = try await client.refreshExperience() }
+                else {
+                    diagnosticStage = .experienceRequest
+                    experience = try await client.refreshExperience()
+                }
                 let patterns = try? await client.patterns()
                 guard active, !admissionBlocked else { return }
                 patternOverview = patterns
             }
             guard active else { return }
             connected = true
+            diagnosticStage = .reminders
             try await reminders.reconcile(state: state, locallyBlocked: hasPending)
             notificationPermission = reminders.permission
             await reportNotifications.refresh()
             await incrementalHealth.refresh(); incrementalHealthMessage = incrementalHealth.message
         } catch {
+            LaunchDiagnostic.failure(error, at: diagnosticStage)
             guard active else { return }
             publish(); experience = nil; connected = false; reminders.cancelAll()
             if case ClientFailure.rejected(let code, _) = error, ["stale_experience", "obsolete_pattern"].contains(code) {
@@ -228,7 +234,9 @@ import CompanionCore
         // Retry the unchanged Health journal through its own admission before a stale
         // foreground outbox error can hide the readiness/recovery path.
         await incrementalHealth.refresh(); incrementalHealthMessage = incrementalHealth.message
-        await perform { try await $0.synchronize() }
+        await LaunchDiagnostic.$enabled.withValue(true) {
+            await perform { try await $0.synchronize() }
+        }
     }
     func discardPending() async { await perform { try $0.discardPending(); try await $0.refresh() } }
     private func submit<T: Encodable>(_ value: T, path: String, method: String = "POST", replacingQueue: Bool = false, client: CompanionClient) async throws {

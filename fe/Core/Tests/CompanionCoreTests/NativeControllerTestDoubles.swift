@@ -44,7 +44,10 @@ private enum NativeTestUnexpectedCall: Error { case permission }
     init(accountNamespace: String) {}
     func cancelAll() {}
     func suspendCallbacks() {}
-    func reconcile(state: CompanionCore.State?, locallyBlocked: Bool) async throws {}
+    @TaskLocal static var diagnosticReconcileFailure = false
+    func reconcile(state: CompanionCore.State?, locallyBlocked: Bool) async throws {
+        if Self.diagnosticReconcileFailure { throw NativeTestUnexpectedCall.permission }
+    }
     func requestPermission() async throws { throw NativeTestUnexpectedCall.permission }
 }
 enum BankingViewStatus: Equatable { case idle, loading, updating, failed(String) }
