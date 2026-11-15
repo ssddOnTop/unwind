@@ -40,25 +40,8 @@ struct BackendHomeView: View {
                         }
                     }
                     if let issue = model.patternMessage { Text(verbatim: issue).foregroundStyle(.red) }
-                    if let value = model.experience, model.patternOverview?.is_demo != true {
-                        if let sample = value.home.sample_label { Text(verbatim: sample).font(.caption).foregroundStyle(.secondary) }
-                        HStack(alignment: .top) {
-                            Text(verbatim: value.home.headline).font(.title2.bold())
-                            Spacer()
-                            if !value.home.info.isEmpty { AccessibleInfoPopover(title: "Your observation", message: value.home.info.joined(separator: "\n\n")) }
-                        }
-                        Text(verbatim: value.home.detail).font(.body)
-                        if let action = value.home.primary_action, model.message == nil {
-                            Button { route(action) } label: {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text(verbatim: action.label)
-                                    if let detail = action.detail { Text(verbatim: detail).font(.caption) }
-                                }
-                            }.buttonStyle(.bordered).accessibilityIdentifier("experience.home.action")
-                                .disabled(model.busy || model.hasPending)
-                        }
-                    } else if model.experience == nil {
-                        Text("Your overview is not available yet.").font(.headline)
+                    if model.patternOverview == nil {
+                        Text("Your current assessment is not available yet.").font(.headline)
                         Text("Refresh when your secure service is available.").foregroundStyle(.secondary)
                     }
                     if model.busy { ProgressView("Updating…") }
@@ -85,39 +68,23 @@ struct BackendVisitView: View {
     let openLedger: () -> Void
     @Environment(\.dismiss) private var dismiss
     @SwiftUI.State private var expanded = false
-    @SwiftUI.State private var showQuestion = false
     @SwiftUI.State private var editing = false
     @SwiftUI.State private var editedBrief = ""
     @SwiftUI.State private var copyStatus: String?
-    private func brief(_ value: ExperienceV1) -> String {
-        guard let patterns = model.patternOverview, !patterns.doctor_brief.isEmpty else { return value.visit.brief }
-        return patterns.is_demo ? patterns.doctor_brief : value.visit.brief + "\n\n" + patterns.doctor_brief
+    private func brief(_ value: PatternOverview) -> String {
+        guard let patterns = model.patternOverview, patterns.is_current else { return "No current assessment is available." }
+        return patterns.doctor_brief
     }
     private var resetKey: String { "\(model.experience?.data_epoch ?? "none"):\(model.experience?.revision ?? 0):\(model.patternOverview?.run_id ?? "none"):\(model.patternOverview?.doctor_brief ?? "")" }
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    if let value = model.experience {
-                        Text(verbatim: value.visit.title).font(.title2.bold())
-                        if let patterns = model.patternOverview, patterns.is_demo {
-                            Text(verbatim: patterns.source_label).font(.caption)
-                        } else if let sample = value.home.sample_label { Text(verbatim: sample).font(.caption) }
-                        Text(verbatim: value.visit.caption)
-                        AccessibleInfoPopover(title: "About this brief", message: value.visit.scope_notice + "\n\nEdits stay on this screen unless you tap Save notes to this review. Saved notes remain private, are not sent to AI, and do not alter sensor evidence. Context corrections reset edited notes to avoid keeping a stale interpretation. Copying uses only this device’s clipboard.")
-                        if let question = value.clarification, model.patternOverview?.is_demo != true {
-                            if question.should_prompt || showQuestion {
-                                Text(verbatim: question.question).font(.headline)
-                                Text(verbatim: question.scope).font(.caption).foregroundStyle(.secondary)
-                                ForEach(question.options, id: \.value) { option in
-                                    Button { Task { await model.answerExperience(option.value) } } label: { Text(verbatim: option.label) }
-                                        .buttonStyle(.bordered).accessibilityIdentifier("experience.answer." + option.value)
-                                        .disabled(!question.can_answer || model.busy || model.hasPending)
-                                }
-                            } else if question.can_answer {
-                                Button("Review optional question") { showQuestion = true }
-                            }
-                        }
+                    if let value = model.patternOverview, value.is_current {
+                        Text(model.workflowPage("brief")?.title ?? "Current assessment notes").font(.title2.bold())
+                        Text(verbatim: value.source_label).font(.caption)
+                        Text("Notes for your latest assessment, not a diagnosis.")
+                        AccessibleInfoPopover(title: "About this brief", message: value.privacy_notice + "\n\nEdits stay on this screen unless you tap Save notes to this review. Saved notes remain private, are not sent to AI, and do not alter sensor evidence. Context corrections append a new revision; earlier notes remain in private history. Copying uses only this device’s clipboard.")
                         if let message = model.message { Text(verbatim: message).foregroundStyle(.red) }
                         Button(expanded ? "Close brief" : "Read your brief") { expanded.toggle() }.accessibilityIdentifier("experience.visit.expand")
                         if expanded {
@@ -135,7 +102,7 @@ struct BackendVisitView: View {
                             Button("Copy brief") { copy(value) }.accessibilityIdentifier("experience.visit.copy")
                             if let copyStatus { Text(verbatim: copyStatus).font(.caption).accessibilityIdentifier("experience.visit.copyStatus") }
                         }
-                        Button("Review inference history", action: openLedger)
+                        Button("Review current assessment", action: openLedger)
                     } else {
                         Text("The overview changed or could not be loaded. Refresh before answering.")
                         Button("Refresh") { Task { await model.refresh() } }
@@ -144,7 +111,7 @@ struct BackendVisitView: View {
             }.accessibilityIdentifier("experience.visit.scroll")
                 .navigationTitle("Your next step")
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-                .onChange(of: resetKey) { _, _ in editing = false; editedBrief = ""; copyStatus = nil; showQuestion = false }
+                .onChange(of: resetKey) { _, _ in editing = false; editedBrief = ""; copyStatus = nil }
         }
     }
     private func lines(_ title: String, _ values: [String]) -> some View {
@@ -155,15 +122,10 @@ struct BackendVisitView: View {
             }
         }
     }
-    private func copy(_ experience: ExperienceV1) {
+    private func copy(_ experience: PatternOverview) {
         var text = editing ? editedBrief : brief(experience)
         if model.patternOverview?.is_demo == true, !text.hasPrefix("SYNTHETIC HEALTH DEMO") {
             text = "SYNTHETIC HEALTH DEMO — not medical evidence.\n" + text
-        }
-        if experience.is_demo && model.patternOverview?.is_demo != true {
-            // Preserve the server's mandatory visible sample marker even after cosmetic edits.
-            guard let marker = experience.visit.brief.components(separatedBy: .newlines).first, !marker.isEmpty else { return }
-            if !text.hasPrefix(marker) { text = marker + "\n" + text }
         }
         UIPasteboard.general.setItems([["public.utf8-plain-text": text]], options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(300)])
         copyStatus = "Copied on this device only; not sent."
@@ -189,20 +151,22 @@ struct PatternSummaryView: View {
             }
             if let at = value.analyzed_at { Text("Analyzed: " + at).font(.caption).foregroundStyle(.secondary) }
             if value.status != "not_analyzed" { Text(value.engine == "LLMassisted" ? "AI-ranked, evidence-checked" : "Deterministic review").font(.caption) }
-            ForEach(value.findings, id: \.concern_id) { finding in
-                NavigationLink {
-                    PatternFindingDetail(model: model, concernID: finding.concern_id)
-                } label: {
+            if value.is_current {
+                ForEach(value.areas, id: \.area) { area in
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(verbatim: finding.title).font(.headline)
-                        Text(verbatim: finding.explanation).font(.subheadline)
-                        Text("Evidence confidence: " + finding.confidence).font(.caption)
-                    }.frame(maxWidth: .infinity, alignment: .leading).padding(12).background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
-                }.buttonStyle(.plain)
+                        Text(area.area == "food_service" ? "Eating out" : area.area.capitalized).font(.headline)
+                        Text(verbatim: area.summary).font(.subheadline)
+                        if area.state == "concern" {
+                            NavigationLink("Optional explanation") {
+                                PatternFindingDetail(model: model, concernID: area.area)
+                            }.buttonStyle(.plain)
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8)
+                }
+            } else if value.status != "not_analyzed" {
+                Text("A current assessment is being prepared. Earlier warnings are not shown as current.")
             }
-            if value.status != "not_analyzed", value.findings.isEmpty {
-                Text("No comparison patterns flagged in the available coverage. This is not a clean bill of health.")
-            }
+
     }
 }
 

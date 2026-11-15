@@ -111,9 +111,8 @@ class PostgresPersistenceExtension:
         if pages[0]:await self.conn.execute("DELETE FROM companion_private.health_import_pages WHERE account_id=%s AND received_at<now()-interval '1 day'",(self.account_id,))
         for table,field in [('health_samples','end_at'),('pattern_transactions','event_at'),('pattern_batches','end_at')]:
             cursor=await self.conn.execute('DELETE FROM companion_private.'+table+' WHERE account_id=%s AND '+field+" < now()-interval '190 days'",(self.account_id,))
-        # Review history/answers/request bindings have their OWN retention clock. Raw expiry
-        # cannot erase an unrelated current review or allow its request to invoke the provider again.
-        await self.conn.execute("DELETE FROM companion_private.pattern_runs WHERE account_id=%s AND analyzed_at < now()-interval '190 days'",(self.account_id,))
+        # Completed assessments and correction events have no routine age expiry.
+        # Explicit account/reset erasure below still cascades through their history.
 
     @staticmethod
     def contexts(doc):

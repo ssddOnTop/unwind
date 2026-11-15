@@ -96,11 +96,31 @@ COMMIT;
 """
 
 
+from .assessment_migrations import ASSESSMENT_MIGRATION
+MIGRATION_V3 = MIGRATION_V3.replace('COMMIT;', ASSESSMENT_MIGRATION + '\nCOMMIT;')
+
+def upgrade_patterns(conn, runtime_role):
+    """Keep the original command safe on already deployed v3 and workflow-v4."""
+    from psycopg import sql
+    from .assessment_migrations import upgrade_assessments, validate_runtime_role
+    with conn.transaction():
+        conn.execute('LOCK TABLE companion_private.schema_version IN EXCLUSIVE MODE')
+        versions = conn.execute('SELECT version FROM companion_private.schema_version').fetchall()
+        if versions in ([(3,)], [(4,)]):
+            return upgrade_assessments(conn, runtime_role)
+        if versions not in ([(1,)], [(2,)]):
+            raise ValueError('Unsupported private schema version')
+        validate_runtime_role(conn, runtime_role)
+        conn.execute(MIGRATION_V3.strip().removeprefix('BEGIN;').removesuffix('COMMIT;'))
+        for table in ('pattern_batches','health_samples','pattern_transactions','pattern_runs','pattern_insights','pattern_requests','health_import_pages','pattern_revisions'):
+            conn.execute(sql.SQL('GRANT SELECT,INSERT,UPDATE,DELETE ON companion_private.{} TO {}').format(sql.Identifier(table),sql.Identifier(runtime_role)))
+        return 3
+
+
 def main():
     import argparse
     import os
     import psycopg
-    from psycopg import sql
     from .postgres import PostgresConfig
     p=argparse.ArgumentParser(description='Explicit private pattern migration and narrowly scoped runtime grants')
     p.add_argument('--confirm-private-pattern-schema',action='store_true',required=True)
@@ -110,14 +130,7 @@ def main():
     try:
         config=PostgresConfig(os.environ.get('DATABASE_URL',''))
         with psycopg.connect(config.dsn,autocommit=True) as c:
-            row=c.execute('SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=%s',(a.runtime_role,)).fetchone()
-            if row is None or any(row):raise ValueError('Restricted role required')
-            # Keep reviewed DDL and role grants atomic; the exported script also works standalone.
-            ddl=MIGRATION_V3.strip().removeprefix('BEGIN;').removesuffix('COMMIT;')
-            with c.transaction():
-                c.execute(ddl)
-                for table in ('pattern_batches','health_samples','pattern_transactions','pattern_runs','pattern_insights','pattern_requests','health_import_pages'):
-                    c.execute(sql.SQL('GRANT SELECT,INSERT,UPDATE,DELETE ON companion_private.{} TO {}').format(sql.Identifier(table),sql.Identifier(a.runtime_role)))
+            upgrade_patterns(c,a.runtime_role)
         print('{"migration":"completed","runtime_grants":"scoped"}')
     except Exception:
         print('{"migration":"rejected","details":"Verify operator DDL authority, schema version and restricted role."}')

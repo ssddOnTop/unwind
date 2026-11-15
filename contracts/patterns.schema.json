@@ -29,6 +29,40 @@
       "title": "Aggregate",
       "type": "object"
     },
+    "AreaResult": {
+      "additionalProperties": false,
+      "properties": {
+        "area": {
+          "enum": [
+            "activity",
+            "sleep",
+            "food_service"
+          ],
+          "title": "Area",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "concern",
+            "no_current_concern",
+            "insufficient_data"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "area",
+        "state",
+        "summary"
+      ],
+      "title": "AreaResult",
+      "type": "object"
+    },
     "BankRefresh": {
       "additionalProperties": false,
       "properties": {
@@ -300,6 +334,59 @@
           },
           "title": "Findings",
           "type": "array"
+        },
+        "areas": {
+          "items": {
+            "$ref": "#/$defs/AreaResult"
+          },
+          "title": "Areas",
+          "type": "array"
+        },
+        "current_run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current Run Id"
+        },
+        "is_current": {
+          "default": false,
+          "title": "Is Current",
+          "type": "boolean"
+        },
+        "actionable_area_ids": {
+          "items": {
+            "enum": [
+              "activity",
+              "sleep",
+              "food_service"
+            ],
+            "type": "string"
+          },
+          "title": "Actionable Area Ids",
+          "type": "array"
+        },
+        "actionability_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Actionability Key"
+        },
+        "revision": {
+          "default": 0,
+          "title": "Revision",
+          "type": "integer"
         }
       },
       "required": [
