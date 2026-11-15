@@ -11,6 +11,7 @@ from companion.pattern_store import PatternCoordinator
 from companion.extensions.postgres import PostgresPersistenceExtension
 from test_patterns import configured, NOW
 from test_postgres import local_pg_cluster, pg_dsn, document
+from scripted_models import review_model
 
 
 async def saved(c, run):
@@ -207,7 +208,7 @@ async def test_named_dataset_cleanup_preserves_all_history_and_supersedes_from_r
             calls.append(True)
             allowed=json.loads(messages[0].content.rsplit(': ',1)[1])
             return SimpleNamespace(content=json.dumps({'concern_ids':allowed}))
-    c.model_factory=lambda:ExactFake()
+    c.model_factory=lambda:review_model(ExactFake())
     earlier=await c.analyze(str(uuid4()))
     assert earlier['status']=='complete' and earlier['actionable_area_ids']==['food_service']
     earlier=await c.clarify(ClarifyRequest(schema_version='1',run_id=earlier['run_id'],concern_id='food_service',attribution='for_me'))

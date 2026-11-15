@@ -13,6 +13,7 @@ from test_postgres_http import signing_key
 from test_banking_postgres import setup,add,act
 from test_auth_http import NOW
 from test_pattern_bridges import consent,health_pages,send
+from scripted_models import review_model
 
 
 async def internal_post(h,body):
@@ -123,7 +124,7 @@ async def test_analyze_off_on_replay_partial_failure_epoch_and_concurrent(tmp_pa
             async def ainvoke(self,messages,**kwargs):
                 calls.append(messages)
                 return SimpleNamespace(content='{"concern_ids":["sleep","activity"]}')
-        service.pattern_coordinator.model_factory=lambda:Model()
+        service.pattern_coordinator.model_factory=lambda:review_model(Model())
         def request(fetch):return {'schema_version':'1','request_id':str(uuid4()),'data_epoch':state['data_epoch'],'fetch_latest_bank_data':fetch}
         async def post(body):return await internal_post(h,body)
         off=request(False);r=await post(off);assert r.status_code==200,r.text
@@ -165,7 +166,7 @@ async def test_action_binding_survives_observation_prune_and_receipt_age_until_r
         class Model:
             async def ainvoke(self,*args,**kwargs):
                 calls.append(True);return SimpleNamespace(content='{"concern_ids":["sleep","activity"]}')
-        coordinator=service.pattern_coordinator;coordinator.model_factory=lambda:Model()
+        coordinator=service.pattern_coordinator;coordinator.model_factory=lambda:review_model(Model())
         body={'schema_version':'1','request_id':str(uuid4()),'data_epoch':state['data_epoch'],'fetch_latest_bank_data':True}
         if interrupted:
             async def crash(*args,**kwargs):raise RuntimeError('Simulated stop after bank commit')

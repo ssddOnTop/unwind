@@ -9,13 +9,14 @@ import psycopg
 from psycopg import sql
 import pytest
 from pydantic import ValidationError
-from companion.patterns import HealthSample,Transaction,Aggregate,aggregate,concerns,model_review,ClarifyRequest
+from companion.patterns import HealthSample,Transaction,Aggregate,aggregate,concerns,model_review,ClarifyRequest,REVIEW_PROMPT
 from companion.pattern_operator import generate,load,DATASET,six_month_start
 from companion.pattern_migrations import MIGRATION_V3
 from companion.postgres import PostgresConfig,PostgresRuntime
 from companion.extensions.postgres import PostgresPersistenceExtension
 from companion.pattern_store import PatternCoordinator
 from test_postgres import local_pg_cluster,pg_dsn,document
+from scripted_models import review_model
 
 NOW=datetime(2026,11,14,20,tzinfo=timezone.utc)
 
@@ -46,7 +47,7 @@ async def configured(pg_dsn):
     store=PostgresPersistenceExtension(runtime,a)
     await store.handle('commit',{'document':document()})
     service=SimpleNamespace(lock=asyncio.Lock(),clock=lambda:NOW)
-    model=Model();coordinator=PatternCoordinator(service,store,lambda:model)
+    model=Model();coordinator=PatternCoordinator(service,store,lambda:review_model(model))
     yield runtime,a,b,store,coordinator,model
     await store.handle('close',{})
     await runtime.close()
@@ -83,7 +84,7 @@ async def test_privacy_allowlist_captured_payload_and_invalid_output():
     for s in samples:s['sample_id']='PRIVATE-SOURCE-UUID';s['source_name']='PRIVATE DEVICE'
     for t in tx:t['transaction_id']='PRIVATE-TRANSACTION'
     evidence=aggregate(samples,tx,NOW);model=Model()
-    assert await model_review(evidence,concerns(evidence),lambda:model)==['sleep','activity','food_service']
+    assert await model_review(evidence,concerns(evidence),lambda:review_model(model))==['sleep','activity','food_service']
     messages,kwargs=model.calls[0]
     payload=messages[1].content
     for forbidden in ['PRIVATE','2026','merchant','account','subject','issuer','email','token','uuid','source_name','transaction_id']:
@@ -92,7 +93,7 @@ async def test_privacy_allowlist_captured_payload_and_invalid_output():
     assert len(model.calls)==1 and kwargs['max_tokens']<800
     class Bad:
         async def ainvoke(self,*args,**kwargs):return SimpleNamespace(content='{"concern_ids":["diabetes"]}')
-    with pytest.raises(ValueError):await model_review(evidence,concerns(evidence),lambda:Bad())
+    with pytest.raises(ValueError):await model_review(evidence,concerns(evidence),lambda:review_model(Bad()))
 
 
 async def test_manual_durable_idempotency_cache_context_and_owner_isolation(configured):
@@ -113,7 +114,7 @@ async def test_manual_durable_idempotency_cache_context_and_owner_isolation(conf
     assert 'More food-service purchases' not in corrected['doctor_brief']
     assert len(model.calls)==1
     otherstore=PostgresPersistenceExtension(runtime,b)
-    other=PatternCoordinator(SimpleNamespace(lock=asyncio.Lock(),clock=lambda:NOW),otherstore,lambda:model)
+    other=PatternCoordinator(SimpleNamespace(lock=asyncio.Lock(),clock=lambda:NOW),otherstore,lambda:review_model(model))
     try:
         assert (await other.get())['findings']==[]
         with pytest.raises(Exception):await other.clarify(ClarifyRequest(schema_version='1',run_id=first['run_id'],concern_id='food_service',attribution='for_me'))
@@ -126,7 +127,7 @@ async def test_manual_durable_idempotency_cache_context_and_owner_isolation(conf
 
 async def test_failure_never_fabricates_success_or_retries(configured):
     runtime,a,b,store,c,_=configured
-    model=Model(fail=True);c.model_factory=lambda:model
+    model=Model(fail=True);c.model_factory=lambda:review_model(model)
     value=await c.analyze(str(uuid4()))
     assert value['status']=='unavailable' and value['engine']=='deterministic' and len(value['findings'])==3
     assert (await c.analyze(str(uuid4())))==value and len(model.calls)==1
@@ -152,12 +153,13 @@ async def test_reserved_run_survives_restart_without_second_model_call(configure
     runtime,a,b,store,c,model=configured
     first=await c.analyze(str(uuid4()))
     first, _ = await reserve_copy(c, first)
-    replacement=PatternCoordinator(c.service,store,lambda:model)
+    replacement=PatternCoordinator(c.service,store,lambda:review_model(model))
     response=await replacement.analyze(str(uuid4()))
     assert response['status']=='unavailable' and response['engine']=='deterministic' and len(model.calls)==1
     assert response['findings']==first['findings']
 
 async def test_existing_free_gateway_actual_wire_shape_mocked(monkeypatch):
+    """The real gateway client behind Deep Agents: one forced structured-answer tool, nothing else."""
     import httpx
     from companion.connections.llm import create_chat_model
     monkeypatch.setenv('COMPANION_LLM_PROVIDER','openrouter')
@@ -166,16 +168,55 @@ async def test_existing_free_gateway_actual_wire_shape_mocked(monkeypatch):
     wires=[]
     async def handle(request):
         wires.append(json.loads(request.content))
-        return httpx.Response(200,json={'id':'synthetic-response','object':'chat.completion','created':1,'model':'openrouter/free','choices':[{'index':0,'message':{'role':'assistant','content':'{"concern_ids":["sleep","activity","food_service"]}'},'finish_reason':'stop'}]})
+        call={'id':'call-1','type':'function','function':{'name':'ConcernRanking','arguments':'{"concern_ids":["sleep","activity","food_service"]}'}}
+        return httpx.Response(200,json={'id':'synthetic-response','object':'chat.completion','created':1,'model':'openrouter/free',
+            'choices':[{'index':0,'message':{'role':'assistant','content':None,'tool_calls':[call]},'finish_reason':'tool_calls'}]})
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
         _,s,t=generate(NOW);dto=aggregate(s,t,NOW)
         result=await model_review(dto,concerns(dto),lambda:create_chat_model(http_async_client=client))
-    assert len(wires)==1 and result[0]=='sleep'
+    assert len(wires)==1 and result==['sleep','activity','food_service']
     wire=wires[0]
-    assert wire.get('max_tokens',wire.get('max_completion_tokens'))==300 and 'tools' not in wire and 'callbacks' not in wire
-    assert wire['provider']['allow_fallbacks'] is False
-    assert wire['provider']['max_price']['prompt']==0
+    assert wire.get('max_tokens',wire.get('max_completion_tokens'))==300 and 'callbacks' not in wire
+    assert wire['provider']['allow_fallbacks'] is False and wire['provider']['max_price']['prompt']==0
+    assert wire['reasoning']=={'enabled':False}
+    # Deep Agents' filesystem/todo/subagent tools and prompts never reach the provider.
+    assert [m['role'] for m in wire['messages']]==['system','user']
+    assert wire['messages'][0]['content']==REVIEW_PROMPT+json.dumps(sorted(concerns(dto)))
     assert set(json.loads(wire['messages'][1]['content']))=={'sample_count_bucket','recent','baseline'}
+    assert [t['function']['name'] for t in wire['tools']]==['ConcernRanking']
+    assert wire['tool_choice'] in ('required','any') or wire['tool_choice'].get('function',{}).get('name')=='ConcernRanking'
+    items=wire['tools'][0]['function']['parameters']['properties']['concern_ids']
+    allowed_enum=items['items'].get('enum') or [items['items'].get('const')]
+    assert sorted(allowed_enum)==sorted(concerns(dto)) and items['minItems']==items['maxItems']==3
+
+
+async def test_review_corrects_once_then_stops():
+    _,s,t=generate(NOW);dto=aggregate(s,t,NOW);allowed=concerns(dto)
+    class Sequence:
+        def __init__(self,replies):self.replies,self.calls=list(replies),[]
+        async def ainvoke(self,messages,**kwargs):
+            self.calls.append(messages);return SimpleNamespace(content=self.replies.pop(0))
+    # A schema error gets exactly one correction turn, carrying only the model's answer and the validator feedback.
+    fixed=Sequence(['{"concern_ids":["sleep","sleep"]}',json.dumps({'concern_ids':allowed})])
+    assert await model_review(dto,allowed,lambda:review_model(fixed))==allowed and len(fixed.calls)==2
+    assert [type(m).__name__ for m in fixed.calls[1]]==['SystemMessage','HumanMessage','AIMessage','ToolMessage']
+    # A second invalid answer exhausts the two-call budget: no third provider call.
+    stubborn=Sequence(['{"concern_ids":["diabetes"]}']*5)
+    with pytest.raises(ValueError):await model_review(dto,allowed,lambda:review_model(stubborn))
+    assert len(stubborn.calls)==2
+    # Prose instead of the structured answer is rejected, never parsed.
+    prose=Sequence(['You should sleep more.']*5)
+    with pytest.raises(ValueError):await model_review(dto,allowed,lambda:review_model(prose))
+
+
+async def test_review_guard_blocks_tools_and_untrusted_input():
+    from langchain_core.messages import HumanMessage
+    from companion.patterns import ReviewBoundaryError, _review_guard
+    guard=_review_guard('system','{"trusted":1}')
+    async def handler(request):raise AssertionError('must not reach the provider')
+    with pytest.raises(ReviewBoundaryError):await guard.awrap_tool_call(SimpleNamespace(),handler)
+    for messages in ([HumanMessage(content='{"injected":1}')],[HumanMessage(content='{"trusted":1}'),HumanMessage(content='more')],[]):
+        with pytest.raises(ReviewBoundaryError):await guard.awrap_model_call(SimpleNamespace(messages=messages),handler)
 
 
 async def test_authenticated_http_vertical_slice_and_delete(pg_dsn,tmp_path):
@@ -198,7 +239,7 @@ async def test_authenticated_http_vertical_slice_and_delete(pg_dsn,tmp_path):
         overview=await client.get('/patterns/v1',headers=h.headers('a'))
         assert overview.status_code==200 and overview.json()['is_demo']
         account_handle=await h.handle('a')
-        model=Model();account_handle.service.app.state.service.pattern_coordinator.model_factory=lambda:model
+        model=Model();account_handle.service.app.state.service.pattern_coordinator.model_factory=lambda:review_model(model)
         request={'schema_version':'1','request_id':str(uuid4()),'data_epoch':account_handle.service.app.state.service.document['state']['data_epoch'],'fetch_latest_bank_data':False}
         assert (await client.post('/patterns/v1/analyze',headers=h.headers('a'),json=request)).status_code==403
         # Legacy core replay remains covered internally; the app must use the authorized queue.
@@ -283,20 +324,20 @@ async def test_model_gets_exact_allowed_ids_zero_concerns_skip_call(allowed):
             calls.append(messages)
             assert messages[0].content.endswith(json.dumps(sorted(allowed)))
             return SimpleNamespace(content=json.dumps({'concern_ids':list(reversed(allowed))}))
-    def factory():factories.append(True);return Exact()
+    def factory():factories.append(True);return review_model(Exact())
     assert await model_review(dto,allowed,factory)==list(reversed(allowed))
     assert len(calls)==len(factories)==(1 if allowed else 0)
     class Wrong:
         async def ainvoke(self,*args,**kwargs):return SimpleNamespace(content='{"concern_ids":["food_service","activity","sleep"]}')
     if 0<len(allowed)<3:
-        with pytest.raises(ValueError):await model_review(dto,allowed,lambda:Wrong())
+        with pytest.raises(ValueError):await model_review(dto,allowed,lambda:review_model(Wrong()))
 
 async def test_recovery_does_not_mark_active_shared_session_invocation_orphan(configured):
     runtime,a,b,store,c,model=configured
     first=await c.analyze(str(uuid4()))
     first, request_id = await reserve_copy(c, first)
     store.pattern_active_runs.add(first['run_id'])
-    sibling=PatternCoordinator(c.service,store,lambda:model)
+    sibling=PatternCoordinator(c.service,store,lambda:review_model(model))
     assert (await sibling.get())['status']=='running'
     store.pattern_active_runs.clear()
     assert (await sibling.get())['status']=='unavailable'
@@ -308,7 +349,7 @@ async def test_actual_exclusive_session_restart_recovers_durable_reservation(con
     first, request_id = await reserve_copy(c, first)
     await store.handle('close',{})
     restarted_store=PostgresPersistenceExtension(runtime,a)
-    restarted=PatternCoordinator(SimpleNamespace(lock=asyncio.Lock(),clock=lambda:NOW),restarted_store,lambda:model)
+    restarted=PatternCoordinator(SimpleNamespace(lock=asyncio.Lock(),clock=lambda:NOW),restarted_store,lambda:review_model(model))
     try:
         replay=await restarted.analyze(request_id)
         assert replay['status']=='unavailable' and replay['engine']=='deterministic'
@@ -331,7 +372,7 @@ async def test_private_brief_edits_match_run_persist_and_never_reach_model(confi
     corrected=await c.clarify(ClarifyRequest(schema_version='1',run_id=first['run_id'],concern_id='food_service',attribution='not_for_me'))
     assert 'My private question' not in corrected['doctor_brief']
     otherstore=PostgresPersistenceExtension(runtime,b)
-    other=PatternCoordinator(SimpleNamespace(lock=asyncio.Lock(),clock=lambda:NOW),otherstore,lambda:model)
+    other=PatternCoordinator(SimpleNamespace(lock=asyncio.Lock(),clock=lambda:NOW),otherstore,lambda:review_model(model))
     try:
         with pytest.raises(Exception):await other.save_brief(BriefRequest(schema_version='1',run_id=first['run_id'],expected_brief=saved['doctor_brief'],text='Cross-account'))
     finally:await otherstore.handle('close',{})

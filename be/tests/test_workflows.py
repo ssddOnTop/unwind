@@ -16,6 +16,7 @@ from test_postgres_http import signing_key
 from test_auth_http import NOW,ISSUER
 from test_banking_postgres import setup,add,act
 from test_pattern_bridges import consent,health_pages,send
+from scripted_models import review_model
 
 @pytest.fixture
 async def app(tmp_path,signing_key,runtime):
@@ -101,7 +102,7 @@ async def test_worker_cache_manual_nightly_race_bank_gate_and_no_raw_prompt(app)
         class Model:
             async def ainvoke(self,messages,**kwargs):
                 calls.append(messages);return SimpleNamespace(content='{"concern_ids":["sleep","activity"]}')
-        service.pattern_coordinator.model_factory=lambda:Model()
+        service.pattern_coordinator.model_factory=lambda:review_model(Model())
         r=await enqueue(client,h,state);assert r.status_code==200
         await q.scan()
         first,second=await asyncio.gather(q.claim(handle.account_id),q.claim(handle.account_id))
@@ -132,7 +133,7 @@ async def test_consent_cancellation_and_delete_fence_job_and_results(app):
         class Slow:
             async def ainvoke(self,*args,**kwargs):
                 calls.append(True);entered.set();await asyncio.Event().wait()
-        service.pattern_coordinator.model_factory=lambda:Slow()
+        service.pattern_coordinator.model_factory=lambda:review_model(Slow())
         await enqueue(client,h,state);job=await q.claim(handle.account_id)
         task=asyncio.create_task(h.app.state.workflow_worker.run(job));await asyncio.wait_for(entered.wait(),10)
         preferences=deepcopy(service.document['state']['preferences']);preferences['cloud_consent']=False
@@ -238,7 +239,7 @@ async def test_delete_during_model_call_cannot_publish_old_epoch_or_requeue(app)
         class Slow:
             async def ainvoke(self,*args,**kwargs):
                 calls.append(True);entered.set();await asyncio.Event().wait()
-        service.pattern_coordinator.model_factory=lambda:Slow()
+        service.pattern_coordinator.model_factory=lambda:review_model(Slow())
         await enqueue(client,h,state);job=await q.claim(handle.account_id)
         pending=asyncio.create_task(h.app.state.workflow_worker.run(job));await asyncio.wait_for(entered.wait(),10)
         result=await client.request('DELETE','/data',headers=h.headers(),json={'schema_version':'1','request_id':str(uuid4()),'data_epoch':state['data_epoch'],'confirm':'delete_all'})
