@@ -3,7 +3,7 @@ import Testing
 @testable import CompanionCore
 
 private func patternFixture() throws -> PatternOverview {
-    let json = #"{"schema_version":"1","status":"complete","run_id":"00000000-0000-4000-8000-000000000001","analyzed_at":"2026-11-14T20:00:00Z","engine":"LLMassisted","is_demo":true,"can_analyze":true,"source_label":"Operator demo — synthetic records","doctor_brief":"Synthetic patterns for review, not a diagnosis.","privacy_notice":"Only a pattern summary is sent.","bank_refresh":{"status":"not_requested","last_updated":null,"message":"Using saved bank data."},"evidence":{"sample_count_bucket":"1000plus","recent":{"label":"recent4weeks","steps_average_bucket":3000,"sleep_hours_bucket":6.0,"food_service_per_week_bucket":5,"workouts_per_week_bucket":1,"missing_steps":false,"missing_sleep":false,"missing_transactions":false},"baseline":{"label":"baseline","steps_average_bucket":9000,"sleep_hours_bucket":8.0,"food_service_per_week_bucket":1,"workouts_per_week_bucket":3,"missing_steps":false,"missing_sleep":false,"missing_transactions":false}},"findings":[{"concern_id":"sleep","title":"Shorter recorded sleep","explanation":"A recorded pattern, not a diagnosis.","evidence_codes":["sleep_comparison"],"confidence":"moderate","attribution":"unconfirmed","evidence_summary":"Recent 6 hours versus baseline 8 hours."}]}"#
+    let json = #"{"schema_version":"1","status":"complete","run_id":"00000000-0000-4000-8000-000000000001","analyzed_at":"2026-11-14T20:00:00Z","engine":"LLMassisted","is_demo":true,"can_analyze":true,"source_label":"Operator demo — synthetic records","doctor_brief":"Synthetic patterns for review, not a diagnosis.","privacy_notice":"Only a pattern summary is sent.","bank_refresh":{"status":"not_requested","last_updated":null,"message":"Using saved bank data."},"evidence":{"sample_count_bucket":"1000plus","recent":{"label":"recent4weeks","steps_average_bucket":3000,"sleep_hours_bucket":6.0,"food_service_per_week_bucket":5,"workouts_per_week_bucket":1,"missing_steps":false,"missing_sleep":false,"missing_transactions":false},"baseline":{"label":"baseline","steps_average_bucket":9000,"sleep_hours_bucket":8.0,"food_service_per_week_bucket":1,"workouts_per_week_bucket":3,"missing_steps":false,"missing_sleep":false,"missing_transactions":false}},"areas":[{"area":"sleep","state":"concern","summary":"Shorter recorded sleep."}],"current_run_id":"00000000-0000-4000-8000-000000000001","is_current":true,"actionable_area_ids":["sleep"],"actionability_key":"test-key","revision":0,"findings":[{"concern_id":"sleep","title":"Shorter recorded sleep","explanation":"A recorded pattern, not a diagnosis.","evidence_codes":["sleep_comparison"],"confidence":"moderate","attribution":"unconfirmed","evidence_summary":"Recent 6 hours versus baseline 8 hours."}]}"#
     return try Wire.decode(PatternOverview.self, Data(json.utf8))
 }
 
@@ -114,4 +114,27 @@ private func workflowFixture() throws -> WorkflowOverview {
     client.invalidateSession();let before = http.requests.count
     await #expect(throws: (any Error).self) { try await client.workflows(requestID: id) }
     #expect(http.requests.count == before)
+}
+
+@Test func latestAreaStatesAndNotificationSupersessionRoundTrip() throws {
+    var value = try patternFixture()
+    value.areas = [
+        PatternArearesult(area: "activity", state: "no_current_concern", summary: "No current concern supported."),
+        PatternArearesult(area: "sleep", state: "insufficient_data", summary: "Not enough recorded coverage."),
+        PatternArearesult(area: "food_service", state: "no_current_concern", summary: "No current concern supported.")
+    ]
+    value.findings = []
+    value.actionable_area_ids = []
+    value.actionability_key = nil
+    value.revision = 4
+    let decoded = try Wire.decode(PatternOverview.self, Wire.encode(value))
+    #expect(Set(decoded.areas.map(\.area)).count == 3)
+    #expect(decoded.areas[1].state == "insufficient_data")
+    #expect(decoded.findings.isEmpty && decoded.actionable_area_ids.isEmpty)
+    #expect(decoded.actionability_key == nil && decoded.revision == 4)
+    value.is_current = false
+    value.current_run_id = "00000000-0000-4000-8000-000000000002"
+    #expect(try Wire.decode(PatternOverview.self, Wire.encode(value)).current_run_id != value.run_id)
+    value.areas[0].state = "healthy"
+    #expect(throws: (any Error).self) { try Wire.decode(PatternOverview.self, Wire.encode(value)) }
 }

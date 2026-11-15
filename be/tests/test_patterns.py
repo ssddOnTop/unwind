@@ -108,7 +108,8 @@ async def test_manual_durable_idempotency_cache_context_and_owner_isolation(conf
     async with c.transaction() as conn:
         assert (await (await conn.execute('SELECT count(*) FROM companion_private.pattern_requests')).fetchone())[0]==2
     corrected=await c.clarify(ClarifyRequest(schema_version='1',run_id=first['run_id'],concern_id='food_service',attribution='not_for_me'))
-    assert corrected['findings'][2]['attribution']=='not_for_me'
+    assert 'food_service' not in corrected['actionable_area_ids']
+    assert next(a for a in corrected['areas'] if a['area']=='food_service')['state']=='insufficient_data'
     assert 'More food-service purchases' not in corrected['doctor_brief']
     assert len(model.calls)==1
     otherstore=PostgresPersistenceExtension(runtime,b)
@@ -150,8 +151,7 @@ async def test_forced_rls_deletion_cascade_and_operator_selection(configured):
 async def test_reserved_run_survives_restart_without_second_model_call(configured):
     runtime,a,b,store,c,model=configured
     first=await c.analyze(str(uuid4()))
-    async with c.transaction() as conn:
-        await conn.execute("UPDATE companion_private.pattern_runs SET status='running',engine='deterministic'")
+    first, _ = await reserve_copy(c, first)
     replacement=PatternCoordinator(c.service,store,lambda:model)
     response=await replacement.analyze(str(uuid4()))
     assert response['status']=='unavailable' and response['engine']=='deterministic' and len(model.calls)==1
@@ -216,7 +216,7 @@ async def test_authenticated_http_vertical_slice_and_delete(pg_dsn,tmp_path):
         assert (await client.get('/patterns/v1',headers=h.headers('a'))).json()['findings']==[]
         assert len(model.calls)==1
 
-async def test_operator_lock_provider_batch_removal_and_unknown_fields(configured):
+async def test_operator_lock_named_dataset_cleanup_preserves_provider_batch_and_rejects_unknown_fields(configured):
     runtime,a,b,store,c,model=configured
     async with runtime.pool.connection() as conn:
         with pytest.raises(ValueError,match='Stop the selected account runtime'):
@@ -235,7 +235,8 @@ async def test_operator_lock_provider_batch_removal_and_unknown_fields(configure
         await load(conn,account_id=a,issuer='https://issuer.invalid',subject='private-subject',now=NOW,remove=True)
         async with conn.transaction():
             await conn.execute("SELECT set_config('companion.account_id',%s,true)",(a,))
-            assert (await (await conn.execute('SELECT count(*) FROM companion_private.pattern_batches')).fetchone())[0]==0
+            assert (await (await conn.execute('SELECT dataset FROM companion_private.pattern_batches')).fetchall())==[('provider-sandbox-import-v1',)]
+            assert (await (await conn.execute('SELECT count(*) FROM companion_private.pattern_transactions')).fetchone())[0]==1
 
 
 async def test_190_day_retention_preserves_unaffected_review_attribution_and_request_binding(configured):
@@ -293,7 +294,7 @@ async def test_model_gets_exact_allowed_ids_zero_concerns_skip_call(allowed):
 async def test_recovery_does_not_mark_active_shared_session_invocation_orphan(configured):
     runtime,a,b,store,c,model=configured
     first=await c.analyze(str(uuid4()))
-    async with c.transaction() as conn:await conn.execute("UPDATE companion_private.pattern_runs SET status='running',engine='deterministic'")
+    first, request_id = await reserve_copy(c, first)
     store.pattern_active_runs.add(first['run_id'])
     sibling=PatternCoordinator(c.service,store,lambda:model)
     assert (await sibling.get())['status']=='running'
@@ -304,7 +305,7 @@ async def test_recovery_does_not_mark_active_shared_session_invocation_orphan(co
 async def test_actual_exclusive_session_restart_recovers_durable_reservation(configured):
     runtime,a,b,store,c,model=configured
     request_id=str(uuid4());first=await c.analyze(request_id)
-    async with c.transaction() as conn:await conn.execute("UPDATE companion_private.pattern_runs SET status='running',engine='deterministic'")
+    first, request_id = await reserve_copy(c, first)
     await store.handle('close',{})
     restarted_store=PostgresPersistenceExtension(runtime,a)
     restarted=PatternCoordinator(SimpleNamespace(lock=asyncio.Lock(),clock=lambda:NOW),restarted_store,lambda:model)
@@ -343,3 +344,13 @@ async def test_zero_concern_run_is_honestly_deterministic_without_model(configur
     value=await c.analyze(str(uuid4()))
     assert value['status']=='complete' and value['engine']=='deterministic' and value['findings']==[]
     assert len(model.calls)==0
+
+
+async def reserve_copy(c, first):
+    """Simulate a crash after reservation without mutating a completed result."""
+    run,request=str(uuid4()),str(uuid4())
+    async with c.transaction() as conn:
+        await conn.execute("INSERT INTO companion_private.pattern_runs(account_id,run_id,request_id,input_digest,input_version,status,engine,evidence,is_demo,source_label,assessment) SELECT account_id,%s,%s,input_digest,input_version,'running','deterministic',evidence,is_demo,source_label,assessment FROM companion_private.pattern_runs WHERE account_id=%s AND run_id=%s",(run,request,c.store.account_id,first['run_id']))
+        await conn.execute('INSERT INTO companion_private.pattern_insights(account_id,run_id,concern_id,rank) SELECT account_id,%s,concern_id,rank FROM companion_private.pattern_insights WHERE account_id=%s AND run_id=%s',(run,c.store.account_id,first['run_id']))
+        await conn.execute('INSERT INTO companion_private.pattern_requests(account_id,request_id,run_id) VALUES(%s,%s,%s)',(c.store.account_id,request,run))
+    return {**first,'run_id':run}, request

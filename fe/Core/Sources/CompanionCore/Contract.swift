@@ -2337,6 +2337,43 @@ public struct PatternAggregate: Codable, Equatable, Sendable {
     }
 }
 
+public struct PatternArearesult: Codable, Equatable, Sendable {
+    public var area: String
+    public var state: String
+    public var summary: String
+    public init(area: String, state: String, summary: String) {
+        self.area = area
+        self.state = state
+        self.summary = summary
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case area, state, summary
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        area = try c.decode(String.self, forKey: .area)
+        do { let value = area;
+            guard ["activity", "sleep", "food_service"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .area, in: c, debugDescription: "Invalid contract value") }
+        }
+        state = try c.decode(String.self, forKey: .state)
+        do { let value = state;
+            guard ["concern", "no_current_concern", "insufficient_data"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .state, in: c, debugDescription: "Invalid contract value") }
+        }
+        summary = try c.decode(String.self, forKey: .summary)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(area, forKey: .area)
+        try c.encode(state, forKey: .state)
+        try c.encode(summary, forKey: .summary)
+    }
+}
+
 public struct PatternBankrefresh: Codable, Equatable, Sendable {
     public var status: String
     public var last_updated: String?
@@ -2498,7 +2535,13 @@ public struct PatternOverview: Codable, Equatable, Sendable {
     public var privacy_notice: String
     public var evidence: PatternAggregate?
     public var findings: [PatternFinding]
-    public init(schema_version: String, status: String, analyzed_at: String?, run_id: String?, engine: String, is_demo: Bool, can_analyze: Bool, source_label: String, doctor_brief: String, bank_refresh: PatternBankrefresh, privacy_notice: String, evidence: PatternAggregate?, findings: [PatternFinding]) {
+    public var areas: [PatternArearesult]
+    public var current_run_id: String?
+    public var is_current: Bool
+    public var actionable_area_ids: [String]
+    public var actionability_key: String?
+    public var revision: Int
+    public init(schema_version: String, status: String, analyzed_at: String?, run_id: String?, engine: String, is_demo: Bool, can_analyze: Bool, source_label: String, doctor_brief: String, bank_refresh: PatternBankrefresh, privacy_notice: String, evidence: PatternAggregate?, findings: [PatternFinding], areas: [PatternArearesult], current_run_id: String?, is_current: Bool, actionable_area_ids: [String], actionability_key: String?, revision: Int) {
         self.schema_version = schema_version
         self.status = status
         self.analyzed_at = analyzed_at
@@ -2512,9 +2555,15 @@ public struct PatternOverview: Codable, Equatable, Sendable {
         self.privacy_notice = privacy_notice
         self.evidence = evidence
         self.findings = findings
+        self.areas = areas
+        self.current_run_id = current_run_id
+        self.is_current = is_current
+        self.actionable_area_ids = actionable_area_ids
+        self.actionability_key = actionability_key
+        self.revision = revision
     }
     enum CodingKeys: String, CodingKey, CaseIterable {
-        case schema_version, status, analyzed_at, run_id, engine, is_demo, can_analyze, source_label, doctor_brief, bank_refresh, privacy_notice, evidence, findings
+        case schema_version, status, analyzed_at, run_id, engine, is_demo, can_analyze, source_label, doctor_brief, bank_refresh, privacy_notice, evidence, findings, areas, current_run_id, is_current, actionable_area_ids, actionability_key, revision
     }
     public init(from decoder: Decoder) throws {
         let keys = try decoder.container(keyedBy: AnyKey.self)
@@ -2545,6 +2594,15 @@ public struct PatternOverview: Codable, Equatable, Sendable {
         privacy_notice = try c.decode(String.self, forKey: .privacy_notice)
         evidence = try c.decodeIfPresent(PatternAggregate.self, forKey: .evidence)
         findings = try c.decode([PatternFinding].self, forKey: .findings)
+        areas = try c.decode([PatternArearesult].self, forKey: .areas)
+        current_run_id = try c.decodeIfPresent(String.self, forKey: .current_run_id)
+        is_current = try c.decode(Bool.self, forKey: .is_current)
+        actionable_area_ids = try c.decode([String].self, forKey: .actionable_area_ids)
+        do { let value = actionable_area_ids;
+            guard value.allSatisfy({ ["activity", "sleep", "food_service"].contains($0) }) else { throw DecodingError.dataCorruptedError(forKey: .actionable_area_ids, in: c, debugDescription: "Invalid contract value") }
+        }
+        actionability_key = try c.decodeIfPresent(String.self, forKey: .actionability_key)
+        revision = try c.decode(Int.self, forKey: .revision)
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -2561,6 +2619,12 @@ public struct PatternOverview: Codable, Equatable, Sendable {
         try c.encode(privacy_notice, forKey: .privacy_notice)
         try c.encode(evidence, forKey: .evidence)
         try c.encode(findings, forKey: .findings)
+        try c.encode(areas, forKey: .areas)
+        try c.encode(current_run_id, forKey: .current_run_id)
+        try c.encode(is_current, forKey: .is_current)
+        try c.encode(actionable_area_ids, forKey: .actionable_area_ids)
+        try c.encode(actionability_key, forKey: .actionability_key)
+        try c.encode(revision, forKey: .revision)
     }
 }
 

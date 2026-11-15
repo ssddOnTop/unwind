@@ -213,10 +213,23 @@ async def test_daily_sync_uses_elapsed_24h_and_restart_stable_attempt(tmp_path):
             await c.post('/connections/plaid',json={**base,'request_id':'link','action':'link_token','consent_sandbox':True})
             await c.post('/connections/plaid',json={**base,'request_id':'exchange','action':'exchange','public_token':PUBLIC})
             coordinator=app.state.service.plaid_coordinator
-            assert await coordinator.daily_sync() is None
-            clock[0]+=timedelta(hours=24)
+            sync_count=lambda:sum(path=='/transactions/sync' for path,_ in provider.requests)
+            # Exchange only connects the Item; it is not a transaction import.
+            assert sync_count()==0
             assert (await coordinator.daily_sync())['result']['status']=='complete'
-            assert await coordinator.daily_sync() is None
+            first_count=sync_count();assert first_count>0
+            due=iso(clock[0]+timedelta(hours=24))
+            assert await coordinator.daily_sync()=={'deferred_until':due}
+            clock[0]+=timedelta(hours=24)-timedelta(seconds=1)
+            assert await coordinator.daily_sync()=={'deferred_until':due}
+            assert sync_count()==first_count
+            clock[0]+=timedelta(seconds=1)
+            assert (await coordinator.daily_sync())['result']['status']=='complete'
+            second_count=sync_count();assert second_count>first_count
+            due=iso(clock[0]+timedelta(hours=24))
+            assert await coordinator.daily_sync()=={'deferred_until':due}
+            assert sync_count()==second_count
     app=app_for(tmp_path,provider,clock=lambda:clock[0])
     async with app.router.lifespan_context(app):
-        assert await app.state.service.plaid_coordinator.daily_sync() is None
+        assert await app.state.service.plaid_coordinator.daily_sync()=={'deferred_until':due}
+        assert sync_count()==second_count

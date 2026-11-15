@@ -11,7 +11,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-VERSION = 'patterns-2:aggregate-1:prompt-1'
+VERSION = 'patterns-3:aggregate-1:prompt-1'
 NOTICE = ('Only a coarse pattern summary is sent for AI review, not identities, merchants or raw records. '
           'Aggregates can still be sensitive. Missing data is unknown, not zero. These are observations, not diagnoses or causes.')
 COPY = {
@@ -129,6 +129,26 @@ class BankRefresh(Strict):
     last_updated: str | None
     message: str
 
+class AreaResult(Strict):
+    area: Literal['activity','sleep','food_service']
+    state: Literal['concern','no_current_concern','insufficient_data']
+    summary: str
+
+
+def area_results(evidence):
+    """One result per area. Absence of a warning is not evidence of good health."""
+    supported = concerns(evidence)
+    results = []
+    for area, missing in [('activity','missing_steps'), ('sleep','missing_sleep'), ('food_service','missing_transactions')]:
+        insufficient = getattr(evidence.recent, missing) or getattr(evidence.baseline, missing)
+        state = 'concern' if area in supported else 'insufficient_data' if insufficient else 'no_current_concern'
+        summary = COPY[area][1] if state == 'concern' else (
+            'Not enough recorded coverage to assess this area.' if insufficient else
+            'No current concern supported by this comparison. This does not establish good health.')
+        results.append(AreaResult(area=area, state=state, summary=summary))
+    return results
+
+
 class PatternOverview(Strict):
     schema_version: Literal['1'] = '1'
     status: Literal['not_analyzed','running','complete','unavailable']
@@ -143,6 +163,12 @@ class PatternOverview(Strict):
     privacy_notice: str = NOTICE
     evidence: Aggregate | None
     findings: list[Finding]
+    areas: list[AreaResult] = Field(default_factory=list)
+    current_run_id: str | None = None
+    is_current: bool = False
+    actionable_area_ids: list[Literal['activity','sleep','food_service']] = Field(default_factory=list)
+    actionability_key: str | None = None
+    revision: int = 0
 
 
 def aggregate(samples, transactions, now):
@@ -190,8 +216,8 @@ def aggregate(samples, transactions, now):
 def concerns(evidence):
     r,b = evidence.recent,evidence.baseline
     ids=[]
-    if r.steps_average_bucket is not None and b.steps_average_bucket and r.steps_average_bucket <= b.steps_average_bucket*.7: ids.append('activity')
-    if r.sleep_hours_bucket is not None and b.sleep_hours_bucket is not None and r.sleep_hours_bucket <= b.sleep_hours_bucket-1: ids.append('sleep')
+    if not r.missing_steps and not b.missing_steps and r.steps_average_bucket is not None and b.steps_average_bucket and r.steps_average_bucket <= b.steps_average_bucket*.7: ids.append('activity')
+    if not r.missing_sleep and not b.missing_sleep and r.sleep_hours_bucket is not None and b.sleep_hours_bucket is not None and r.sleep_hours_bucket <= b.sleep_hours_bucket-1: ids.append('sleep')
     if not r.missing_transactions and not b.missing_transactions and r.food_service_per_week_bucket >= b.food_service_per_week_bucket+2: ids.append('food_service')
     return ids
 
