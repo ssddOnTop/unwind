@@ -52,6 +52,7 @@ struct PublicAuthConfiguration {
     private var observation: AnyCancellable?
     private var suspended = false
     private var managingAccount = false
+    private var endingSession = false
     private var managedSession: String?
     private var preparedIdentity: AuthIdentity?
     private let defaults = UserDefaults.standard
@@ -99,6 +100,7 @@ struct PublicAuthConfiguration {
     func observeSDK() {
         guard !suspended, clerk?.isLoaded == true else { return }
         guard let identity = sdkIdentity else {
+            model?.reportNotifications.stopForLogout()
             fence.lock(); return
         }
         if managingAccount && managedSession != identity.sessionID {
@@ -121,7 +123,7 @@ struct PublicAuthConfiguration {
     }
     private func prepare(_ identity: AuthIdentity) {
         guard let origin = apiOrigin, let provider, let cache else { return }
-        if let previous = preparedIdentity, previous != identity { fence.lock() }
+        if let previous = preparedIdentity, previous != identity { model?.reportNotifications.stopForLogout(); fence.lock() }
         // Retry/foreground of the same account keeps queued bytes on disk, but destroys old objects.
         work?.cancel(); model?.invalidateForSignOut(); model = nil; observation = nil
         bearer?.cancel(); bearer = nil; ready = false; issue = nil
@@ -176,17 +178,50 @@ struct PublicAuthConfiguration {
         guard suspended else { return }
         suspended = false; cancelLocalReminders(); observeSDK()
     }
-    func prepareAccountManagement() {
-        managedSession = sdkIdentity?.sessionID; managingAccount = true
-        fence.lock() // synchronous local purge BEFORE any native account switch/sign-out UI
+    private func revokeCapturedNotificationSession(_ identity: AuthIdentity) async throws {
+        guard let origin = apiOrigin, let provider, provider.currentIdentity == identity else { throw AuthenticationFailure.changedSession }
+        let logoutFence = AuthSessionFence()
+        // Use one isolated fence, never revive the main UI/cache admission.
+        let captured = logoutFence.activate(identity)
+        let transport = try AuthenticatedTransport(base: URLSessionTransport(), provider: provider, fence: logoutFence, lease: captured, origin: origin)
+        defer { transport.cancel(); logoutFence.lock() }
+        try await transport.admit()
+        try await ReportNotificationSessionLogout.perform(transport: transport, origin: origin)
+    }
+    func prepareAccountManagement() async -> Bool {
+        guard !endingSession else { return false }
+        endingSession = true; defer { endingSession = false }
+        let identity = sdkIdentity, notifications = model?.reportNotifications
+        notifications?.stopForLogout()
+        fence.lock() // immediate local purge; isolated RPC retains only captured identity authority
+        do {
+            await ReportNotificationAdapter().clearDelivered()
+            if let identity { try await revokeCapturedNotificationSession(identity); notifications?.confirmLogout() }
+            else if clerk?.session != nil { throw AuthenticationFailure.unavailable }
+            guard sdkIdentity == identity else { throw AuthenticationFailure.changedSession }
+            managedSession = identity?.sessionID; managingAccount = true
+            return true
+        } catch {
+            issue = "Local records are locked. Server report-alert revocation is unconfirmed; reconnect and retry Manage sign-in."
+            return false
+        }
     }
     func signOut() {
-        managingAccount = false
+        guard !endingSession else { return }
+        endingSession = true; managingAccount = false
+        let identity = sdkIdentity, notifications = model?.reportNotifications
+        notifications?.stopForLogout()
         fence.lock()
         work = Task { [weak self] in
             guard let self, let clerk else { return }
-            do { try await clerk.auth.signOut() }
-            catch { self.issue = "Signed out locally. Clerk sign-out could not be confirmed; your records remain locked. Retry sign-out." }
+            defer { self.endingSession = false }
+            do {
+                await ReportNotificationAdapter().clearDelivered()
+                if let identity { try await self.revokeCapturedNotificationSession(identity); notifications?.confirmLogout() }
+                else if clerk.session != nil { throw AuthenticationFailure.unavailable }
+                guard self.sdkIdentity == identity else { throw AuthenticationFailure.changedSession }
+                try await clerk.auth.signOut()
+            } catch { self.issue = "Local records are locked. Server report-alert revocation or SDK sign-out is unconfirmed. Reconnect and retry Sign out before switching accounts." }
         }
     }
     func retryService() {

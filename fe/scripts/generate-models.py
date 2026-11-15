@@ -28,6 +28,12 @@ def pattern_refs(value):
     return value
 for key, value in patterns.items():
     defs['pattern_' + key] = pattern_refs(value)
+notifications = json.loads((root / 'contracts/report_notifications.schema.json').read_text())['$defs']
+def notification_refs(value):
+    if isinstance(value, dict): return {k: ('#/$defs/notification_' + v.split('/')[-1] if k == '$ref' else notification_refs(v)) for k,v in value.items()}
+    if isinstance(value, list): return [notification_refs(v) for v in value]
+    return value
+for key,value in notifications.items(): defs['notification_'+key]=notification_refs(value)
 # Explicit additive deployment errors; frozen base artifacts are not rewritten.
 for code in ['stale_experience', 'obsolete_pattern', 'unauthorized', 'session_pending', 'auth_unavailable']:
     defs['error']['properties']['error']['properties']['code']['enum'].append(code)
@@ -45,6 +51,7 @@ names['pattern_HealthIngestRequest'] = 'HealthIngestRequest'
 names['pattern_BriefRequest'] = 'PatternBriefRequest'
 for name in ['WorkflowOverview','WorkflowAction','WorkflowPage','WorkflowChoice','WorkflowQuestion','WorkflowJob','EnqueueRequest']:
     names['pattern_'+name]=name
+for name in notifications: names['notification_'+name]=name
 objects = []
 def typ(p, name):
     if 'anyOf' in p:

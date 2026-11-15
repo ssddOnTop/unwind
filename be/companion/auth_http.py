@@ -89,7 +89,7 @@ class _Gateway:
             self.routes.add(("POST", "/connections/plaid"))
         if experience_profile:
             self.routes.update({("GET", "/experience/v1"), ("POST", "/experience/v1/answers"),
-                ('POST','/health/v1/samples'), ('GET','/patterns/v1'), ('POST','/patterns/v1/analyze'), ('POST','/patterns/v1/clarify'), ('POST','/patterns/v1/brief'),('GET','/workflows/v1'),('POST','/workflows/v1/enqueue')})
+                ('POST','/health/v1/samples'), ('GET','/patterns/v1'), ('POST','/patterns/v1/analyze'), ('POST','/patterns/v1/clarify'), ('POST','/patterns/v1/brief'),('GET','/workflows/v1'),('POST','/workflows/v1/enqueue'),('GET','/report-notifications/v1'),('POST','/report-notifications/v1/register'),('POST','/report-notifications/v1/status'),('POST','/report-notifications/v1/revoke'),('POST','/report-notifications/v1/logout')})
         if banking_profile:
             self.routes.update({('GET','/banking/v1'),('POST','/banking/v1/actions')})
         if webhook_receiver is not None:
@@ -238,7 +238,7 @@ def create_authenticated_app(auth_root: Path, *, auth_config: AuthConfig | None 
         plaid_profile=False, experience_profile=False, max_accounts=128,
         postgres_runtime=None, webhook_url=None, webhook_verifier=None,
         replacements_factory=None, webhook_worker_enabled=True, banking_profile=False,
-        allowed_hosts=LOOPBACK_HOSTS, workflow_config=None, workflow_worker_enabled=True) -> FastAPI:
+        allowed_hosts=LOOPBACK_HOSTS, workflow_config=None, workflow_worker_enabled=True, notification_config=None, notification_provider=None, notification_cipher=None, notification_worker_enabled=True) -> FastAPI:
     """Build an explicitly authenticated app without initializing user storage.
 
     Supply auth_config or a configured verifier (both must agree if supplied).
@@ -278,6 +278,11 @@ def create_authenticated_app(auth_root: Path, *, auth_config: AuthConfig | None 
     workflow_queue=WorkflowQueue(postgres_runtime,workflow_config,clock) if postgres_runtime is not None and experience_profile else None
     if workflow_config.enabled and workflow_queue is None:raise ValueError('Workflows require authenticated PostgreSQL experience')
 
+    from .report_notification_service import NotificationConfig,ReportNotificationService
+    notification_config=notification_config or NotificationConfig.from_env()
+    notifications=ReportNotificationService(postgres_runtime,auth_root,notification_config,provider=notification_provider,cipher=notification_cipher) if postgres_runtime is not None and experience_profile else None
+    if notification_config.enabled and notifications is None:raise ValueError('Notifications require authenticated PostgreSQL experience')
+
     async def child_service(path: Path):
         if service_factory is None:
             replacements = replacements_factory(path) if replacements_factory else {}
@@ -300,6 +305,7 @@ def create_authenticated_app(auth_root: Path, *, auth_config: AuthConfig | None 
             child.state.service.pattern_coordinator = PatternCoordinator(child.state.service, replacements['persistence'])
             child.state.service.workflow_queue=workflow_queue
             child.state.service.workflow_account=path.name
+            child.state.service.report_notifications=notifications
         # Reject accidentally shared application/service before starting it.
         if child in children or child.state.service in services:
             raise AccountError()
@@ -357,12 +363,14 @@ def create_authenticated_app(auth_root: Path, *, auth_config: AuthConfig | None 
         try:
             if postgres_runtime is not None:
                 await postgres_runtime.check()
+            if notifications is not None:await notifications.start(notification_worker_enabled)
             if nightly is not None and workflow_worker_enabled:await nightly.start()
             if worker is not None and webhook_worker_enabled:
                 await worker.start()
             yield
         finally:
             gateway._closing = True
+            if notifications is not None:await notifications.close()
             if nightly is not None:await nightly.close()
             if worker is not None:
                 await worker.close()
@@ -373,6 +381,7 @@ def create_authenticated_app(auth_root: Path, *, auth_config: AuthConfig | None 
 
     app = FastAPI(title="Authenticated Companion", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
+    app.state.report_notifications=notifications
     app.state.workflow_queue,app.state.workflow_worker=workflow_queue,nightly
     app.state.accounts, app.state.verifier = accounts, verifier
     app.state.webhook_inbox, app.state.webhook_worker = inbox, worker

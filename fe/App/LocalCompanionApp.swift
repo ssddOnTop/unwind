@@ -4,6 +4,7 @@ import ClerkKitUI
 import CompanionCore
 
 @main struct LocalCompanionApp: App {
+    @UIApplicationDelegateAdaptor(ReportNotificationApplicationDelegate.self) private var notificationDelegate
     @StateObject private var authentication = ClerkSessionCoordinator()
     var body: some Scene {
         WindowGroup {
@@ -37,7 +38,7 @@ private struct AuthenticationRoot: View {
                     .accessibilityIdentifier("auth.nativeSignIn")
             } else if authentication.canShowAccountData, let model = authentication.model {
                 AppRoot(model: model,
-                    manageAccount: { authentication.prepareAccountManagement(); manageAccount = true },
+                    manageAccount: { Task { if await authentication.prepareAccountManagement() { manageAccount = true } } },
                     signOut: authentication.signOut)
             } else {
                 VStack(spacing: 20) {
@@ -48,7 +49,7 @@ private struct AuthenticationRoot: View {
                     if authentication.locallyLocked {
                         Button("Use this signed-in account", action: authentication.activateDeliberately)
                     } else { Button("Try again", action: authentication.retryService) }
-                    Button("Manage sign-in") { authentication.prepareAccountManagement(); manageAccount = true }
+                    Button("Manage sign-in") { Task { if await authentication.prepareAccountManagement() { manageAccount = true } } }
                     Button("Sign out", role: .destructive, action: authentication.signOut)
                 }.padding().accessibilityIdentifier("auth.locked")
             }

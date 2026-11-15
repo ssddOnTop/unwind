@@ -47,7 +47,7 @@ import Combine
             return HTTPResult(status: 200, body: try Wire.encode(value))
         }
         // Legacy-controller tests do not opt into the additive normalized-data profile.
-        if request.url?.path == "/patterns/v1" || request.url?.path == "/workflows/v1" { throw ClientFailure.invalidEndpoint }
+        if request.url?.path == "/patterns/v1" || request.url?.path == "/workflows/v1" || request.url?.path.hasPrefix("/report-notifications/v1") == true { throw ClientFailure.invalidEndpoint }
         let object = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
         let action = object["action"] as! String
         if action == unauthorizedAction, unauthorizedOnce || unauthorizedAlways { unauthorizedOnce = false; return HTTPResult(status: 401, body: Data()) }

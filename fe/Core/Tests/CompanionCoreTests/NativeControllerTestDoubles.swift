@@ -29,6 +29,15 @@ struct LinkTokenConfiguration {
         throw NativeTestUnexpectedCall.permission
     }
 }
+@MainActor final class ReportNotificationAdapter: ReportNotificationDevice {
+    var capable: Bool { false }
+    func bind(_ controller: ReportNotificationController) {}
+    func authorized() async -> Bool { false }
+    func requestPermission() async throws -> Bool { throw NativeTestUnexpectedCall.permission }
+    func register() {}
+    func unregister() {}
+    func clearDelivered() async {}
+}
 private enum NativeTestUnexpectedCall: Error { case permission }
 @MainActor final class LocalReminders {
     var permission = "Not checked"

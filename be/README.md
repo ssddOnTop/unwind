@@ -416,3 +416,71 @@ python -m companion.workflow_operator \
 ```
 
 The app's self-enqueue capability grants no database access or unrelated account-management privilege. The CLI rejects mismatched selectors, missing consent, a wrong confirmation date, and a superuser/BYPASSRLS connection. Implementation validation uses disposable local PostgreSQL and mocked providers only. No live roles, migrations, queue runs, runtime restarts, simulator installations or publications are part of these checks.
+
+### Opt-in backend report-ready notifications
+
+This integration is **APNs-only**. It does not schedule a local fallback, enable notifications for any account, create an Apple account, or imply a tested real delivery. The existing nightly workflow and report cache remain the source of truth. A separate notification worker sends only generic lockscreen content: “Your companion” / “A report is ready. Open the app to review it.” The payload carries one opaque notification ID, not an account ID, report ID, concern, Health value, merchant, financial record or private note.
+
+#### Explicit migration and runtime configuration
+
+The additive notification migration preserves the current global schema version (supports reviewed pattern v3/workflow v4) and creates five forced-RLS account tables: scopes, session-revocation hashes, encrypted registrations, terminal report events and outbox. Invoker-rights triggers capture first committed `complete` report transitions and invalidate scope/registrations on source/cloud consent or epoch changes in the same source transaction. No startup DDL, security-definer bypass or SQLite production fallback exists. The migration operator must differ from the restricted runtime role.
+
+```sh
+# From be/, through the private schema-operator environment, after review:
+python -m companion.report_notification_migrations --confirm-report-notification-schema --runtime-role "$RESTRICTED_RUNTIME_ROLE"
+# Install only the reviewed locked dependency update; HTTP/2 is explicit:
+uv sync --frozen
+```
+
+`httpx[http2]==0.28.1` is locked with h2/hpack/hyperframe. Default server settings are disabled:
+
+```sh
+COMPANION_REPORT_NOTIFICATIONS=disabled
+COMPANION_APNS_ENABLED=disabled
+# Only after reviewed migration, provisioning and credentials are ready:
+# COMPANION_REPORT_NOTIFICATIONS=enabled
+# COMPANION_APNS_ENABLED=enabled
+# COMPANION_APNS_TOPIC="$SIGNED_APP_BUNDLE_ID"
+# COMPANION_APNS_ENVIRONMENT=sandbox  # production only with matching signed app/token environment
+# COMPANION_APNS_TEAM_ID="$APPLE_TEAM_ID"
+# COMPANION_APNS_KEY_ID="$APNS_KEY_ID"
+# COMPANION_APNS_SIGNING_KEY_FILE="$ABSOLUTE_PROTECTED_P8_PATH"
+```
+
+The APNs signing file must be a regular, non-symlink, process-user-owned P-256 private key file with no group/world permissions (normally 0600). It is read only when the provider is explicitly enabled. The provider signs ES256 JWTs, caches them for forty minutes, uses HTTP/2 with TLS and no environment proxy/redirect fallback, and suppresses HTTP/2/token-bearing client logs. Configuration errors expose only a sanitized unavailable state. No key or provider JWT goes to the app.
+
+Device tokens use the existing authenticated `PrivateVault` encryption in the private root's separate `notification-vault` directory. Its key must be backed up/restored with the encrypted registrations; losing it does not enable a plaintext fallback. Existing bank vaults/tokens are not moved or rewritten. Registration response DTOs never return token plaintext or ciphertext. Keep signing files and vault keys out of repositories/artifacts; the publication allowlist explicitly excludes `.p8` files.
+
+#### Authenticated self-account API and CAS
+
+The published contract is `contracts/report_notifications.schema.json`, generated into native Codable types. Every route requires the verified principal and derives account/session ownership server-side. Body selectors for account, session, topic, environment or due time are rejected.
+
+- `GET /report-notifications/v1`: server-owned Settings title/message/actions, delivery configuration state, epoch/scope revision, opaque session binding and only this session's registration metadata.
+- `POST /report-notifications/v1/status`: schema version and the device's persisted `registration_request_id`; resolves its deterministic installation after an ambiguous initial response. It never selects the first registration.
+- `POST /report-notifications/v1/register`: schema version, stable request UUID, epoch/scope revision, token, nullable known installation ID, expected token/consent revisions and explicit `opt_in`. Initial/re-opt-in requires a user action. Background token rotation uses `opt_in=false` and preserves consent time.
+- `POST /report-notifications/v1/revoke`: schema version, nullable installation ID, registration-request UUID and expected consent revision. An unknown initial upload receives a durable disabled tombstone, so a late upload cannot restore consent. A stale initial cancellation cannot revoke a newer explicit re-opt-in.
+- `POST /report-notifications/v1/logout`: schema version and request UUID; permanently fences notification registrations for the current verified sign-in session. No cross-user/session target is accepted.
+
+Source/cloud consent changes cancel pending work and erase token ciphertext. Actual account reset/deletion removes notification tokens, registrations, events, outbox and scope metadata; revoked session hashes remain minimal security tombstones to reject late callbacks. Snapshot locks follow the notification lock order, including concurrent registration/reset. Ordinary observation pruning does not revive notification work.
+
+#### Backend delivery policy and truthful status
+
+Reconciliation requires a committed complete report with at least one persisted insight not rejected as not-for-me, after device opt-in. It targets only the latest complete report and suppresses events older than 24 hours. Old queued reports are cancelled before claim, so restoring a provider after an outage cannot flush a history of alerts. Reusing an existing analysis result creates no new terminal event; token rotation creates no new logical notification. Account/epoch/run/installation uniqueness prevents ordinary duplicate alerts.
+
+When the provider is disabled, the worker consumes **zero delivery attempts**. A configured provider uses a 15-second outer send bound, 10-second HTTP timeout, 60-second lease and at most five attempts with bounded backoff. Tokens are decrypted only after fresh report/consent/session authorization. Invalid-device responses disable only the matching token version; late responses cannot disable a newer rotation or overwrite revocation. APNs HTTP acceptance is not device delivery. Ambiguous network failures may retry with stable APNs/collapse IDs; exactly-once display and recall of already handed-off notifications are not promised.
+
+#### Native lifecycle and manual APNs prerequisites
+
+The native adapter is included in the normal target and forwards real UIApplication APNs success/failure callbacks. It requests system permission only after the explicit backend-labeled Settings action. Its scoped cache contains opaque admission IDs/revisions only, never device tokens or report content. Pending revocation retries after authenticated refresh. Scope/session/epoch changes fence callbacks; a token callback cannot silently re-opt-in. There is no local notification scheduling fallback.
+
+App-initiated sign-out/account management clears/locks the main cache immediately, then uses an isolated transport fenced to the captured SDK session to record backend notification logout **before** SDK sign-out or switching. If this cannot be confirmed, the app remains locally locked and asks the user to reconnect/retry; it does not falsely claim server revocation. Opening account management also revokes that sign-in session's report-alert admission, so a new sign-in session is needed to enable alerts again. Unexpected upstream identity-provider revocation outside these app flows has no new provider webhook in this change; it cannot be synchronously acknowledged to this backend. Already accepted generic APNs requests cannot be recalled.
+
+The default build keeps `App/LocalCompanion.entitlements`, `REPORT_NOTIFICATIONS_CAPABILITY=NO`, and no aps entitlement. This implementation deliberately reports remote alerts unavailable on simulator builds. No entitlement is forced onto a free-team/simulator build. For an explicitly provisioned physical build, the operator must have a push-capable app/profile and matching topic/environment, then opt in through public build settings:
+
+```text
+REPORT_NOTIFICATIONS_CAPABILITY = YES
+REPORT_NOTIFICATIONS_ENTITLEMENTS = App/ReportNotifications.entitlements
+REPORT_NOTIFICATIONS_APS_ENVIRONMENT = development
+```
+
+Use `production` only with corresponding provisioning/server environment. The optional entitlement file retains HealthKit and adds the chosen aps environment. Setting a flag alone does not supply provisioning; registration failure stays visible and does not enable backend consent. Real APNs credentials, physical device permission, acceptance and delivery remain manual acceptance steps. No paid signup, device/simulator operation, live provider request or runtime restart was performed by implementation tests.
