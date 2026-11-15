@@ -84,7 +84,8 @@ class _Gateway:
         self.webhook_receiver = webhook_receiver
         self.routes = {("GET", "/state"), ("POST", "/observations"),
             ("POST", "/feedback"), ("PUT", "/preferences"),
-            ("POST", "/process"), ("DELETE", "/data")}
+            ("POST", "/process"), ("DELETE", "/data"),
+            ("GET", "/onboarding/v1"), ("POST", "/onboarding/v1/actions")}
         if plaid_profile:
             self.routes.add(("POST", "/connections/plaid"))
         if experience_profile:

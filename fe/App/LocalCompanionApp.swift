@@ -23,7 +23,7 @@ private struct AuthenticationRoot: View {
     @ObservedObject var authentication: ClerkSessionCoordinator
     @Environment(\.scenePhase) private var scenePhase
     @SwiftUI.State private var manageAccount = false
-    private var identitySignal: String { "\(clerk.isLoaded)-\(clerk.session?.id ?? "none")-\(String(describing: clerk.session?.status))-\(clerk.user?.id ?? "none")" }
+    private var identitySignal: String { "\(clerk.isLoaded)-\(clerk.isAuthFlowComplete)-\(clerk.session?.id ?? "none")-\(String(describing: clerk.session?.status))-\(clerk.user?.id ?? "none")" }
     var body: some View {
         Group {
             if !clerk.isLoaded {
@@ -32,14 +32,19 @@ private struct AuthenticationRoot: View {
                     if let issue = authentication.issue { Text(issue).font(.callout) }
                     Button("Try again") { Task { await authentication.retrySDK() } }
                 }.padding().accessibilityIdentifier("auth.loading")
-            } else if clerk.session?.status != .active || clerk.user == nil {
-                // Native SDK owns all forms, challenges, session tasks and Keychain tokens.
-                AuthView(mode: .signIn, isDismissible: false, onAuthComplete: authentication.authCompleted)
+            } else if !clerk.isAuthFlowComplete {
+                // One SDK-owned flow handles signup, verification, sign-in and pending tasks.
+                // An active session alone must not dismiss Clerk's post-authentication steps.
+                AuthView(mode: .signInOrUp, isDismissible: false, onAuthComplete: authentication.authCompleted)
                     .accessibilityIdentifier("auth.nativeSignIn")
             } else if authentication.canShowAccountData, let model = authentication.model {
-                AppRoot(model: model,
+                OnboardingGate(model: model,
                     manageAccount: { Task { if await authentication.prepareAccountManagement() { manageAccount = true } } },
-                    signOut: authentication.signOut)
+                    signOut: authentication.signOut) {
+                    AppRoot(model: model,
+                        manageAccount: { Task { if await authentication.prepareAccountManagement() { manageAccount = true } } },
+                        signOut: authentication.signOut)
+                }
             } else {
                 VStack(spacing: 20) {
                     Image(systemName: "lock.shield").font(.largeTitle)
@@ -62,8 +67,8 @@ private struct AuthenticationRoot: View {
         .sheet(isPresented: $manageAccount) {
             NavigationStack {
                 VStack(spacing: 16) {
-                    Text("Local records have been cleared and remain locked while you manage your account.").font(.callout).padding()
-                    // Expose SDK account switching only AFTER the host's synchronous local purge.
+                    Text("Displayed records are cleared and locked while you manage your account. Protected pending uploads remain isolated for their original account.").font(.callout).padding()
+                    // Expose SDK account switching only AFTER the host's synchronous UI/transport lock.
                     UserButton()
                     UserProfileView()
                 }
@@ -100,7 +105,7 @@ struct AppRoot: View {
         .confirmationDialog("Disconnect Apple Health?", isPresented: $disconnectHealth, titleVisibility: .visible) {
             Button("Disconnect Apple Health", role: .destructive) { Task { await model.disconnectHealth() } }
             Button("Cancel", role: .cancel) {}
-        } message: { Text("Stops step sharing here. Previous records remain until deleted. Apple Health records and Apple's permission settings are unchanged.") }
+        } message: { Text("Stops sharing supported Health records here. Previous backend records remain until deleted. Apple Health records and Apple's permission settings are unchanged.") }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await model.refresh() } }
             if phase == .background { model.banking.cancelForLifecycle() }

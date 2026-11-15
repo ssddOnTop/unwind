@@ -18,6 +18,6 @@
     <key>UILaunchScreen</key><dict/>
     <key>UIApplicationSceneManifest</key><dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict>
     <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
-    <key>NSHealthShareUsageDescription</key><string>Read up to six months of steps, sleep stages, heart rate, resting heart rate and workouts only when you choose to refresh. With your app consent, normalized records sync to your private companion backend. This app does not write Health records.</string>
+    <key>NSHealthShareUsageDescription</key><string>When you connect Apple Health, read up to six months of permitted steps, sleep stages, heart rate, resting heart rate and supported workouts to add context to your reports. Normalized records upload to your private companion backend. Supported background updates may sync while connected; disconnect in Settings to stop sharing. This app does not write Health records.</string>
     <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict></plist>

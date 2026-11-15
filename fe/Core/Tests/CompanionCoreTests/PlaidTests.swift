@@ -226,6 +226,8 @@ private actor BankHTTP: HTTPTransport {
     await #expect(throws: ClientFailure.rejected("not_configured", false)) { try await client.plaid(.linkToken, epoch: before.state!.data_epoch) }
     #expect(client.snapshot == before); #expect(await bad.requests.count == 1)
     let other = try CompanionClient(storage: storage, transport: BankHTTP(state: try bankState(), revoke: true))
+    #expect(other.snapshot.state == nil) // Relaunch must fetch backend state, never restore a read cache.
+    try await other.refresh()
     let reply = try await other.plaid(.disconnect, epoch: before.state!.data_epoch)
     #expect(reply.result == .disconnected("removal_pending")); #expect(other.snapshot.state?.preferences.enabled_source_ids.isEmpty == true)
 }

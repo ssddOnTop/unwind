@@ -10,11 +10,22 @@ struct SettingsView: View {
     @SwiftUI.State private var confirmSignOut = false
     @SwiftUI.State private var editing = false
     @SwiftUI.State private var cloudConsent = false
+    @SwiftUI.State private var discardQuarantined = false
     var body: some View {
         NavigationStack {
             List {
                 if let message = model.message {
                     Section { Text(message); Button("Try again") { Task { await model.refresh() } } }
+                }
+                if model.quarantinedUploadCount > 0 {
+                    Section("Saved uploads need review") {
+                        Text("\(model.quarantinedUploadCount) saved uploads are isolated after a server reset, expiration, or rejection. They are not resent or applied to your current records.")
+                            .accessibilityIdentifier("settings.quarantinedUploadCount")
+                        Button("Check original deletion receipts") { Task { await model.recoverQuarantinedUploads() } }
+                            .disabled(model.busy).accessibilityIdentifier("settings.recoverQuarantinedUploads")
+                        Button("Discard isolated saved uploads", role: .destructive) { discardQuarantined = true }
+                            .disabled(model.busy).accessibilityIdentifier("settings.discardQuarantinedUploads")
+                    }
                 }
                 Section {
                     Button("Bank accounts") { bankAccountsPresented = true }
@@ -76,9 +87,13 @@ struct SettingsView: View {
             }.navigationTitle("Settings").accessibilityIdentifier("app.settings")
                 .navigationDestination(isPresented: $bankAccountsPresented) { BankingScreen(controller: model.banking) }
                 .confirmationDialog("Sign out?", isPresented: $confirmSignOut, titleVisibility: .visible) {
-                    Button("Sign out and clear this device", role: .destructive, action: signOut)
+                    Button("Sign out and lock this device", role: .destructive, action: signOut)
                     Button("Cancel", role: .cancel) {}
-                } message: { Text("Clears local records and unsent changes before signing out. Server records stay in your account unless you delete them first.") }
+                } message: { Text("Locks this account and removes its displayed data. Protected pending uploads remain isolated for this account until you sign in again and the service acknowledges them. Server records are unchanged.") }
+                .confirmationDialog("Discard isolated saved uploads?", isPresented: $discardQuarantined, titleVisibility: .visible) {
+                    Button("Discard isolated saved uploads", role: .destructive) { Task { await model.discardQuarantinedUploads() } }
+                    Button("Cancel", role: .cancel) {}
+                } message: { Text("This removes only fenced uploads saved on this device. They cannot safely be applied to current records. Server records and current pending uploads are unchanged.") }
                 .sheet(isPresented: $editing) { if let state = model.state { PreferencesForm(model: model, state: state) } }
                 .confirmationDialog("Allow cloud suggestions?", isPresented: $cloudConsent, titleVisibility: .visible) {
                     Button("Allow eligible records to be shared") { Task { await model.setCloudConsent(true) } }

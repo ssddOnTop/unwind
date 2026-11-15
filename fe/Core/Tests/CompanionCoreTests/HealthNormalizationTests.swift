@@ -72,6 +72,8 @@ private func healthRecord(_ id: String = "sample-one") -> NormalizedHealthSample
     http.state.data_epoch = UUID().uuidString
     let count = http.requests.filter { $0.url?.path == "/health/v1/samples" }.count
     try await client.synchronize()
-    #expect(client.snapshot.outbox.isEmpty)
+    #expect(client.snapshot.outbox.isEmpty && client.snapshot.quarantinedUploadCount == 1)
+    #expect(client.snapshot.state == http.state)
+    #expect(try storage.load().quarantinedUploads == client.snapshot.quarantinedUploads)
     #expect(http.requests.filter { $0.url?.path == "/health/v1/samples" }.count == count)
 }

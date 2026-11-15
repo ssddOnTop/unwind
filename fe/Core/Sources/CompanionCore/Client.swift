@@ -49,21 +49,89 @@ public struct PendingMutation: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// Fenced obligations are never sent as current mutations or used as downloaded application state.
+public struct QuarantinedUploads: Codable, Equatable, Sendable {
+    public let epoch: String
+    public let reason: String
+    public var outbox: [PendingMutation]
+    public let healthStreams: [String: HealthIncrementalStream]?
+    public let healthAuthorizationEpoch: String?
+    public let healthCollectionPaused: Bool?
+}
+
 public struct LocalSnapshot: Codable, Equatable, Sendable {
     public var state: State?
     public var outbox: [PendingMutation]
     public var healthStreams: [String: HealthIncrementalStream]?
     public var healthAuthorizationEpoch: String?
     public var healthCollectionPaused: Bool?
-    public init(state: State? = nil, outbox: [PendingMutation] = []) { self.state = state; self.outbox = outbox }
-    /// No retagging: the old queue and cached records die at the epoch boundary.
-    public mutating func accept(_ incoming: State) {
-        if state?.data_epoch != incoming.data_epoch { outbox.removeAll(); healthStreams = nil; healthAuthorizationEpoch = nil; healthCollectionPaused = nil }
-        else if let state, state.revision > incoming.revision { return }
-        state = incoming
+    public var quarantinedUploads: [QuarantinedUploads]?
+    public var quarantinedUploadCount: Int { (quarantinedUploads ?? []).reduce(0) { $0 + $1.outbox.count } }
+    /// Durable synchronization identity, independent of the memory-only downloaded State.
+    public private(set) var dataEpoch: String?
+    public init(state: State? = nil, outbox: [PendingMutation] = []) {
+        self.state = state; self.outbox = outbox; dataEpoch = state?.data_epoch
     }
+    /// Unexpected epoch changes quarantine exact old obligations without blocking the current account.
+    public mutating func accept(_ incoming: State, acknowledgedErasure: Bool = false) throws {
+        if acknowledgedErasure { quarantinedUploads = nil }
+        if dataEpoch != incoming.data_epoch {
+            if !acknowledgedErasure, let epoch = dataEpoch, !outbox.isEmpty {
+                if quarantinedUploads == nil { quarantinedUploads = [] }
+                quarantinedUploads?.append(QuarantinedUploads(epoch: epoch, reason: "epoch_changed", outbox: outbox,
+                    healthStreams: healthStreams, healthAuthorizationEpoch: healthAuthorizationEpoch, healthCollectionPaused: healthCollectionPaused))
+            }
+            outbox.removeAll(); healthStreams = nil; healthAuthorizationEpoch = nil; healthCollectionPaused = nil
+        } else if let state, state.revision > incoming.revision { return }
+        dataEpoch = incoming.data_epoch; state = incoming
+    }
+    fileprivate mutating func quarantine(_ item: PendingMutation, reason: String) {
+        if quarantinedUploads == nil { quarantinedUploads = [] }
+        quarantinedUploads?.append(QuarantinedUploads(epoch: item.epoch, reason: reason, outbox: [item],
+            healthStreams: nil, healthAuthorizationEpoch: nil, healthCollectionPaused: nil))
+        outbox.removeAll { $0.id == item.id }
+    }
+    fileprivate mutating func restoreEpoch(_ epoch: String?) { dataEpoch = epoch }
     public var hasGeneralPendingChanges: Bool { outbox.contains { $0.path != "/health/v1/incremental" } }
     public var hidesCachedData: Bool { outbox.contains(where: \.blocksDisplay) }
+}
+
+/// The sole disk representation: pending uploads and platform synchronization metadata only.
+/// Never add State, onboarding, banking, reports or other downloaded projections here.
+private struct PendingUploadEnvelope: Codable {
+    let version: Int
+    let dataEpoch: String?
+    let outbox: [PendingMutation]
+    let healthStreams: [String: HealthIncrementalStream]?
+    let healthAuthorizationEpoch: String?
+    let healthCollectionPaused: Bool?
+    let quarantinedUploads: [QuarantinedUploads]?
+    static let keys: Set<String> = ["version", "dataEpoch", "outbox", "healthStreams", "healthAuthorizationEpoch", "healthCollectionPaused", "quarantinedUploads"]
+
+    init(_ snapshot: LocalSnapshot) throws {
+        let epochs = Set(([snapshot.dataEpoch, snapshot.state?.data_epoch, snapshot.healthAuthorizationEpoch].compactMap { $0 })
+            + snapshot.outbox.map(\.epoch) + (snapshot.healthStreams ?? [:]).values.map(\.epoch))
+        guard epochs.count <= 1, epochs.first?.isEmpty != true else { throw ClientFailure.invalidResponse }
+        version = 1; dataEpoch = epochs.first; outbox = snapshot.outbox
+        healthStreams = snapshot.healthStreams; healthAuthorizationEpoch = snapshot.healthAuthorizationEpoch
+        healthCollectionPaused = snapshot.healthCollectionPaused
+        quarantinedUploads = snapshot.quarantinedUploads
+        for batch in quarantinedUploads ?? [] {
+            guard !batch.epoch.isEmpty, batch.outbox.allSatisfy({ $0.epoch == batch.epoch }),
+                  (batch.healthStreams ?? [:]).values.allSatisfy({ $0.epoch == batch.epoch }),
+                  batch.healthAuthorizationEpoch == nil || batch.healthAuthorizationEpoch == batch.epoch else { throw ClientFailure.invalidResponse }
+        }
+    }
+    func snapshot() throws -> LocalSnapshot {
+        guard version == 1 else { throw ClientFailure.invalidResponse }
+        var value = LocalSnapshot(outbox: outbox)
+        value.restoreEpoch(dataEpoch); value.healthStreams = healthStreams
+        value.healthAuthorizationEpoch = healthAuthorizationEpoch; value.healthCollectionPaused = healthCollectionPaused
+        value.quarantinedUploads = quarantinedUploads
+        let checked = try PendingUploadEnvelope(value)
+        guard checked.dataEpoch == dataEpoch else { throw ClientFailure.invalidResponse }
+        return value
+    }
 }
 
 public struct ProtectedStorage: Sendable {
@@ -71,9 +139,23 @@ public struct ProtectedStorage: Sendable {
     public init(directory: URL) { self.directory = directory }
     public func load() throws -> LocalSnapshot {
         let file = directory.appendingPathComponent("snapshot.json")
-        guard FileManager.default.fileExists(atPath: file.path) else { return LocalSnapshot() }
-        // A protected/unreadable/corrupt file must not be mistaken for an empty queue.
-        return try Wire.decode(LocalSnapshot.self, Data(contentsOf: file))
+        let data: Data
+        do { data = try Data(contentsOf: file) }
+        catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoSuchFileError { return LocalSnapshot() }
+        // Locked/unreadable/corrupt files and unknown schemas must never become empty queues.
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw ClientFailure.invalidResponse }
+        if object["version"] != nil {
+            guard Set(object.keys).isSubset(of: PendingUploadEnvelope.keys) else { throw ClientFailure.invalidResponse }
+            return try Wire.decode(PendingUploadEnvelope.self, data).snapshot()
+        }
+        let legacyKeys = PendingUploadEnvelope.keys.subtracting(["version"]).union(["state"])
+        guard Set(object.keys).isSubset(of: legacyKeys) else { throw ClientFailure.invalidResponse }
+        let legacy = try Wire.decode(LocalSnapshot.self, data)
+        let migrated = try PendingUploadEnvelope(legacy).snapshot()
+        // Atomic replacement strips downloaded records BEFORE any value is exposed to callers.
+        // Failure throws, never returns an empty queue; either atomic file retains the uploads.
+        try save(migrated)
+        return migrated
     }
     public func save(_ snapshot: LocalSnapshot) throws {
         let fm = FileManager.default
@@ -85,7 +167,7 @@ public struct ProtectedStorage: Sendable {
         try fm.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: directory.path)
         #endif
         var file = directory.appendingPathComponent("snapshot.json")
-        let data = try Wire.encode(snapshot)
+        let data = try Wire.encode(PendingUploadEnvelope(snapshot))
         #if os(iOS)
         try data.write(to: file, options: [.atomic, .completeFileProtection])
         #else
@@ -199,6 +281,39 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
         let envelope = try Wire.decode(APIErrorEnvelope.self, response.body)
         throw ClientFailure.rejected(envelope.error.code, envelope.error.retryable)
     }
+    private func sendOnboarding(_ request: URLRequest) async throws -> Data {
+        try validateSession()
+        let response = try await transport.send(request)
+        try validateSession()
+        guard response.status == 200 else {
+            // Additive onboarding errors are intentionally outside the generated legacy error enum.
+            struct Envelope: Decodable {
+                struct Failure: Decodable { let code: String; let retryable: Bool }
+                let error: Failure
+            }
+            let failure = try Wire.decode(Envelope.self, response.body).error
+            throw ClientFailure.rejected(failure.code, failure.retryable)
+        }
+        return response.body
+    }
+    /// Onboarding has its own revision; it must not be compared to the general State revision.
+    public func refreshOnboarding() async throws -> OnboardingOverview {
+        try validateSession()
+        guard let epoch = snapshot.state?.data_epoch else { throw ClientFailure.noState }
+        let value = try Wire.decode(OnboardingOverview.self, await sendOnboarding(request(path: "/onboarding/v1")))
+        try value.validate()
+        guard snapshot.state?.data_epoch == epoch, value.data_epoch == epoch else { throw ClientFailure.rejected("epoch_mismatch", false) }
+        return value
+    }
+    public func onboarding(_ body: OnboardingActionRequest) async throws -> OnboardingOverview {
+        try validateSession()
+        guard snapshot.state?.data_epoch == body.data_epoch else { throw ClientFailure.rejected("epoch_mismatch", false) }
+        let value = try Wire.decode(OnboardingOverview.self, await sendOnboarding(request(path: "/onboarding/v1/actions", method: "POST", body: Wire.encode(body))))
+        try value.validate()
+        guard snapshot.state?.data_epoch == body.data_epoch, value.data_epoch == body.data_epoch else { throw ClientFailure.rejected("epoch_mismatch", false) }
+        guard value.revision > body.expected_revision else { throw ClientFailure.invalidResponse }
+        return value
+    }
     /// Explicit manual review, never queued, scheduled or automatically transport-retried.
     public func reportNotificationStatus(registrationRequestID: String? = nil) async throws -> NotificationStatus {
         try validateSession()
@@ -270,8 +385,46 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
     }
     private func fetch() async throws {
         let incoming = try Wire.decode(State.self, await send(request(path: "/state")))
-        if snapshot.state?.data_epoch != incoming.data_epoch { invalidatePlaidWork() }
-        var next = snapshot; next.accept(incoming); try persist(next)
+        if snapshot.dataEpoch != incoming.data_epoch {
+            invalidatePlaidWork(); invalidateBankingWork(); experienceSnapshot = nil
+        }
+        var next = snapshot; try next.accept(incoming); try persist(next)
+        // Old normal writes stay quarantined. An exact old-epoch DELETE can only replay
+        // its account-bound receipt: the backend rejects an unknown request's stale epoch.
+        try await reconcileQuarantinedDeletions()
+    }
+    private func reconcileQuarantinedDeletions() async throws {
+        let deletions = (snapshot.quarantinedUploads ?? []).flatMap(\.outbox).filter {
+            $0.path == "/data" && $0.method == "DELETE" && $0.epoch != snapshot.dataEpoch
+        }
+        for item in deletions {
+            do {
+                let original = try Wire.decode(DeleteRequest.self, item.body)
+                guard original.data_epoch == item.epoch, original.request_id == item.id,
+                      original.data_epoch != snapshot.dataEpoch else { throw ClientFailure.invalidResponse }
+                let receipt = try Wire.decode(State.self, await send(request(path: item.path, method: item.method, body: item.body)))
+                guard receipt.data_epoch != item.epoch else { throw ClientFailure.invalidResponse }
+                try validateSession()
+                var next = snapshot
+                // Never install the potentially old response projection or erase newer local work.
+                // The acknowledged erasure retires the original epoch's quarantined obligations.
+                next.quarantinedUploads?.removeAll { $0.epoch == item.epoch }
+                try persist(next)
+            } catch {
+                if error is AuthenticationFailure || error is CancellationError { throw error }
+                // Missing/expired receipt, offline or invalid reply: keep exact bytes for Settings
+                // recovery, but do not block fresh authenticated reads or invent another deletion.
+            }
+        }
+    }
+    public func recoverQuarantinedUploads() async throws {
+        guard !busy else { throw ClientFailure.busy }
+        busy = true; defer { busy = false }
+        try await fetch()
+    }
+    public func discardQuarantinedUploads() throws {
+        guard !busy else { throw ClientFailure.busy }
+        var next = snapshot; next.quarantinedUploads = nil; try persist(next)
     }
     private func bankingResponse(_ outgoing: URLRequest, current: BankingVersion) async throws -> BankingOverview {
         try validateSession()
@@ -395,10 +548,10 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
         try check()
         if fresh.data_epoch != epoch {
             invalidatePlaidWork()
-            var next = snapshot; next.accept(fresh); try persist(next)
+            var next = snapshot; try next.accept(fresh); try persist(next)
             throw PlaidFailure.staleWork
         }
-        var next = snapshot; next.accept(reply.state); next.accept(fresh); try persist(next)
+        var next = snapshot; try next.accept(reply.state); try next.accept(fresh); try persist(next)
         if action.name != "disconnect" {
             guard fresh.sources.contains(where: { $0.id == "plaid" && $0.enabled && $0.consent == "granted" }) else {
                 invalidatePlaidWork(); throw PlaidFailure.staleWork
@@ -455,10 +608,13 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
         while let item = snapshot.outbox.first {
             if item.path == "/health/v1/incremental", snapshot.state?.sources.contains(where: { $0.id == "healthkit" && $0.enabled && $0.consent == "granted" }) != true { return }
             guard item.epoch == snapshot.state?.data_epoch else { throw ClientFailure.rejected("epoch_mismatch", false) }
-            guard item.path == "/health/v1/incremental" || now.timeIntervalSince(item.createdAt) < 90 * 86_400 else {
-                var next = snapshot; next.outbox.removeAll { $0.path != "/health/v1/incremental" }; try persist(next); throw ClientFailure.expiredRequest
+            if item.path != "/health/v1/incremental", now.timeIntervalSince(item.createdAt) >= 90 * 86_400 {
+                var next = snapshot; next.quarantine(item, reason: "expired"); try persist(next); continue
             }
-            if let code = item.blockedCode { throw ClientFailure.rejected(code, false) }
+            if let code = item.blockedCode {
+                if item.path == "/health/v1/incremental" { throw ClientFailure.rejected(code, false) }
+                var next = snapshot; next.quarantine(item, reason: code); try persist(next); continue
+            }
             let r = request(path: item.path, method: item.method, body: item.body)
             var result: Data?
             for attempt in 0..<3 {
@@ -502,7 +658,7 @@ public final class URLSessionTransport: HTTPTransport, @unchecked Sendable {
                 let returned: State
                 if item.path == "/observations" { returned = try Wire.decode(IngestionResponse.self, result).state }
                 else { returned = try Wire.decode(State.self, result) }
-                next.accept(returned)
+                try next.accept(returned, acknowledgedErasure: item.blocksDisplay)
             }
             try persist(next)
             // A replay may return an old receipt; GET gives the current committed projection.
@@ -521,7 +677,7 @@ extension CompanionClient {
     private func persistHealth(_ next: LocalSnapshot) throws {
         guard sessionActive else { throw AuthenticationFailure.locked }
         try (healthSessionValidator ?? sessionValidator)()
-        guard snapshot.state?.data_epoch == next.state?.data_epoch else { throw ClientFailure.invalidResponse }
+        guard snapshot.dataEpoch == next.dataEpoch else { throw ClientFailure.invalidResponse }
         try storage.save(next); snapshot = next
     }
     public func incrementalHealthStatus() async throws -> HealthIncrementalStatus {
@@ -530,13 +686,13 @@ extension CompanionClient {
         return try healthStatus(result)
     }
     public func backgroundHealthStatus(using background: any HTTPTransport) async throws -> HealthIncrementalStatus {
-        guard sessionActive, snapshot.state != nil else { throw AuthenticationFailure.locked }
+        guard sessionActive, snapshot.dataEpoch != nil else { throw AuthenticationFailure.locked }
         return try healthStatus(await background.send(request(path: "/health/v1/incremental/status", method: "GET", body: nil)))
     }
     private func healthStatus(_ result: HTTPResult) throws -> HealthIncrementalStatus {
         guard sessionActive, result.status == 200 else { throw ClientFailure.invalidResponse }
         let status = try Wire.decode(HealthIncrementalStatus.self, result.body)
-        guard status.data_epoch == snapshot.state?.data_epoch else { throw ClientFailure.invalidResponse }
+        guard status.data_epoch == snapshot.dataEpoch else { throw ClientFailure.invalidResponse }
         return status
     }
     public var incrementalHealthHasState: Bool { !(snapshot.healthStreams ?? [:]).isEmpty }
@@ -548,7 +704,7 @@ extension CompanionClient {
     }
     public var healthAuthorizationRequestedOnDevice: Bool { snapshot.state?.data_epoch != nil && snapshot.healthAuthorizationEpoch == snapshot.state?.data_epoch }
     public func validateHealthJournal(_ status: HealthIncrementalStatus) throws {
-        guard sessionActive, snapshot.state?.data_epoch == status.data_epoch, status.enabled, status.schema_ready, status.baseline_supported, status.source_allowed else { throw ClientFailure.invalidResponse }
+        guard sessionActive, snapshot.dataEpoch == status.data_epoch, status.enabled, status.schema_ready, status.baseline_supported, status.source_allowed else { throw ClientFailure.invalidResponse }
         guard !snapshot.hasGeneralPendingChanges else { throw ClientFailure.busy }
         for remote in status.streams {
             let local = snapshot.healthStreams?[remote.hk_type]
@@ -565,7 +721,7 @@ extension CompanionClient {
     }
     public func healthCheckpoint(type: String) -> HealthIncrementalCheckpoint? { snapshot.healthStreams?[type]?.checkpoint }
     public func saveHealthCheckpoint(type: String, checkpoint: HealthIncrementalCheckpoint, epoch: String) throws {
-        guard sessionActive, snapshot.state?.data_epoch == epoch else { throw AuthenticationFailure.locked }
+        guard sessionActive, snapshot.dataEpoch == epoch else { throw AuthenticationFailure.locked }
         var next = snapshot
         var stream = next.healthStreams?[type] ?? HealthIncrementalStream(epoch: epoch, streamID: UUID().uuidString.lowercased(), nextSequence: 0, checkpoint: checkpoint, lastAdmission: nil)
         guard stream.epoch == epoch, stream.checkpoint.start == checkpoint.start,
@@ -576,7 +732,7 @@ extension CompanionClient {
         next.healthStreams?[type] = stream; try persistHealth(next)
     }
     public func admitHealthDelta(type: String, epoch: String, samples: [IncrementalSample], deletedUUIDs: [String], anchor: Data, hasMore: Bool) throws {
-        guard sessionActive, snapshot.state?.data_epoch == epoch, !anchor.isEmpty,
+        guard sessionActive, snapshot.dataEpoch == epoch, !anchor.isEmpty,
               var stream = snapshot.healthStreams?[type], stream.epoch == epoch else { throw ClientFailure.invalidResponse }
         guard !snapshot.outbox.contains(where: { $0.blocksDisplay }) else { throw ClientFailure.busy }
         let body = HealthIncrementalRequest(schema_version: "1", request_id: UUID().uuidString.lowercased(), data_epoch: epoch, hk_type: type, stream_id: stream.streamID, sequence: stream.nextSequence, has_more: hasMore, samples: samples, deleted_uuids: deletedUUIDs)
@@ -596,7 +752,7 @@ extension CompanionClient {
         let expected = try Wire.decode(HealthIncrementalRequest.self, item.body)
         let received = try Wire.decode(HealthIncrementalReceipt.self, result.body)
         guard received.request_id == expected.request_id, received.data_epoch == expected.data_epoch,
-              received.data_epoch == snapshot.state?.data_epoch, received.stream_id == expected.stream_id,
+              received.data_epoch == snapshot.dataEpoch, received.stream_id == expected.stream_id,
               received.sequence == expected.sequence, received.hk_type == expected.hk_type else { throw ClientFailure.invalidResponse }
     }
     public func drainHealthDeltas(using background: any HTTPTransport) async throws {

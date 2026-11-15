@@ -9,6 +9,7 @@ from uuid import uuid4
 from .contracts import DomainError, RULES, validate
 from .domain import defaults, instant, iso, key, preference_update, prune, refkey, synthesis, utcnow, zone
 from .ingestion import ingest
+from .onboarding import initialize as initialize_onboarding
 
 
 class CompanionService:
@@ -112,10 +113,15 @@ class CompanionService:
                 loaded = {"state": defaults(self.clock()), "meta": {"fixture_session": False, "issued": []}}
                 if self.plaid_coordinator:
                     self.plaid_coordinator.initialize(loaded)
+                await initialize_onboarding(self, loaded)
                 await self.evaluate(loaded)
                 await self.commit(loaded, bump=False)
                 return
             self.document = deepcopy(loaded)
+            await initialize_onboarding(self, loaded)
+            # An onboarding-only metadata bootstrap must not change the public
+            # state revision/timestamp or invalidate another feature's request.
+            startup_baseline = deepcopy(loaded)
             if self.plaid_coordinator:
                 await self.plaid_coordinator.recover(loaded)
             s = loaded["state"]
@@ -131,7 +137,8 @@ class CompanionService:
                 await self.clear_checkpoints()
             await self.evaluate(loaded)
             if loaded != self.document or interrupted:
-                await self.commit(loaded, erase=erased, recover=interrupted)
+                await self.commit(loaded, erase=erased, recover=interrupted,
+                                  bump=loaded != startup_baseline or interrupted)
             if self.banking_coordinator:
                 await self.banking_coordinator.call('finish_recovery',self.banking_coordinator.payload(self.document))
 

@@ -5,7 +5,7 @@ public enum AuthenticationFailure: Error, Equatable, Sendable {
     case locked, changedSession, unauthorized, pendingSession, unavailable, invalidToken, invalidDestination, profileMismatch, notAdmitted
 }
 
-/// SDK identity selects a local cache only. The server independently verifies JWT authority.
+/// SDK identity selects isolated pending-upload metadata only. The server verifies JWT authority.
 public struct AuthIdentity: Equatable, Hashable, Sendable {
     public let issuer: String
     public let subject: String
@@ -233,26 +233,50 @@ public struct AccountCache: Sendable {
         try FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: root.path)
         #endif
     }
-    private func active() throws -> String? {
-        guard FileManager.default.fileExists(atPath: marker.path) else { return nil }
-        let value = try String(contentsOf: marker, encoding: .utf8)
-        guard value.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else { throw AuthenticationFailure.locked }
+    private func readNamespace(_ file: URL) throws -> String? {
+        let data: Data
+        do { data = try Data(contentsOf: file) }
+        catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoSuchFileError { return nil }
+        guard let value = String(data: data, encoding: .utf8),
+              value.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else { throw AuthenticationFailure.locked }
         return value
     }
-    public func directory(for identity: AuthIdentity) -> URL { root.appendingPathComponent(identity.accountNamespace, isDirectory: true) }
+    public func directory(for identity: AuthIdentity) -> URL {
+        root.appendingPathComponent(deployment, isDirectory: true).appendingPathComponent(identity.accountNamespace, isDirectory: true)
+    }
+    /// Old storage lacked deployment in its path. Move only with its recorded binding;
+    /// never guess a deployment, merge queues, or discard a colliding destination.
+    private func migrateLegacyActive() throws {
+        guard let account = try readNamespace(marker) else { return }
+        let old = root.appendingPathComponent(account, isDirectory: true)
+        guard FileManager.default.fileExists(atPath: old.path) else { return }
+        // Sanitize before inspecting binding/collision: even refused activation must not
+        // leave a valid downloaded read cache behind. Pending bytes/metadata are preserved.
+        _ = try ProtectedStorage(directory: old).load()
+        guard let previous = try readNamespace(deploymentMarker) else { throw AuthenticationFailure.locked }
+        let parent = root.appendingPathComponent(previous, isDirectory: true)
+        let destination = parent.appendingPathComponent(account, isDirectory: true)
+        if FileManager.default.fileExists(atPath: destination.path) {
+            _ = try ProtectedStorage(directory: destination).load()
+            throw AuthenticationFailure.locked
+        }
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: old, to: destination)
+    }
     public func activate(_ identity: AuthIdentity) throws -> ProtectedStorage {
         try secureDirectory()
-        let previous = try? String(contentsOf: deploymentMarker, encoding: .utf8)
-        if previous != deployment { try clearActive() }
+        let unbound = root.appendingPathComponent(identity.accountNamespace, isDirectory: true)
+        if FileManager.default.fileExists(atPath: unbound.path) {
+            _ = try ProtectedStorage(directory: unbound).load()
+        }
+        try migrateLegacyActive()
+        // An unbound legacy directory must be reviewed, never adopted by the current server.
+        guard !FileManager.default.fileExists(atPath: unbound.path) else { throw AuthenticationFailure.locked }
         try Data(deployment.utf8).write(to: deploymentMarker, options: .atomic)
         var deploymentFile = deploymentMarker; var excluded = URLResourceValues(); excluded.isExcludedFromBackup = true; try deploymentFile.setResourceValues(excluded)
         #if os(iOS)
         try FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: deploymentMarker.path)
         #endif
-        if let old = try active(), old != identity.accountNamespace {
-            let oldDirectory = root.appendingPathComponent(old, isDirectory: true)
-            if FileManager.default.fileExists(atPath: oldDirectory.path) { try FileManager.default.removeItem(at: oldDirectory) }
-        }
         let data = Data(identity.accountNamespace.utf8)
         #if os(iOS)
         try data.write(to: marker, options: [.atomic, .completeFileProtection])
@@ -262,11 +286,10 @@ public struct AccountCache: Sendable {
         var target = marker; var values = URLResourceValues(); values.isExcludedFromBackup = true; try target.setResourceValues(values)
         return ProtectedStorage(directory: directory(for: identity))
     }
+    /// Detach the active account on lock/logout, retaining its isolated pending uploads.
+    /// Auth fences destroy access immediately; only backend acknowledgement retires queued bytes.
     public func clearActive() throws {
-        if let old = try active() {
-            let directory = root.appendingPathComponent(old, isDirectory: true)
-            if FileManager.default.fileExists(atPath: directory.path) { try FileManager.default.removeItem(at: directory) }
-        }
+        try migrateLegacyActive()
         if FileManager.default.fileExists(atPath: marker.path) { try FileManager.default.removeItem(at: marker) }
     }
 }

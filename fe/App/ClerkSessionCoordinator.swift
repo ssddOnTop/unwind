@@ -24,7 +24,7 @@ struct PublicAuthConfiguration {
     let issuer: String
     init(clerk: Clerk, issuer: String) { self.clerk = clerk; self.issuer = issuer }
     var currentIdentity: AuthIdentity? {
-        guard clerk.isLoaded, let session = clerk.session, session.status == .active,
+        guard clerk.isLoaded, clerk.isAuthFlowComplete, let session = clerk.session, session.status == .active,
               let user = clerk.user, session.user?.id == user.id else { return nil }
         return AuthIdentity(issuer: issuer, subject: user.id, sessionID: session.id)
     }
@@ -94,8 +94,9 @@ struct PublicAuthConfiguration {
         if persistLock { locallyLocked = true; defaults.set(true, forKey: lockKey) }
         work?.cancel(); work = nil; bearer?.cancel(); bearer = nil
         model?.invalidateForSignOut(); model = nil; observation = nil; preparedIdentity = nil
+        // Detach authority, not uploads: pending bytes remain isolated until their backend acknowledgement.
         do { try cache?.clearActive() }
-        catch { locallyLocked = true; defaults.set(true, forKey: lockKey); issue = "Local data could not be cleared. Unlock your device and retry sign-out." }
+        catch { locallyLocked = true; defaults.set(true, forKey: lockKey); issue = "Pending-upload storage could not be safely detached. Unlock your device and retry sign-out." }
     }
     func observeSDK() {
         if suspended {
@@ -119,7 +120,7 @@ struct PublicAuthConfiguration {
         do { try cache?.clearActive() }
         catch {
             locallyLocked = true; defaults.set(true, forKey: lockKey)
-            issue = "Old local data could not be cleared. Unlock your device and retry before using this account."
+            issue = "Pending-upload storage requires review or device unlock before this account can be activated. Existing uploads were preserved."
             return
         }
         locallyLocked = false; defaults.set(false, forKey: lockKey); issue = nil
@@ -202,7 +203,7 @@ struct PublicAuthConfiguration {
         let identity = sdkIdentity, notifications = model?.reportNotifications
         model?.incrementalHealth.close()
         notifications?.stopForLogout()
-        fence.lock() // immediate local purge; isolated RPC retains only captured identity authority
+        fence.lock() // immediate memory/access purge; isolated pending uploads remain protected
         do {
             await ReportNotificationAdapter().clearDelivered()
             if let identity { try await revokeCapturedNotificationSession(identity); notifications?.confirmLogout() }
