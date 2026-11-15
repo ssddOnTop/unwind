@@ -18,7 +18,8 @@ from .contracts import (ROOT, DomainError, State, Health, ObservationBatch, Inge
 
 REQUESTS = {("POST", "/observations"): "observation_batch", ("POST", "/feedback"): "feedback_request",
             ("PUT", "/preferences"): "preferences_request", ("POST", "/process"): "process_request",
-            ("POST", "/demo"): "demo_request", ("DELETE", "/data"): "delete_request"}
+            ("POST", "/demo"): "demo_request", ("DELETE", "/data"): "delete_request",
+            ("POST", "/onboarding/v1/actions"): "onboarding_action"}
 
 
 def envelope(code, message, request_id=None):
@@ -86,7 +87,7 @@ class Boundary:
                 requests[('POST','/health/v1/samples')] = 'health_samples'
             if self.banking_profile:
                 requests[('POST','/banking/v1/actions')] = 'banking_request'
-            reads = {"/health", "/state"} | ({"/experience/v1", '/patterns/v1', '/workflows/v1','/report-notifications/v1','/health/v1/incremental/status'} if self.experience_profile else set()) | ({'/banking/v1'} if self.banking_profile else set())
+            reads = {"/health", "/state", "/onboarding/v1"} | ({"/experience/v1", '/patterns/v1', '/workflows/v1','/report-notifications/v1','/health/v1/incremental/status'} if self.experience_profile else set()) | ({'/banking/v1'} if self.banking_profile else set())
             if scope.get("query_string") and scope["path"] in {*reads, *(r[1] for r in requests)}:
                 raise DomainError()
             chunks, size = [], 0
@@ -119,7 +120,11 @@ class Boundary:
                     request_id = body["request_id"]
                 if headers.get(b"content-type", b"").split(b";")[0].strip().lower() != b"application/json":
                     raise DomainError()
-                if route == ('POST','/health/v1/samples'):
+                if route == ('POST', '/onboarding/v1/actions'):
+                    from .onboarding import OnboardingAction
+                    try: OnboardingAction.model_validate(body)
+                    except Exception: raise DomainError() from None
+                elif route == ('POST','/health/v1/samples'):
                     from .health_ingestion import HealthIngestRequest
                     try: HealthIngestRequest.model_validate_json(raw)
                     except Exception: raise DomainError() from None
@@ -243,6 +248,17 @@ def create_app(data_dir: Path | None = None, *, replacements=None, scheduler=Non
     @app.get("/state", response_model=state_model, responses=errors)
     async def state():
         return await service.state()
+
+    from .onboarding import Onboarding, OnboardingAction, OnboardingError, get as get_onboarding, act as onboarding_action
+    onboarding_errors = {status: {"model": OnboardingError} for status in (*errors, 401, 403, 503)}
+
+    @app.get('/onboarding/v1', response_model=Onboarding, responses=onboarding_errors)
+    async def onboarding():
+        return await get_onboarding(service)
+
+    @app.post('/onboarding/v1/actions', response_model=Onboarding, responses=onboarding_errors)
+    async def decide_onboarding(body: OnboardingAction):
+        return await onboarding_action(service, body)
 
     @app.post("/observations", response_model=ingestion_model, responses=errors)
     async def observations(body: ObservationBatch):

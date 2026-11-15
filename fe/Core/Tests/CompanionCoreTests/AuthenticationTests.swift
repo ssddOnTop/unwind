@@ -217,7 +217,7 @@ private func request(_ path: String = "/feedback", body: Data? = nil) -> URLRequ
         #expect(network.requests.isEmpty); #expect(fence.identity == nil)
     }
 }
-@Test @MainActor func accountSwitchAndLogoutDeletePendingWithoutAnonymousAdoption() async throws {
+@Test @MainActor func accountSwitchAndLogoutPreserveIsolatedPendingWithoutAnonymousAdoption() async throws {
     let root = temporaryStorage().directory; defer { try? FileManager.default.removeItem(at: root) }
     let cache = AccountCache(root: root)
     let storageA = try cache.activate(identity())
@@ -226,7 +226,8 @@ private func request(_ path: String = "/feedback", body: Data? = nil) -> URLRequ
     #expect(clientA.snapshot.outbox.count == 1)
     let storageB = try cache.activate(identity("user_B", session: "session_B"))
     clientA.invalidateSession()
-    #expect(!FileManager.default.fileExists(atPath: storageA.directory.path))
+    #expect(FileManager.default.fileExists(atPath: storageA.directory.path))
+    #expect(try storageA.load().state == nil); #expect(try storageA.load().outbox.count == 1)
     #expect(try storageB.load().state == nil); #expect(try storageB.load().outbox.isEmpty)
     #expect(storageA.directory != storageB.directory)
     try cache.clearActive(); #expect(!FileManager.default.fileExists(atPath: storageB.directory.path))
@@ -275,9 +276,11 @@ private func request(_ path: String = "/feedback", body: Data? = nil) -> URLRequ
     #expect(clientB.snapshot.state?.observations.isEmpty == true)
     #expect(clientB.snapshot.state?.preferences.notes == "B only")
     #expect(try storageB.load().outbox.isEmpty)
-    #expect(try storageB.load().state?.preferences.notes == "B only")
+    #expect(try storageB.load().state == nil)
+    #expect(try ProtectedStorage(directory: cache.directory(for: identity())).load().outbox.count == 1)
     let data = try Data(contentsOf: storageB.directory.appendingPathComponent("snapshot.json"))
     #expect(!String(decoding: data, as: UTF8.self).contains("unit-initial-token"))
+    #expect(!String(decoding: data, as: UTF8.self).contains("B only"))
 }
 
 @Test @MainActor func configuredHTTPSOriginPinsAdmissionAndEveryAPIRequest() async throws {

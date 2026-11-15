@@ -106,7 +106,8 @@ def test_demo_matches_fixture_semantics(client):
 
 def test_exact_routes_and_generated_openapi(client):
     spec = client.get("/openapi.json").json()
-    expected = {"/health": "get", "/state": "get", "/observations": "post", "/feedback": "post", "/preferences": "put", "/process": "post", "/demo": "post", "/data": "delete"}
+    expected = {"/health": "get", "/state": "get", "/observations": "post", "/feedback": "post", "/preferences": "put", "/process": "post", "/demo": "post", "/data": "delete",
+                "/onboarding/v1": "get", "/onboarding/v1/actions": "post"}
     assert set(spec["paths"]) == set(expected)
     for path, method in expected.items():
         assert set(spec["paths"][path]) == {method}

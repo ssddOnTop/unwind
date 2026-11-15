@@ -66,7 +66,7 @@ def internal_fixture(client, scenario="recurring_restaurants"):
     return experience(client)
 
 
-@pytest.mark.parametrize("enabled,count", [(False, 8), (True, 24)])
+@pytest.mark.parametrize("enabled,count", [(False, 10), (True, 26)])
 def test_explicit_profile_preserves_base_routes_state_and_health(tmp_path, enabled, count):
     with TestClient(create_app(tmp_path, experience_profile=enabled, replacements={"synthesis": UnavailableSynthesis()}, clock=lambda: NOW), base_url="http://127.0.0.1") as client:
         spec = client.get("/openapi.json").json()
@@ -316,7 +316,7 @@ def test_plaid_composition_selects_actual_connection_never_sums_demo(tmp_path):
     app = app_for(tmp_path, plaid_profile=True, replacements={"synthesis": UnavailableSynthesis(), "plaid": extension})
     with TestClient(app, base_url="http://127.0.0.1") as client:
         internal_fixture(client)
-        assert len(client.get("/openapi.json").json()["paths"]) == 25
+        assert len(client.get("/openapi.json").json()["paths"]) == 27
         assert request(client, "/connections/plaid", action="link_token", consent_sandbox=True).status_code == 200
         r = request(client, "/connections/plaid", action="exchange", public_token="public-sandbox-test")
         assert r.status_code == 200, r.text

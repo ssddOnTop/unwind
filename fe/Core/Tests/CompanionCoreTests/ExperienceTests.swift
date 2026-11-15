@@ -101,13 +101,16 @@ private func answer(_ e: ExperienceV1) -> ExperienceAnswerRequest {
         #expect(http.requests.filter { $0.url?.path == "/experience/v1/answers" }.count == 1)
     }
 }
-@Test @MainActor func epochResetClearsExperienceAndQueuedAnswers() async throws {
+@Test @MainActor func epochResetClearsExperienceAndFencesQueuedAnswers() async throws {
     let storage = temporaryStorage(); defer { try? FileManager.default.removeItem(at: storage.directory) }
     let http = try ExperienceHTTP(); let client = try CompanionClient(storage: storage, transport: http)
     try await client.refresh(); let shown = try await client.refreshExperience()
     try client.enqueue(PendingMutation(path: "/experience/v1/answers", request: answer(shown)))
-    http.state.data_epoch = "new-epoch"; try await client.refresh()
-    #expect(client.experienceSnapshot == nil); #expect(client.snapshot.outbox.isEmpty)
+    http.state.data_epoch = "new-epoch"
+    try await client.refresh()
+    #expect(client.experienceSnapshot == nil); #expect(client.snapshot.state == http.state)
+    #expect(client.snapshot.outbox.isEmpty && client.snapshot.quarantinedUploadCount == 1)
+    #expect(try storage.load().quarantinedUploads == client.snapshot.quarantinedUploads)
     await #expect(throws: ClientFailure.rejected("stale_experience", false)) { try await client.refreshExperience() }
 }
 @Test func experienceActualEncodedCasesForSchemaValidation() throws {

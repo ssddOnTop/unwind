@@ -137,22 +137,26 @@ actor StubHTTP: HTTPTransport {
     let update = DailySteps.update(readable: true, requested: true, window: Window(start_date: "2026-11-07", end_date: "2026-11-13", timezone: "America/New_York"), attemptedAt: "2026-11-14T12:00:00Z")
     #expect(update.read_access == "samples_readable")
 }
-@Test func newEpochErasesQueueWithoutRetagging() throws {
+@Test func newEpochFencesQueueWithoutRetaggingOrDiscarding() throws {
     let s = try fixture(); let item = try PendingMutation(path: "/feedback", request: feedback())
     var local = LocalSnapshot(state: s, outbox: [item]); var new = s; new.data_epoch = "rotated"
-    local.accept(new)
-    #expect(local.outbox.isEmpty); #expect(item.epoch == s.data_epoch)
+    try local.accept(new)
+    #expect(local.outbox.isEmpty); #expect(local.dataEpoch == new.data_epoch)
+    #expect(local.state == new); #expect(local.quarantinedUploads?.first?.outbox == [item])
     #expect(try Wire.decode(FeedbackRequest.self, item.body).request_id == "feedback-test")
 }
 @Test func olderSnapshotCannotReplaceNewerRevision() throws {
     let s = try fixture(); var new = s; new.revision = 99
-    var local = LocalSnapshot(state: new); local.accept(s)
+    var local = LocalSnapshot(state: new); try local.accept(s)
     #expect(local.state?.revision == 99)
 }
-@Test func persistentSnapshotSurvivesRestart() throws {
+@Test func pendingUploadsButNotReadSnapshotSurviveRestart() throws {
     let storage = temporaryStorage(); defer { try? FileManager.default.removeItem(at: storage.directory) }
     let local = LocalSnapshot(state: try fixture(), outbox: [try PendingMutation(path: "/feedback", request: feedback())])
-    try storage.save(local); #expect(try storage.load() == local)
+    try storage.save(local)
+    let reloaded = try storage.load()
+    #expect(reloaded.state == nil); #expect(reloaded.outbox == local.outbox)
+    #expect(reloaded.dataEpoch == local.dataEpoch)
     #expect(try storage.directory.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true)
 }
 @Test func corruptStorageDoesNotSilentlyDropOutbox() throws {
@@ -188,8 +192,10 @@ actor StubHTTP: HTTPTransport {
     await #expect(throws: ClientFailure.rejected("consent_required", false)) { try await client.synchronize() }
     #expect(await stub.mutations().count == 1); #expect(client.snapshot.outbox.count == 1)
     let restarted = try CompanionClient(storage: storage, transport: stub, retryDelay: 0)
-    await #expect(throws: ClientFailure.rejected("consent_required", false)) { try await restarted.synchronize() }
-    #expect(await stub.mutations().count == 1) // persists blocked status: no foreground blind retry
+    try await restarted.synchronize()
+    #expect(restarted.snapshot.state != nil && restarted.snapshot.outbox.isEmpty)
+    #expect(restarted.snapshot.quarantinedUploads?.first?.outbox.first?.blockedCode == "consent_required")
+    #expect(await stub.mutations().count == 1) // blocked bytes are quarantined, never blindly retried
 }
 @Test @MainActor func remoteEpochChangeNeverUploadsOldQueue() async throws {
     let storage = temporaryStorage(); defer { try? FileManager.default.removeItem(at: storage.directory) }
@@ -198,6 +204,8 @@ actor StubHTTP: HTTPTransport {
     let stub = StubHTTP(state: newer); let client = try CompanionClient(storage: storage, transport: stub)
     try await client.synchronize()
     #expect(await stub.mutations().isEmpty); #expect(client.snapshot.outbox.isEmpty)
+    #expect(client.snapshot.state == newer); #expect(client.snapshot.quarantinedUploadCount == 1)
+    #expect(try storage.load().quarantinedUploadCount == 1)
 }
 @Test @MainActor func deleteRotatesAndClearsFollowingMutations() async throws {
     let storage = temporaryStorage(); defer { try? FileManager.default.removeItem(at: storage.directory) }
@@ -215,8 +223,10 @@ actor StubHTTP: HTTPTransport {
     let stub = StubHTTP(state: try fixture()); let client = try CompanionClient(storage: storage, transport: stub)
     try await client.refresh()
     try client.enqueue(PendingMutation(path: "/feedback", request: feedback(), now: Date(timeIntervalSince1970: 0)))
-    await #expect(throws: ClientFailure.expiredRequest) { try await client.synchronize() }
+    try await client.synchronize()
     #expect(await stub.mutations().isEmpty); #expect(client.snapshot.outbox.isEmpty)
+    #expect(client.snapshot.state != nil && client.snapshot.quarantinedUploadCount == 1)
+    #expect(try storage.load().quarantinedUploads == client.snapshot.quarantinedUploads)
 }
 @Test func notificationDenialAndSuppressionCancelAll() throws {
     let s = try fixture()

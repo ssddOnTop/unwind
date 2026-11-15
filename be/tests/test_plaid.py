@@ -129,12 +129,12 @@ def client(tmp_path, provider):
 
 def test_profile_explicit_and_ninth_typed_discriminated_route(client, tmp_path):
     spec = client.get("/openapi.json").json()
-    assert len(spec["paths"]) == 9
+    assert len(spec["paths"]) == 11
     request_schema = spec["paths"]["/connections/plaid"]["post"]["requestBody"]["content"]["application/json"]["schema"]
     assert request_schema["discriminator"]["propertyName"] == "action"
     assert get_state(client)["sources"][2]["capability"] == "available"
     with TestClient(create_app(tmp_path / "base", replacements={"synthesis": UnavailableSynthesis()}), base_url="http://127.0.0.1") as base:
-        assert len(base.get("/openapi.json").json()["paths"]) == 8
+        assert len(base.get("/openapi.json").json()["paths"]) == 10
         assert base.post("/connections/plaid", json={}).status_code == 404
         validate("state", base.get("/state").json())
 

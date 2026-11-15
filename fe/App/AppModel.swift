@@ -24,6 +24,8 @@ import CompanionCore
     let incrementalHealth: HealthIncrementalRuntime
     @Published private(set) var incrementalHealthMessage: String?
     let reportNotifications: ReportNotificationController
+    let onboarding: OnboardingController
+    private var onboardingUpdates: AnyCancellable?
     private var notificationUpdates: AnyCancellable?
     let banking: BankingController
     private var bankingUpdates: AnyCancellable?
@@ -39,6 +41,7 @@ import CompanionCore
 
     init(client: CompanionClient, accountNamespace: String, legacyController: PlaidController? = nil) {
         self.client = client
+        onboarding = OnboardingController(client: client)
         incrementalHealth = HealthIncrementalRuntime(client: client, account: accountNamespace)
         let notificationDevice = ReportNotificationAdapter()
         reportNotifications = ReportNotificationController(client: client, device: notificationDevice, accountNamespace: accountNamespace)
@@ -59,18 +62,21 @@ import CompanionCore
             self.refreshTask?.cancel()
             self.refreshTask = Task { [weak self] in await self?.reloadExperience() }
         }
+        onboardingUpdates = onboarding.objectWillChange.sink { [weak self] _ in Task { @MainActor in self?.objectWillChange.send() } }
         notificationUpdates = reportNotifications.objectWillChange.sink { [weak self] _ in Task { @MainActor in self?.objectWillChange.send() } }
         bankingUpdates = banking.objectWillChange.sink { [weak self] _ in Task { @MainActor in self?.objectWillChange.send() } }
         plaidUpdates = plaid?.objectWillChange.sink { [weak self] _ in Task { @MainActor in self?.objectWillChange.send() } }
     }
     func hideForAdmission() {
+        onboarding.suspend()
         incrementalHealth.stop()
         reportNotifications.suspend()
         admissionBlocked = true; connected = false; experience = nil; patternOverview = nil; patternRequestID = nil; workflowOverview = nil; workflowPollTask?.cancel(); snapshot = LocalSnapshot()
         health.cancelAll(); reminders.cancelAll(); plaid?.pauseForAdmission(); banking.pauseForAdmission()
     }
-    func allowAdmittedUpdates() { reportNotifications.resume(); admissionBlocked = false; banking.admissionRestored() }
+    func allowAdmittedUpdates() { onboarding.resume(); reportNotifications.resume(); admissionBlocked = false; banking.admissionRestored() }
     func invalidateForSignOut(cancelReminders: Bool = true) {
+        onboarding.suspend()
         incrementalHealth.close()
         reportNotifications.suspend()
         active = false; banking.invalidateSession()
@@ -82,6 +88,7 @@ import CompanionCore
         snapshot = LocalSnapshot(); experience = nil; patternOverview = nil; patternRequestID = nil; workflowOverview = nil; workflowPollTask?.cancel(); patternMessage = nil; message = nil; connected = false
     }
     func suspendForegroundForBackground() {
+        onboarding.suspend()
         reportNotifications.suspend(); admissionBlocked = true; connected = false
         health.cancelAll(); banking.pauseForAdmission(); plaid?.pauseForAdmission()
         workflowPollTask?.cancel(); refreshTask?.cancel(); refreshTask = nil
@@ -96,6 +103,7 @@ import CompanionCore
             experience = nil; reminders.cancelAll()
         }
         if epoch != nil && epoch != snapshot.state?.data_epoch {
+            onboarding.suspend(); onboarding.resume()
             incrementalHealth.stop()
             reportNotifications.suspend(); reportNotifications.resume()
             patternOverview = nil; patternRequestID = nil; workflowOverview = nil; workflowPollTask?.cancel()
@@ -231,6 +239,16 @@ import CompanionCore
         await perform { try await $0.synchronize() }
     }
     func discardPending() async { await perform { try $0.discardPending(); try await $0.refresh() } }
+    var quarantinedUploadCount: Int { snapshot.quarantinedUploadCount }
+    func recoverQuarantinedUploads() async {
+        await perform { try await $0.recoverQuarantinedUploads() }
+        if active, !admissionBlocked, quarantinedUploadCount > 0 {
+            message = "These saved uploads are fenced and were not resent. Old deletion receipts were checked; review or explicitly discard the remaining saved uploads in Settings."
+        }
+    }
+    func discardQuarantinedUploads() async {
+        await perform { try $0.discardQuarantinedUploads(); try await $0.refresh() }
+    }
     private func submit<T: Encodable>(_ value: T, path: String, method: String = "POST", replacingQueue: Bool = false, client: CompanionClient) async throws {
         guard active else { throw AuthenticationFailure.locked }
         try client.enqueue(PendingMutation(path: path, method: method, request: value), replacingQueue: replacingQueue)
@@ -284,18 +302,26 @@ import CompanionCore
         }
     }
     func healthSync(connect: Bool) async {
-        await perform { client in
+        await perform { _ in try await self.collectHealth(connect: connect) }
+    }
+    /// Shared explicit foreground importer; onboarding never invokes reminder reconciliation.
+    private func collectHealth(connect: Bool) async throws {
+        let client = self.client
+            let expectedEpoch = client.snapshot.state?.data_epoch
             guard !client.snapshot.hasGeneralPendingChanges else { throw ClientFailure.pendingChanges }
             try await client.refresh()
-            guard var current = client.snapshot.state else { throw ClientFailure.noState }
+            guard active, !admissionBlocked, var current = client.snapshot.state,
+                  expectedEpoch == nil || current.data_epoch == expectedEpoch else { throw AuthenticationFailure.locked }
             if connect {
                 var preferences = current.preferences
                 if !preferences.enabled_source_ids.contains("healthkit") { preferences.enabled_source_ids.append("healthkit") }
                 try await submit(PreferencesRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: current.data_epoch, preferences: preferences), path: "/preferences", method: "PUT", client: client)
-                guard active, let refreshed = client.snapshot.state else { throw AuthenticationFailure.locked }; current = refreshed
+                guard active, !admissionBlocked, let refreshed = client.snapshot.state,
+                      refreshed.data_epoch == current.data_epoch else { throw AuthenticationFailure.locked }; current = refreshed
             }
             guard current.sources.contains(where: { $0.id == "healthkit" && $0.enabled && $0.consent == "granted" }) else { throw ClientFailure.rejected("consent_required", false) }
             await incrementalHealth.refresh()
+            guard active, !admissionBlocked, client.snapshot.state?.data_epoch == current.data_epoch else { throw AuthenticationFailure.locked }
             if incrementalHealth.blocksSnapshot || client.incrementalHealthHasState {
                 try await incrementalHealth.connect()
                 incrementalHealthMessage = incrementalHealth.message
@@ -311,6 +337,34 @@ import CompanionCore
             healthProgress = "Saving \(pages.reduce(0) { $0 + $1.samples.count }) records in \(pages.count) private batches…"
             try await client.synchronize()
             if pages.allSatisfy({ $0.samples.isEmpty }) { message = "No supported Health samples were readable. Read permission may be off or records may be absent; nothing was erased." }
+    }
+    /// Explicit opt-in only. No local reminders, processing, or bank synchronization is scheduled.
+    func onboardingHealthUpload() async -> String {
+        guard active, !admissionBlocked, !busy, let epoch = client.snapshot.state?.data_epoch else {
+            return "Health upload is unavailable until secure access is restored."
+        }
+        busy = true; message = nil
+        defer { busy = false; healthProgress = nil }
+        do {
+            // Replay exact durable batches before collecting again, never retagging their epoch.
+            if client.snapshot.hasGeneralPendingChanges {
+                guard client.snapshot.outbox.allSatisfy({ ["/health/v1/samples", "/health/v1/incremental", "/preferences"].contains($0.path) }) else { throw ClientFailure.pendingChanges }
+                try await client.synchronize()
+            }
+            guard active, !admissionBlocked, client.snapshot.state?.data_epoch == epoch else { throw AuthenticationFailure.locked }
+            try await collectHealth(connect: true)
+            guard active, !admissionBlocked, client.snapshot.state?.data_epoch == epoch else {
+                return "Health upload was interrupted. Its result is not confirmed."
+            }
+            publish()
+            if incrementalHealth.blocksSnapshot || client.incrementalHealthHasState {
+                return incrementalHealth.message + " Initial collection may still be running; check server status before continuing."
+            }
+            return message ?? "Health batches were acknowledged. Only readable supported records were submitted; this does not establish permission for every Health type."
+        } catch {
+            guard active, !admissionBlocked else { return "Health upload was interrupted." }
+            publish()
+            return "Health upload is not confirmed. Access may be unavailable or records may be unreadable. Any pending batches are preserved for this account; retry or continue without data."
         }
     }
     func requestNotifications() async {
