@@ -39,7 +39,23 @@ public struct HealthIncrementalStream: Codable, Equatable, Sendable {
         let lease = fence.activate(identity)
         transport = try AuthenticatedTransport(base: base, provider: provider, fence: fence, lease: lease, origin: origin)
     }
-    public func admit() async throws { try await transport.admit() }
+    private var admission: Task<Void, Error>?
+    public func admit() async throws {
+        try Task.checkCancellation()
+        // Sibling Health types share this authority. Re-admission would invalidate
+        // their in-flight status requests and delta acknowledgements.
+        if transport.isAdmitted { try transport.validate(); return }
+        if let admission {
+            try await admission.value
+        } else {
+            let task = Task { try await transport.admit() }
+            admission = task
+            defer { admission = nil }
+            try await task.value
+        }
+        // Each waiter must still belong to the live session after suspension.
+        try transport.validate()
+    }
     public func validate() throws { try transport.validate() }
-    public func stop() { transport.cancel(); fence.lock() }
+    public func stop() { admission?.cancel(); transport.cancel(); fence.lock() }
 }

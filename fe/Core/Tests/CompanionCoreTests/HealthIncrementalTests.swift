@@ -114,6 +114,108 @@ private func deltaSample() -> IncrementalSample {
         return HTTPResult(status: 200, body: Data(#"{"schema_version":"1","issuer":"https://health-test.clerk.accounts.dev","subject":"unit-user"}"#.utf8), contentType: "application/json")
     }
 }
+// Explicit barriers make overlap independent of timing, network, or HealthKit.
+@MainActor private final class HealthAdmissionGate: HTTPTransport {
+    let deltas = IncrementalHTTP()
+    var handshakes = 0
+    var heldPath = "/auth/v1/session"
+    var entered: CheckedContinuation<Void, Never>?
+    var release: CheckedContinuation<Void, Never>?
+    func send(_ request: URLRequest) async throws -> HTTPResult {
+        let path = request.url!.path
+        if path == "/auth/v1/session" { handshakes += 1 }
+        if path == heldPath {
+            await withCheckedContinuation { continuation in
+                release = continuation
+                entered?.resume(); entered = nil
+            }
+        }
+        if path == "/auth/v1/session" {
+            return HTTPResult(status: 200, body: Data(#"{"schema_version":"1","issuer":"https://health-test.clerk.accounts.dev","subject":"unit-user"}"#.utf8), contentType: "application/json")
+        }
+        return try await deltas.send(request)
+    }
+    func resume() { heldPath = ""; release?.resume(); release = nil }
+}
+
+@Test @MainActor func healthOverlappingAdmissionsShareHandshakeAndRejectLateLogoutCompletion() async throws {
+    for logout in [false, true] {
+        let provider = HealthTokens(), network = HealthAdmissionGate()
+        let health = try HealthBackgroundLease(identity: #require(provider.currentIdentity), provider: provider, base: network, origin: URL(string: "http://127.0.0.1:8769")!)
+        var first: Task<Void, Error>!
+        await withCheckedContinuation { entered in
+            network.entered = entered
+            first = Task { try await health.admit() }
+        }
+        var second: Task<Void, Error>!
+        await withCheckedContinuation { started in
+            second = Task { @MainActor in
+                started.resume()
+                try await health.admit()
+            }
+        }
+        #expect(network.handshakes == 1)
+        if logout { health.stop() }
+        network.resume() // Deliberately ignores cancellation, like a late HTTP response.
+        if logout {
+            await #expect(throws: (any Error).self) { try await first.value }
+            await #expect(throws: (any Error).self) { try await second.value }
+            #expect(!health.transport.isAdmitted)
+            await #expect(throws: (any Error).self) { try await health.admit() }
+        } else {
+            try await first.value; try await second.value
+            try health.validate()
+            // An explicit invalidation still requires a fresh handshake.
+            health.transport.invalidateAdmission()
+            try await health.admit()
+            #expect(network.handshakes == 2)
+        }
+    }
+}
+
+@Test @MainActor func healthOverlappingTypeDrainReusesAdmissionAndFencesLateAck() async throws {
+    for logout in [false, true] {
+        let storage = temporaryStorage(); defer { try? FileManager.default.removeItem(at: storage.directory) }
+        let provider = HealthTokens(), network = HealthAdmissionGate()
+        network.heldPath = ""
+        let health = try HealthBackgroundLease(identity: #require(provider.currentIdentity), provider: provider, base: network, origin: URL(string: "http://127.0.0.1:8769")!)
+        let client = try CompanionClient(storage: storage, transport: network.deltas, baseURL: URL(string: "http://127.0.0.1:8769")!)
+        try await client.refresh()
+        client.setHealthSessionValidator { try health.validate() }
+        let epoch = try #require(client.snapshot.state?.data_epoch)
+        let background = HealthOnlyTransport(base: health.transport)
+        try await health.admit()
+        for type in ["heartRate", "stepCount"] {
+            try client.saveHealthCheckpoint(type: type, checkpoint: HealthIncrementalCheckpoint(start: Date(timeIntervalSince1970: 1_700_000_000), anchor: nil, terminalPending: false), epoch: epoch)
+        }
+        try client.admitHealthDelta(type: "heartRate", epoch: epoch, samples: [], deletedUUIDs: [], anchor: Data([1]), hasMore: false)
+        network.heldPath = "/health/v1/incremental"
+        var first: Task<Void, Error>!
+        await withCheckedContinuation { entered in
+            network.entered = entered
+            first = Task { try await client.drainHealthDeltas(using: background) }
+        }
+        // The sibling type enters while the first type's acknowledgement is held.
+        try await health.admit()
+        try client.admitHealthDelta(type: "stepCount", epoch: epoch, samples: [], deletedUUIDs: [], anchor: Data([2]), hasMore: false)
+        await #expect(throws: ClientFailure.busy) { try await client.drainHealthDeltas(using: background) }
+        let pending = client.snapshot.outbox
+        #expect(network.handshakes == 1)
+        if logout { health.stop() }
+        network.resume()
+        if logout {
+            await #expect(throws: (any Error).self) { try await first.value }
+            #expect(client.snapshot.outbox == pending)
+            #expect(try storage.load().outbox == pending)
+        } else {
+            try await first.value
+            #expect(client.snapshot.outbox.isEmpty)
+            #expect(try storage.load().outbox.isEmpty)
+            #expect(network.deltas.calls.filter { $0.url?.path == "/health/v1/incremental" }.count == 2)
+        }
+    }
+}
+
 @Test @MainActor func healthBackgroundLeaseSurvivesUISuspensionButNotIdentityChangeOrLogout() async throws {
     let provider = HealthTokens(), network = HealthAdmissionHTTP(), foreground = AuthSessionFence()
     let identity = try #require(provider.currentIdentity), origin = URL(string: "http://127.0.0.1:8769")!
