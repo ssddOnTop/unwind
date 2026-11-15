@@ -26,7 +26,13 @@ private struct AuthenticationRoot: View {
     private var identitySignal: String { "\(clerk.isLoaded)-\(clerk.session?.id ?? "none")-\(String(describing: clerk.session?.status))-\(clerk.user?.id ?? "none")" }
     var body: some View {
         Group {
-            if !clerk.isLoaded {
+            if authentication.isCountPreflight {
+                VStack(spacing: 20) {
+                    Text("No-send count preflight").font(.title2)
+                    Text(authentication.issue ?? "Verifying the existing session. No application work will be sent.")
+                        .multilineTextAlignment(.center)
+                }.padding().accessibilityIdentifier("auth.countPreflight")
+            } else if !clerk.isLoaded {
                 VStack(spacing: 20) {
                     ProgressView("Loading secure sign-in…")
                     if let issue = authentication.issue { Text(issue).font(.callout) }

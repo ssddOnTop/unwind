@@ -240,6 +240,20 @@ public struct AccountCache: Sendable {
         return value
     }
     public func directory(for identity: AuthIdentity) -> URL { root.appendingPathComponent(identity.accountNamespace, isDirectory: true) }
+    /// Diagnostic read only: never activate, repair, create, clear or save account storage.
+    public func preflightSnapshot(_ identity: AuthIdentity) throws -> LocalSnapshot {
+        func checkMarkers() throws {
+            guard try String(contentsOf: deploymentMarker, encoding: .utf8) == deployment,
+                  try active() == identity.accountNamespace else { throw AuthenticationFailure.locked }
+        }
+        try checkMarkers()
+        // Missing or unreadable snapshots are unknown, not an empty outbox.
+        let data = try Data(contentsOf: directory(for: identity).appendingPathComponent("snapshot.json"))
+        let snapshot = try Wire.decode(LocalSnapshot.self, data)
+        guard snapshot.state != nil else { throw AuthenticationFailure.unavailable }
+        try checkMarkers()
+        return snapshot
+    }
     public func activate(_ identity: AuthIdentity) throws -> ProtectedStorage {
         try secureDirectory()
         let previous = try? String(contentsOf: deploymentMarker, encoding: .utf8)

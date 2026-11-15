@@ -43,6 +43,8 @@ struct PublicAuthConfiguration {
     @Published private(set) var ready = false
     @Published private(set) var locallyLocked: Bool
     @Published private(set) var issue: String?
+    private let countPreflight: QueueCountPreflight? = QueueCountPreflight.requested ? QueueCountPreflight() : nil
+    var isCountPreflight: Bool { countPreflight != nil }
     private let fence = AuthSessionFence()
     private let apiOrigin: URL?
     private var provider: ClerkTokenProvider?
@@ -72,6 +74,13 @@ struct PublicAuthConfiguration {
             let clerk = Clerk.configure(publishableKey: configuration.publishableKey, options: .init(logLevel: .error, telemetryEnabled: false))
             self.clerk = clerk; provider = ClerkTokenProvider(clerk: clerk, issuer: configuration.issuer)
         } else { clerk = nil; issue = "Sign-in is not configured. Generate the approved public Clerk configuration and rebuild." }
+        if isCountPreflight {
+            // No directory creation, marker activation, legacy deletion or local-lock writes.
+            if let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+                cache = AccountCache(root: support.appendingPathComponent("AuthenticatedAccounts", isDirectory: true), deployment: apiOrigin.absoluteString)
+            }
+            return
+        }
         do {
             let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             cache = AccountCache(root: support.appendingPathComponent("AuthenticatedAccounts", isDirectory: true), deployment: apiOrigin.absoluteString)
@@ -84,12 +93,14 @@ struct PublicAuthConfiguration {
         fence.onLock = { [weak self] in self?.clearLocally(persistLock: true) }
     }
     var sdkIdentity: AuthIdentity? { provider?.currentIdentity }
-    var canShowAccountData: Bool { ready && bearer?.isAdmitted == true && !locallyLocked && sdkIdentity != nil && sdkIdentity == preparedIdentity }
+    var canShowAccountData: Bool { !isCountPreflight && ready && bearer?.isAdmitted == true && !locallyLocked && sdkIdentity != nil && sdkIdentity == preparedIdentity }
     private func cancelLocalReminders() {
+        guard !isCountPreflight else { return }
         let center = UNUserNotificationCenter.current()
         center.removeAllPendingNotificationRequests(); center.removeAllDeliveredNotifications()
     }
     private func clearLocally(persistLock: Bool) {
+        guard !isCountPreflight else { return }
         ready = false; cancelLocalReminders()
         if persistLock { locallyLocked = true; defaults.set(true, forKey: lockKey) }
         work?.cancel(); work = nil; bearer?.cancel(); bearer = nil
@@ -98,6 +109,10 @@ struct PublicAuthConfiguration {
         catch { locallyLocked = true; defaults.set(true, forKey: lockKey); issue = "Local data could not be cleared. Unlock your device and retry sign-out." }
     }
     func observeSDK() {
+        if isCountPreflight {
+            guard clerk?.isLoaded == true else { return }
+            runCountPreflight(); return
+        }
         if suspended {
             if sdkIdentity != preparedIdentity { model?.incrementalHealth.close() }
             return
@@ -113,8 +128,9 @@ struct PublicAuthConfiguration {
         guard !locallyLocked else { return }
         if identity != preparedIdentity { prepare(identity) }
     }
-    func authCompleted() { managingAccount = false; activateDeliberately() }
+    func authCompleted() { guard !isCountPreflight else { return }; managingAccount = false; activateDeliberately() }
     func activateDeliberately() {
+        if isCountPreflight { runCountPreflight(); return }
         guard let identity = sdkIdentity, cache != nil else { return }
         do { try cache?.clearActive() }
         catch {
@@ -126,6 +142,7 @@ struct PublicAuthConfiguration {
         prepare(identity)
     }
     private func prepare(_ identity: AuthIdentity) {
+        guard !isCountPreflight else { return }
         guard let origin = apiOrigin, let provider, let cache else { return }
         if let previous = preparedIdentity, previous != identity { model?.reportNotifications.stopForLogout(); fence.lock() }
         // Retry/foreground of the same account keeps queued bytes on disk, but destroys old objects.
@@ -175,6 +192,7 @@ struct PublicAuthConfiguration {
         }
     }
     func suspendForBackground() {
+        if let countPreflight { countPreflight.stop(); work?.cancel(); bearer?.cancel(); return }
         suspended = true; ready = false
         bearer?.onAdmissionInvalidated = nil; bearer?.onAdmissionRestored = nil
         fence.suspend(); work?.cancel(); work = nil
@@ -182,9 +200,39 @@ struct PublicAuthConfiguration {
         bearer?.cancel(); bearer = nil
     }
     func resumeFromBackground() {
+        guard !isCountPreflight else { return }
         guard suspended else { return }
         suspended = false; cancelLocalReminders()
         if let identity = sdkIdentity { prepare(identity) } else { fence.lock() }
+    }
+    private func runCountPreflight() {
+        guard let countPreflight, !countPreflight.attempted, work == nil else { return }
+        guard let identity = sdkIdentity, let origin = apiOrigin, let provider, let cache else {
+            countPreflight.stop(); issue = "Count preflight unavailable. No application work was sent."; return
+        }
+        let lease = fence.activate(identity)
+        work = Task { [weak self] in
+            guard let self else { return }
+            await countPreflight.run(admit: {
+                let transport = try AuthenticatedTransport(base: URLSessionTransport(), provider: provider, fence: self.fence, lease: lease, origin: origin)
+                self.bearer = transport
+                // Ordinary Clerk verification/token refresh and the existing GET handshake only.
+                try await transport.admit()
+                try self.fence.validate(lease)
+                guard self.sdkIdentity == identity else { throw AuthenticationFailure.changedSession }
+            }, read: {
+                guard let bearer = self.bearer else { throw AuthenticationFailure.notAdmitted }
+                try bearer.validate()
+                try self.fence.validate(lease)
+                guard self.sdkIdentity == identity else { throw AuthenticationFailure.changedSession }
+                let snapshot = try cache.preflightSnapshot(identity)
+                guard let epoch = snapshot.state?.data_epoch else { throw AuthenticationFailure.unavailable }
+                let revocations = try ReportNotificationController.preflightPendingRevocations(accountNamespace: identity.accountNamespace, epoch: epoch)
+                return QueueCountPreflight.Counts(snapshot: snapshot, notificationRevocations: revocations)
+            })
+            self.bearer?.cancel(); self.bearer = nil
+            self.issue = countPreflight.result ?? "queue-preflight-v1 status=unavailable"
+        }
     }
     private func revokeCapturedNotificationSession(_ identity: AuthIdentity) async throws {
         guard let origin = apiOrigin, let provider, provider.currentIdentity == identity else { throw AuthenticationFailure.changedSession }
@@ -197,6 +245,7 @@ struct PublicAuthConfiguration {
         try await ReportNotificationSessionLogout.perform(transport: transport, origin: origin)
     }
     func prepareAccountManagement() async -> Bool {
+        guard !isCountPreflight else { return false }
         guard !endingSession else { return false }
         endingSession = true; defer { endingSession = false }
         let identity = sdkIdentity, notifications = model?.reportNotifications
@@ -216,6 +265,7 @@ struct PublicAuthConfiguration {
         }
     }
     func signOut() {
+        guard !isCountPreflight else { return }
         guard !endingSession else { return }
         endingSession = true; managingAccount = false
         let identity = sdkIdentity, notifications = model?.reportNotifications
@@ -235,10 +285,12 @@ struct PublicAuthConfiguration {
         }
     }
     func retryService() {
+        guard !isCountPreflight else { return }
         guard !locallyLocked, let identity = sdkIdentity else { return }
         prepare(identity)
     }
     func retrySDK() async {
+        guard !isCountPreflight else { return }
         guard let clerk else { return }
         do { _ = try await clerk.refreshEnvironment(); _ = try await clerk.refreshClient(); observeSDK() }
         catch { issue = "Clerk could not load. Check connectivity and that Native API is enabled for this Clerk instance." }

@@ -44,6 +44,15 @@ import Combine
         cacheKey = "report-notification-admission.v1." + accountNamespace
         if let data = defaults.data(forKey: cacheKey) { cache = try? JSONDecoder().decode(Cache.self, from: data) }
     }
+    /// Reads existing account metadata only; never constructs a controller or sends/reconciles work.
+    public static func preflightPendingRevocations(accountNamespace: String, epoch: String, defaults: UserDefaults = .standard) throws -> Int {
+        let key = "report-notification-admission.v1." + accountNamespace
+        guard let value = defaults.object(forKey: key) else { return 0 }
+        guard let data = value as? Data else { throw AuthenticationFailure.unavailable }
+        let saved = try JSONDecoder().decode(Cache.self, from: data)
+        guard saved.epoch == epoch else { throw AuthenticationFailure.unavailable }
+        return saved.pendingRevoke ? 1 : 0
+    }
     private func save() {
         if let cache, let data = try? JSONEncoder().encode(cache) { defaults.set(data, forKey: cacheKey) }
         else { defaults.removeObject(forKey: cacheKey) }
