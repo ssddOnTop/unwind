@@ -18,6 +18,7 @@ from test_auth_http import Harness,NOW
 from test_patterns import Model
 from test_banking_postgres import setup,add,act
 from test_plaid import transaction,page
+from scripted_models import review_model
 
 
 def health_pages(epoch,now=NOW):
@@ -56,7 +57,7 @@ async def test_health_real_route_batches_atomic_publication_epoch_replay_and_ana
         assert (await client.post('/health/v1/samples',json={})).status_code==401
         state=await consent(client,h);pages=health_pages(state['data_epoch'])
         handle=await h.handle('a');coordinator=handle.service.app.state.service.pattern_coordinator
-        model=Model();coordinator.model_factory=lambda:model
+        model=Model();coordinator.model_factory=lambda:review_model(model)
         for p in pages[:-1]:
             response=await send(client,h,p);assert response.status_code==200,response.text
         async with coordinator.transaction() as c:
@@ -71,7 +72,7 @@ async def test_health_real_route_batches_atomic_publication_epoch_replay_and_ana
         # Health-only data is still useful. No purchases or nutrition are fabricated.
         class RankHealth:
             async def ainvoke(self,*args,**kwargs):return type('Reply',(),{'content':'{"concern_ids":["sleep","activity"]}'})()
-        coordinator.model_factory=lambda:RankHealth()
+        coordinator.model_factory=lambda:review_model(RankHealth())
         from test_banking_schedule import internal_post
         result=await internal_post(h,{'schema_version':'1','request_id':str(uuid4()),'data_epoch':state['data_epoch'],'fetch_latest_bank_data':False})
         assert result.status_code==200,result.text
@@ -182,7 +183,7 @@ async def test_complete_six_month_normal_health_and_plaid_pipeline_without_opera
         state=await consent(client,h)
         for p in health_pages(state['data_epoch']):
             r=await send(client,h,p);assert r.status_code==200,r.text
-        model=Model();service.pattern_coordinator.model_factory=lambda:model
+        model=Model();service.pattern_coordinator.model_factory=lambda:review_model(model)
         from test_banking_schedule import internal_post
         r=await internal_post(h,{'schema_version':'1','request_id':str(uuid4()),'data_epoch':state['data_epoch'],'fetch_latest_bank_data':False})
         assert r.status_code==200,r.text

@@ -11,7 +11,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-VERSION = 'patterns-3:aggregate-1:prompt-1'
+VERSION = 'patterns-3:aggregate-1:prompt-2-deepagents'
 NOTICE = ('Only a coarse pattern summary is sent for AI review, not identities, merchants or raw records. '
           'Aggregates can still be sensitive. Missing data is unknown, not zero. These are observations, not diagnoses or causes.')
 COPY = {
@@ -233,24 +233,95 @@ def findings(ids, evidence):
         confidence='limited' if i=='food_service' or ((r.missing_steps or b.missing_steps) if i=='activity' else (r.missing_sleep or b.missing_sleep)) else 'moderate') for i in ids]
 
 
+REVIEW_PROMPT = ('Rank the supported pattern IDs for a non-diagnostic review. Do not infer disease, causality, consumption or identity. '
+                 'Call ConcernRanking once with every allowed ID exactly once, most notable first. Supported IDs are activity '
+                 '(lower steps), sleep (shorter recorded sleep), food_service (more purchases). Never add a new ID. '
+                 'The exact allowed IDs for this review are: ')
+MAX_REVIEW_MODEL_CALLS = 2   # one answer, plus at most one correction after a schema validation error
+REVIEW_TIMEOUT_SECONDS = 20  # whole review (each provider call is separately limited by the gateway)
+
+
+class ReviewBoundaryError(ValueError):
+    """The review agent tried to exceed its budget, run a tool or change its trusted input."""
+
+
+def ranking_schema(allowed):
+    """The only answer shape the model can return: exactly the allowed IDs, each once."""
+    choices = tuple(sorted(allowed))
+
+    class ConcernRanking(BaseModel):
+        """Every allowed concern ID exactly once, most notable first."""
+        model_config = ConfigDict(extra='forbid')
+        concern_ids: list[Literal[choices]] = Field(min_length=len(choices), max_length=len(choices))
+
+        @model_validator(mode='after')
+        def each_once(self):
+            if sorted(self.concern_ids) != list(choices):
+                raise ValueError('Return every allowed ID exactly once.')
+            return self
+    return ConcernRanking
+
+
+def _review_guard(system: str, payload: str):
+    """Deep Agents middleware that narrows the agent to one structured answer.
+
+    Deep Agents inserts user middleware inside its base stack, so this sees the request
+    after the filesystem/todo/subagent middleware added their tools and prompts and
+    replaces them: the model gets exactly this system prompt, the trusted Aggregate as
+    the only user message, and no tools except the ToolStrategy answer schema.
+    """
+    from langchain.agents.middleware.types import AgentMiddleware
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    class ReviewGuard(AgentMiddleware):
+        def __init__(self):
+            super().__init__()
+            self.model_calls = 0
+
+        async def awrap_model_call(self, request, handler):
+            if self.model_calls >= MAX_REVIEW_MODEL_CALLS:
+                raise ReviewBoundaryError('Review model budget exhausted')
+            messages = request.messages
+            # Only the trusted payload is user input; later turns may only be the model's own
+            # answer and ToolStrategy's validation feedback.
+            if (not messages or not isinstance(messages[0], HumanMessage) or messages[0].content != payload
+                    or any(isinstance(m, HumanMessage) for m in messages[1:])):
+                raise ReviewBoundaryError('Untrusted review input')
+            self.model_calls += 1
+            return await handler(request.override(system_message=SystemMessage(content=system), tools=[],
+                                                  model_settings={**request.model_settings, 'max_tokens': 300}))
+
+        async def awrap_tool_call(self, request, handler):
+            # Structured answers are handled in the model node; nothing may execute.
+            raise ReviewBoundaryError('Pattern review has no executable tools')
+
+    return ReviewGuard()
+
+
 async def model_review(evidence: Aggregate, allowed, model_factory):
-    """One invocation, no tool binding, no retries, no dynamic prose accepted from the model."""
+    """One Deep Agents structured-output review: the model may only reorder the allowed IDs.
+
+    No dynamic prose is accepted from the model, no tools can run, at most one correction
+    call follows a schema error, and nothing is checkpointed or traced.
+    """
     if any(i not in COPY for i in allowed) or len(set(allowed))!=len(allowed):raise ValueError('Invalid concern set')
     if not allowed:return []
     # Round-trip through the allowlist, rather than serializing any persistence row.
     dto=Aggregate.model_validate(evidence.model_dump()).model_dump()
     model=await asyncio.wait_for(asyncio.to_thread(model_factory),timeout=6)
     if model is None: raise ValueError('Unavailable')
-    from langchain_core.messages import SystemMessage, HumanMessage
-    result=await asyncio.wait_for(model.ainvoke([
-        SystemMessage(content='Rank the supported pattern IDs for a non-diagnostic review. Do not infer disease, causality, consumption or identity. Output ONLY JSON {"concern_ids":[...]} selecting each supported ID once. Supported IDs are activity (lower steps), sleep (shorter recorded sleep), food_service (more purchases). Never add a new ID. No tools. The exact allowed IDs for this review are: '+json.dumps(sorted(allowed))),
-        HumanMessage(content=json.dumps(dto,sort_keys=True,separators=(',',':')))],
-        max_tokens=300, config={'callbacks': []}),timeout=12)
-    content=result.content
-    if not isinstance(content,str) or len(content)>2000: raise ValueError('Invalid review')
-    value=json.loads(content)
-    if set(value)!={'concern_ids'} or not isinstance(value['concern_ids'],list): raise ValueError('Invalid review')
-    ids=value['concern_ids']
+    from deepagents import create_deep_agent
+    from langchain.agents.structured_output import ToolStrategy
+    from langchain_core.messages import HumanMessage
+    payload=json.dumps(dto,sort_keys=True,separators=(',',':'))
+    system=REVIEW_PROMPT+json.dumps(sorted(allowed))
+    agent=create_deep_agent(model=model, tools=[], system_prompt=system, middleware=[_review_guard(system,payload)],
+                            response_format=ToolStrategy(ranking_schema(allowed)))
+    result=await asyncio.wait_for(agent.ainvoke({'messages':[HumanMessage(content=payload)]},
+                                                config={'callbacks':[],'recursion_limit':8}),timeout=REVIEW_TIMEOUT_SECONDS)
+    ranking=result.get('structured_response')
+    if ranking is None: raise ValueError('Invalid review')
+    ids=list(ranking.concern_ids)
     if any(not isinstance(i,str) for i in ids) or len(ids)!=len(set(ids)) or set(ids)!=set(allowed): raise ValueError('Unsupported evidence')
     return ids
 
