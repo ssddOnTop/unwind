@@ -2,6 +2,7 @@
 CLERK_PUBLISHABLE_KEY =
 CLERK_ISSUER_BASE64 =
 // Remote push is explicitly opt-in at build time; default signing stays unchanged.
+HEALTH_BACKGROUND_CAPABILITY = NO
 REPORT_NOTIFICATIONS_CAPABILITY = NO
 REPORT_NOTIFICATIONS_ENTITLEMENTS = App/LocalCompanion.entitlements
 REPORT_NOTIFICATIONS_APS_ENVIRONMENT = development

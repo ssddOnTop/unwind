@@ -1,0 +1,2302 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Isolated Health incremental ingestion contract",
+  "description": "New fragment for explicit owner integration; does not modify any existing contract. This endpoint is not the complete-window snapshot endpoint.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/HealthIncrementalRequest"
+    },
+    {
+      "$ref": "#/$defs/HealthIncrementalReceipt"
+    }
+  ],
+  "$defs": {
+    "IncrementalSample": {
+      "additionalProperties": false,
+      "properties": {
+        "hk_uuid": {
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "title": "Hk Uuid",
+          "type": "string"
+        },
+        "hk_type": {
+          "enum": [
+            "stepCount",
+            "sleepAnalysis",
+            "heartRate",
+            "restingHeartRate",
+            "workout"
+          ],
+          "title": "Hk Type",
+          "type": "string"
+        },
+        "start_at": {
+          "format": "date-time",
+          "title": "Start At",
+          "type": "string"
+        },
+        "end_at": {
+          "format": "date-time",
+          "title": "End At",
+          "type": "string"
+        },
+        "timezone": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Timezone",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "maximum": 10000000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "enum": [
+                "count",
+                "bpm"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Unit"
+        },
+        "category": {
+          "anyOf": [
+            {
+              "enum": [
+                "inBed",
+                "asleepCore",
+                "asleepDeep",
+                "asleepREM",
+                "awake",
+                "asleepUnspecified"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Category"
+        },
+        "workout_activity": {
+          "anyOf": [
+            {
+              "enum": [
+                "walking",
+                "running",
+                "cycling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Workout Activity"
+        },
+        "duration_seconds": {
+          "anyOf": [
+            {
+              "maximum": 604800,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Duration Seconds"
+        },
+        "energy_kcal": {
+          "anyOf": [
+            {
+              "maximum": 10000000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Energy Kcal"
+        },
+        "distance_m": {
+          "anyOf": [
+            {
+              "maximum": 10000000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Distance M"
+        },
+        "source_name": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Source Name",
+          "type": "string"
+        },
+        "source_bundle": {
+          "maxLength": 180,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9.-]+$",
+          "title": "Source Bundle",
+          "type": "string"
+        },
+        "source_revision": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Source Revision",
+          "type": "string"
+        },
+        "source_stream": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Source Stream"
+        },
+        "synthetic": {
+          "title": "Synthetic",
+          "type": "boolean"
+        },
+        "dataset_id": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dataset Id"
+        },
+        "recipe": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Recipe"
+        },
+        "metadata_timezone": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Metadata Timezone"
+        },
+        "excluded_reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "unsupported_workout_activity",
+                "unsupported_sleep_category",
+                "unsupported_step_source"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Excluded Reason"
+        }
+      },
+      "required": [
+        "hk_uuid",
+        "hk_type",
+        "start_at",
+        "end_at",
+        "timezone",
+        "value",
+        "unit",
+        "category",
+        "workout_activity",
+        "duration_seconds",
+        "energy_kcal",
+        "distance_m",
+        "source_name",
+        "source_bundle",
+        "source_revision",
+        "source_stream",
+        "synthetic",
+        "dataset_id",
+        "recipe",
+        "metadata_timezone",
+        "excluded_reason"
+      ],
+      "title": "IncrementalSample",
+      "type": "object"
+    },
+    "HealthIncrementalRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "data_epoch": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
+          "title": "Data Epoch",
+          "type": "string"
+        },
+        "hk_type": {
+          "enum": [
+            "stepCount",
+            "sleepAnalysis",
+            "heartRate",
+            "restingHeartRate",
+            "workout"
+          ],
+          "title": "Hk Type",
+          "type": "string"
+        },
+        "stream_id": {
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "title": "Stream Id",
+          "type": "string"
+        },
+        "sequence": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "has_more": {
+          "title": "Has More",
+          "type": "boolean"
+        },
+        "samples": {
+          "items": {
+            "$ref": "#/$defs/IncrementalSample"
+          },
+          "maxItems": 100,
+          "title": "Samples",
+          "type": "array"
+        },
+        "deleted_uuids": {
+          "items": {
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+            "type": "string"
+          },
+          "maxItems": 100,
+          "title": "Deleted Uuids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "hk_type",
+        "stream_id",
+        "sequence",
+        "has_more",
+        "samples",
+        "deleted_uuids"
+      ],
+      "title": "HealthIncrementalRequest",
+      "type": "object",
+      "description": "POST /health/v1/incremental. Authenticated account comes only from the service. One persistent stream per account/data_epoch/hk_type; sequence starts at zero and advances only with durable outbox admission. Replays retain identical request identity and payload. Initial step baseline publishes only after has_more=false, including an explicit empty terminal page if required. Temporal order, immutable UUID identity, epoch, consent and cross-field clinical semantics are additionally validated by the server. An addition and deletion of the same UUID in one page resolves to deletion. Server-enforced bounds additionally include 262144 encoded bytes, seven-day sample intervals, 500 initial data pages plus an optional empty terminal page, and 50000 retained UUID mappings. No account selector is accepted. Samples use excluded_reason=null normally; unsupported workout activities or sleep categories require an explicit matching exclusion reason and null unmapped value. Exclusions receive a durable UUID acknowledgement and an excluded count, never fabricated normalized values. Expired additions are acknowledged in the receipt expired count without restoring raw records; current additions and explicit deletions in that page still commit. Future-invalid timestamps remain errors. Minimal payload-bound acknowledgments persist for the account epoch independently of generic receipt pruning.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 99
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 2
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 98
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 3
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 97
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 4
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 96
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 5
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 95
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 6
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 94
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 7
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 93
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 8
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 92
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 9
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 91
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 10
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 90
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 11
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 89
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 12
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 88
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 13
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 87
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 14
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 86
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 15
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 85
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 16
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 84
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 17
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 83
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 18
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 82
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 19
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 81
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 20
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 80
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 21
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 79
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 22
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 78
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 23
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 77
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 24
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 76
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 25
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 75
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 26
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 74
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 27
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 73
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 28
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 72
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 29
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 71
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 30
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 70
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 31
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 69
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 32
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 68
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 33
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 67
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 34
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 66
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 35
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 65
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 36
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 64
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 37
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 63
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 38
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 62
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 39
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 61
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 40
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 60
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 41
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 59
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 42
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 58
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 43
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 57
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 44
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 56
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 45
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 55
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 46
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 54
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 47
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 53
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 48
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 52
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 49
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 51
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 50
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 50
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 51
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 49
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 52
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 48
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 53
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 47
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 54
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 46
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 55
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 45
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 56
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 44
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 57
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 43
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 58
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 42
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 59
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 41
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 60
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 40
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 61
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 39
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 62
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 38
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 63
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 37
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 64
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 36
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 65
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 35
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 66
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 34
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 67
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 33
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 68
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 32
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 69
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 31
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 70
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 30
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 71
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 29
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 72
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 28
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 73
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 27
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 74
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 26
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 75
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 25
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 76
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 24
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 77
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 23
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 78
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 22
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 79
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 21
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 80
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 20
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 81
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 19
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 82
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 18
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 83
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 17
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 84
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 16
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 85
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 15
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 86
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 14
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 87
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 13
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 88
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 12
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 89
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 11
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 90
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 10
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 91
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 9
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 92
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 8
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 93
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 7
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 94
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 6
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 95
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 5
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 96
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 4
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 97
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 3
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 98
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 2
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 99
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "samples": {
+                "minItems": 100
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "deleted_uuids": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "hk_type": {
+                "const": "stepCount"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "samples": {
+                "items": {
+                  "properties": {
+                    "hk_type": {
+                      "const": "stepCount"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "hk_type": {
+                "const": "sleepAnalysis"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "samples": {
+                "items": {
+                  "properties": {
+                    "hk_type": {
+                      "const": "sleepAnalysis"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "hk_type": {
+                "const": "heartRate"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "samples": {
+                "items": {
+                  "properties": {
+                    "hk_type": {
+                      "const": "heartRate"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "hk_type": {
+                "const": "restingHeartRate"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "samples": {
+                "items": {
+                  "properties": {
+                    "hk_type": {
+                      "const": "restingHeartRate"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "hk_type": {
+                "const": "workout"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "samples": {
+                "items": {
+                  "properties": {
+                    "hk_type": {
+                      "const": "workout"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "samples": {
+              "uniqueItems": true
+            },
+            "deleted_uuids": {
+              "uniqueItems": true
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "has_more": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "anyOf": [
+              {
+                "properties": {
+                  "samples": {
+                    "minItems": 1
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "deleted_uuids": {
+                    "minItems": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "HealthIncrementalReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "data_epoch": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
+          "title": "Data Epoch",
+          "type": "string"
+        },
+        "stream_id": {
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "title": "Stream Id",
+          "type": "string"
+        },
+        "sequence": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "hk_type": {
+          "enum": [
+            "stepCount",
+            "sleepAnalysis",
+            "heartRate",
+            "restingHeartRate",
+            "workout"
+          ],
+          "title": "Hk Type",
+          "type": "string"
+        },
+        "upserted": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Upserted",
+          "type": "integer"
+        },
+        "deleted": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Deleted",
+          "type": "integer"
+        },
+        "excluded": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Excluded",
+          "type": "integer"
+        },
+        "expired": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Expired",
+          "type": "integer"
+        },
+        "superseded": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Superseded",
+          "type": "integer"
+        },
+        "unknown_deletions": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Unknown Deletions",
+          "type": "integer"
+        },
+        "bootstrapped": {
+          "title": "Bootstrapped",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_id",
+        "data_epoch",
+        "stream_id",
+        "sequence",
+        "hk_type",
+        "upserted",
+        "deleted",
+        "excluded",
+        "expired",
+        "superseded",
+        "unknown_deletions",
+        "bootstrapped"
+      ],
+      "title": "HealthIncrementalReceipt",
+      "type": "object"
+    },
+    "HealthStreamStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "hk_type": {
+          "enum": [
+            "stepCount",
+            "sleepAnalysis",
+            "heartRate",
+            "restingHeartRate",
+            "workout"
+          ],
+          "title": "Hk Type",
+          "type": "string"
+        },
+        "stream_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Stream Id"
+        },
+        "next_sequence": {
+          "title": "Next Sequence",
+          "type": "integer"
+        },
+        "bootstrapped": {
+          "title": "Bootstrapped",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "hk_type",
+        "stream_id",
+        "next_sequence",
+        "bootstrapped"
+      ],
+      "title": "HealthStreamStatus",
+      "type": "object"
+    },
+    "HealthIncrementalStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1",
+          "default": "1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "data_epoch": {
+          "title": "Data Epoch",
+          "type": "string"
+        },
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "schema_ready": {
+          "title": "Schema Ready",
+          "type": "boolean"
+        },
+        "source_allowed": {
+          "title": "Source Allowed",
+          "type": "boolean"
+        },
+        "authorization_requested": {
+          "title": "Authorization Requested",
+          "type": "boolean"
+        },
+        "snapshot_allowed": {
+          "title": "Snapshot Allowed",
+          "type": "boolean"
+        },
+        "baseline_supported": {
+          "title": "Baseline Supported",
+          "type": "boolean"
+        },
+        "baseline_start": {
+          "title": "Baseline Start",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "streams": {
+          "items": {
+            "$ref": "#/$defs/HealthStreamStatus"
+          },
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "data_epoch",
+        "enabled",
+        "schema_ready",
+        "source_allowed",
+        "authorization_requested",
+        "snapshot_allowed",
+        "baseline_supported",
+        "baseline_start",
+        "message",
+        "streams"
+      ],
+      "title": "HealthIncrementalStatus",
+      "type": "object"
+    }
+  }
+}

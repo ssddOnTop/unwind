@@ -98,7 +98,11 @@ struct PublicAuthConfiguration {
         catch { locallyLocked = true; defaults.set(true, forKey: lockKey); issue = "Local data could not be cleared. Unlock your device and retry sign-out." }
     }
     func observeSDK() {
-        guard !suspended, clerk?.isLoaded == true else { return }
+        if suspended {
+            if sdkIdentity != preparedIdentity { model?.incrementalHealth.close() }
+            return
+        }
+        guard clerk?.isLoaded == true else { return }
         guard let identity = sdkIdentity else {
             model?.reportNotifications.stopForLogout()
             fence.lock(); return
@@ -144,7 +148,9 @@ struct PublicAuthConfiguration {
                 // The network-verified principal gate MUST precede opening any private cache.
                 let storage = try cache.activate(identity)
                 let client = try CompanionClient(storage: storage, transport: transport, baseURL: origin, sessionValidator: { try transport.validate() })
+                let healthLease = try HealthBackgroundLease(identity: identity, provider: provider, base: URLSessionTransport(), origin: origin)
                 let instance = AppModel(client: client, accountNamespace: identity.accountNamespace)
+                instance.incrementalHealth.configure(healthLease)
                 self.model = instance
                 self.observation = instance.objectWillChange.sink { [weak self, weak instance] _ in
                     Task { @MainActor in
@@ -170,13 +176,15 @@ struct PublicAuthConfiguration {
     }
     func suspendForBackground() {
         suspended = true; ready = false
+        bearer?.onAdmissionInvalidated = nil; bearer?.onAdmissionRestored = nil
         fence.suspend(); work?.cancel(); work = nil
-        model?.invalidateForSignOut(cancelReminders: false); model = nil; observation = nil
-        bearer?.cancel(); bearer = nil; preparedIdentity = nil
+        model?.suspendForegroundForBackground(); observation = nil
+        bearer?.cancel(); bearer = nil
     }
     func resumeFromBackground() {
         guard suspended else { return }
-        suspended = false; cancelLocalReminders(); observeSDK()
+        suspended = false; cancelLocalReminders()
+        if let identity = sdkIdentity { prepare(identity) } else { fence.lock() }
     }
     private func revokeCapturedNotificationSession(_ identity: AuthIdentity) async throws {
         guard let origin = apiOrigin, let provider, provider.currentIdentity == identity else { throw AuthenticationFailure.changedSession }
@@ -192,6 +200,7 @@ struct PublicAuthConfiguration {
         guard !endingSession else { return false }
         endingSession = true; defer { endingSession = false }
         let identity = sdkIdentity, notifications = model?.reportNotifications
+        model?.incrementalHealth.close()
         notifications?.stopForLogout()
         fence.lock() // immediate local purge; isolated RPC retains only captured identity authority
         do {
@@ -210,6 +219,7 @@ struct PublicAuthConfiguration {
         guard !endingSession else { return }
         endingSession = true; managingAccount = false
         let identity = sdkIdentity, notifications = model?.reportNotifications
+        model?.incrementalHealth.close()
         notifications?.stopForLogout()
         fence.lock()
         work = Task { [weak self] in

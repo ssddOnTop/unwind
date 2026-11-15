@@ -32,6 +32,8 @@
 !/fe/App/Info.plist
 !/fe/App/LocalCompanion.entitlements
 !/fe/App/ReportNotifications.entitlements
+!/fe/App/HealthBackground.entitlements
+!/fe/App/HealthBackgroundNotifications.entitlements
 !/fe/Core/
 !/fe/Core/Package.swift
 !/fe/Core/Package.resolved
@@ -71,6 +73,7 @@
 !/contracts/banking.schema.json
 !/contracts/patterns.schema.json
 !/contracts/report_notifications.schema.json
+!/contracts/health_incremental.schema.json
 !/scripts/
 !/scripts/*.py
 !/scripts/*.sh

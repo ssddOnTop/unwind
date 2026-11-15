@@ -21,6 +21,8 @@ import CompanionCore
     @Published private(set) var notificationPermission = "Not checked"
     /// Explicit dependency for legacy compatibility tests only; runtime uses banking v1.
     let plaid: PlaidController?
+    let incrementalHealth: HealthIncrementalRuntime
+    @Published private(set) var incrementalHealthMessage: String?
     let reportNotifications: ReportNotificationController
     private var notificationUpdates: AnyCancellable?
     let banking: BankingController
@@ -33,10 +35,11 @@ import CompanionCore
     private var plaidUpdates: AnyCancellable?
     private var refreshTask: Task<Void, Never>?
     var state: CompanionCore.State? { active && !admissionBlocked && !snapshot.hidesCachedData ? snapshot.state : nil }
-    var hasPending: Bool { !snapshot.outbox.isEmpty }
+    var hasPending: Bool { snapshot.hasGeneralPendingChanges }
 
     init(client: CompanionClient, accountNamespace: String, legacyController: PlaidController? = nil) {
         self.client = client
+        incrementalHealth = HealthIncrementalRuntime(client: client, account: accountNamespace)
         let notificationDevice = ReportNotificationAdapter()
         reportNotifications = ReportNotificationController(client: client, device: notificationDevice, accountNamespace: accountNamespace)
         notificationDevice.bind(reportNotifications)
@@ -61,12 +64,14 @@ import CompanionCore
         plaidUpdates = plaid?.objectWillChange.sink { [weak self] _ in Task { @MainActor in self?.objectWillChange.send() } }
     }
     func hideForAdmission() {
+        incrementalHealth.stop()
         reportNotifications.suspend()
         admissionBlocked = true; connected = false; experience = nil; patternOverview = nil; patternRequestID = nil; workflowOverview = nil; workflowPollTask?.cancel(); snapshot = LocalSnapshot()
         health.cancelAll(); reminders.cancelAll(); plaid?.pauseForAdmission(); banking.pauseForAdmission()
     }
     func allowAdmittedUpdates() { reportNotifications.resume(); admissionBlocked = false; banking.admissionRestored() }
     func invalidateForSignOut(cancelReminders: Bool = true) {
+        incrementalHealth.close()
         reportNotifications.suspend()
         active = false; banking.invalidateSession()
         refreshTask?.cancel(); refreshTask = nil
@@ -75,6 +80,12 @@ import CompanionCore
         if cancelReminders { reminders.cancelAll() } else { reminders.suspendCallbacks() }
         client.invalidateSession()
         snapshot = LocalSnapshot(); experience = nil; patternOverview = nil; patternRequestID = nil; workflowOverview = nil; workflowPollTask?.cancel(); patternMessage = nil; message = nil; connected = false
+    }
+    func suspendForegroundForBackground() {
+        reportNotifications.suspend(); admissionBlocked = true; connected = false
+        health.cancelAll(); banking.pauseForAdmission(); plaid?.pauseForAdmission()
+        workflowPollTask?.cancel(); refreshTask?.cancel(); refreshTask = nil
+        reminders.suspendCallbacks(); snapshot = LocalSnapshot(); experience = nil; patternOverview = nil; workflowOverview = nil
     }
     private func publish() {
         guard active, !admissionBlocked else { return }
@@ -85,6 +96,7 @@ import CompanionCore
             experience = nil; reminders.cancelAll()
         }
         if epoch != nil && epoch != snapshot.state?.data_epoch {
+            incrementalHealth.stop()
             reportNotifications.suspend(); reportNotifications.resume()
             patternOverview = nil; patternRequestID = nil; workflowOverview = nil; workflowPollTask?.cancel()
             plaid?.cancel("Records were reset. Reconnect explicitly if needed."); banking.cancelForLifecycle()
@@ -110,6 +122,7 @@ import CompanionCore
             try await reminders.reconcile(state: state, locallyBlocked: hasPending)
             notificationPermission = reminders.permission
             await reportNotifications.refresh()
+            await incrementalHealth.refresh(); incrementalHealthMessage = incrementalHealth.message
         } catch {
             guard active else { return }
             experience = nil; message = "Your overview couldn’t be loaded. Try refreshing."
@@ -186,6 +199,7 @@ import CompanionCore
             try await reminders.reconcile(state: state, locallyBlocked: hasPending)
             notificationPermission = reminders.permission
             await reportNotifications.refresh()
+            await incrementalHealth.refresh(); incrementalHealthMessage = incrementalHealth.message
         } catch {
             guard active else { return }
             publish(); experience = nil; connected = false; reminders.cancelAll()
@@ -209,7 +223,13 @@ import CompanionCore
             } else { message = "That action couldn’t finish safely. Refresh and try again." }
         }
     }
-    func refresh() async { await perform { try await $0.synchronize() } }
+    func refresh() async {
+        guard active, !admissionBlocked else { return }
+        // Retry the unchanged Health journal through its own admission before a stale
+        // foreground outbox error can hide the readiness/recovery path.
+        await incrementalHealth.refresh(); incrementalHealthMessage = incrementalHealth.message
+        await perform { try await $0.synchronize() }
+    }
     func discardPending() async { await perform { try $0.discardPending(); try await $0.refresh() } }
     private func submit<T: Encodable>(_ value: T, path: String, method: String = "POST", replacingQueue: Bool = false, client: CompanionClient) async throws {
         guard active else { throw AuthenticationFailure.locked }
@@ -224,6 +244,7 @@ import CompanionCore
         await perform(preferReceivedExperience: true) { client in try await submit(request, path: "/experience/v1/answers", client: client) }
     }
     func deleteData() async {
+        incrementalHealth.stop()
         reportNotifications.stopForLogout()
         await reportNotifications.clearDeviceAlerts()
         banking.cancelForLifecycle(); plaid?.cancel("Deletion requested. Connection work stopped."); health.cancelAll(); reminders.cancelAll(); experience = nil; patternOverview = nil; patternRequestID = nil; workflowOverview = nil; workflowPollTask?.cancel()
@@ -233,6 +254,7 @@ import CompanionCore
         }
     }
     func prepareNotificationLogout() async throws {
+        incrementalHealth.close()
         health.cancelAll(); banking.cancelForLifecycle(); workflowPollTask?.cancel()
         try await reportNotifications.logout()
     }
@@ -240,7 +262,7 @@ import CompanionCore
     func processLive() async { await process(mode: "live") }
     private func process(mode: String) async {
         await perform { client in
-            guard client.snapshot.outbox.isEmpty, let current = client.snapshot.state else { throw ClientFailure.pendingChanges }
+            guard !client.snapshot.hasGeneralPendingChanges, let current = client.snapshot.state else { throw ClientFailure.pendingChanges }
             if mode == "live" && (!current.preferences.cloud_consent || current.observations.contains(where: { $0.mode == "live" })) { throw ClientFailure.rejected("consent_required", false) }
             try await submit(ProcessRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: current.data_epoch, synthesis_mode: mode), path: "/process", client: client)
         }
@@ -255,7 +277,7 @@ import CompanionCore
     }
     func savePreferences(_ preferences: Preferences, epoch: String, revision: Int) async {
         await perform { client in
-            guard client.snapshot.outbox.isEmpty else { throw ClientFailure.pendingChanges }
+            guard !client.snapshot.hasGeneralPendingChanges else { throw ClientFailure.pendingChanges }
             try await client.refresh()
             guard let current = client.snapshot.state, current.data_epoch == epoch, current.revision == revision else { throw ClientFailure.rejected("stale_preference_form", false) }
             try await submit(PreferencesRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: epoch, preferences: preferences), path: "/preferences", method: "PUT", client: client)
@@ -263,7 +285,7 @@ import CompanionCore
     }
     func healthSync(connect: Bool) async {
         await perform { client in
-            guard client.snapshot.outbox.isEmpty else { throw ClientFailure.pendingChanges }
+            guard !client.snapshot.hasGeneralPendingChanges else { throw ClientFailure.pendingChanges }
             try await client.refresh()
             guard var current = client.snapshot.state else { throw ClientFailure.noState }
             if connect {
@@ -273,6 +295,12 @@ import CompanionCore
                 guard active, let refreshed = client.snapshot.state else { throw AuthenticationFailure.locked }; current = refreshed
             }
             guard current.sources.contains(where: { $0.id == "healthkit" && $0.enabled && $0.consent == "granted" }) else { throw ClientFailure.rejected("consent_required", false) }
+            await incrementalHealth.refresh()
+            if incrementalHealth.blocksSnapshot || client.incrementalHealthHasState {
+                try await incrementalHealth.connect()
+                incrementalHealthMessage = incrementalHealth.message
+                return
+            }
             healthProgress = "Reading up to six months of permitted Health records…"
             defer { healthProgress = nil }
             let pages = try await health.collectNormalized(state: current, requestAuthorization: true)
@@ -292,13 +320,16 @@ import CompanionCore
     }
     private func updatePreferences(_ edit: (inout Preferences) -> Void) async {
         await perform { client in
-            guard client.snapshot.outbox.isEmpty else { throw ClientFailure.pendingChanges }
+            guard !client.snapshot.hasGeneralPendingChanges else { throw ClientFailure.pendingChanges }
             try await client.refresh(); guard let current = client.snapshot.state else { throw ClientFailure.noState }
             var preferences = current.preferences; edit(&preferences)
             try await submit(PreferencesRequest(schema_version: "1", request_id: UUID().uuidString, data_epoch: current.data_epoch, preferences: preferences), path: "/preferences", method: "PUT", client: client)
         }
     }
-    func disconnectHealth() async { health.cancelAll(); await updatePreferences { $0.enabled_source_ids.removeAll { $0 == "healthkit" } } }
+    func disconnectHealth() async {
+        incrementalHealth.stop(); health.cancelAll()
+        do { try client.setHealthCollectionPaused(true) } catch { message = "Device pause could not be saved. Retry after unlocking."; return }
+        await updatePreferences { $0.enabled_source_ids.removeAll { $0 == "healthkit" } } }
     func setCloudConsent(_ enabled: Bool) async { await updatePreferences { $0.cloud_consent = enabled } }
     func enableReminders() async { await requestNotifications(); guard active, ["Authorized", "Provisional", "Temporary"].contains(notificationPermission) else { return }; await updatePreferences { $0.notifications.enabled = true } }
     func stopReminders() async { reminders.cancelAll(); await updatePreferences { $0.notifications.enabled = false } }

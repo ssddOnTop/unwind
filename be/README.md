@@ -484,3 +484,56 @@ REPORT_NOTIFICATIONS_APS_ENVIRONMENT = development
 ```
 
 Use `production` only with corresponding provisioning/server environment. The optional entitlement file retains HealthKit and adds the chosen aps environment. Setting a flag alone does not supply provisioning; registration failure stays visible and does not enable backend consent. Real APNs credentials, physical device permission, acceptance and delivery remain manual acceptance steps. No paid signup, device/simulator operation, live provider request or runtime restart was performed by implementation tests.
+
+### Incremental Health integration (separate from assessment-policy changes)
+
+This replaces neither the imported helper dataset nor the nightly assessment engine. It connects the reviewed Health UUID-delta module to authenticated HTTP, the existing PostgreSQL account transaction, and a native durable Health journal. **No seed/reset or replacement of the existing helper rows is part of cutover.** PR 20 owns the latest-only per-area assessment projection, append-only assessment history, assessment-age policy and `notification_candidate`. Those changes were not copied here. The combined notification consumer must be reviewed after PR 20 lands to use the current run/actionability key, suppress unchanged overall concerns and cancel superseded warnings; this branch does not claim that cross-merge policy is finished.
+
+#### Migration and activation
+
+```sh
+# From be/, private schema-operator authority; explicitly reviewed, never startup DDL:
+python -m companion.health_incremental_migrations --confirm-incremental-health-schema --runtime-role "$RESTRICTED_RUNTIME_ROLE"
+# Defaults disabled. Enable only with coordinated backend/native deployment:
+COMPANION_HEALTH_INCREMENTAL=enabled
+```
+
+The migration is additive and preserves the shared schema version. It requires existing normalized pattern/Health import tables and adds four forced-RLS account tables: streams, UUID objects, affected UTC days and minimal acknowledgments. The runtime role must be distinct from the schema operator and have neither superuser nor BYPASSRLS. Acknowledgments grant SELECT/INSERT/DELETE, not UPDATE. Existing normalized rows are preserved. Epoch reset atomically erases these tables, and a database trigger rejects complete-window imports after an incremental stream exists. Current-epoch legacy incremental receipts, if any, are validated and copied to minimal acknowledgment storage before generic receipt cleanup. No raw payload is copied into acknowledgments.
+
+The monolith exposes:
+
+- `GET /health/v1/incremental/status`: strict readiness, source-consent flags, epoch, fixed initial query boundary, existing stream IDs/next sequences, baseline support and an explanatory message. No target-account parameter is accepted.
+- `POST /health/v1/incremental`: schema version, stable request UUID, current epoch, one HK type, persistent stream UUID, increasing sequence, `has_more`, bounded normalized additions and explicit deleted UUIDs. Returns **HealthIncrementalReceipt**, never State, including upserted/deleted/excluded/**expired**/superseded/unknown-deletion counts and bootstrap status.
+
+Both routes are behind the verified principal gateway. The server enforces account scope, active source consent, epoch, temporal/value bounds, immutable UUID content and payload-bound replay. A page is at most 100 combined additions/deletions and 256 KiB. A new per-type stream starts at sequence zero. A second device or lost/replaced cursor cannot overwrite an existing stream; it receives an explicit mismatch rather than an automatic reset. Source permissions remain unknown when no data is readable.
+
+#### Non-destructive baseline policy
+
+A first anchored predicate covers six calendar months, extended only as necessary within the existing 190-day retained window to include existing rows; its boundary never moves with an existing anchor. Raw step quantities are **not** statistics totals. The backend retains UUID/source contributions, waits for terminal baseline admission, splits intervals across UTC days and conservatively takes the largest per-source/device daily sum instead of adding overlapping device totals. A missing device identifier is explicitly excluded (`unsupported_step_source`) rather than merged into an invented common device. Unsupported workout/sleep subtypes are likewise acknowledged as exclusions, not converted into fabricated records.
+
+Existing UUID-keyed helper data has the same normalized identity formula, exact helper provenance and dataset metadata. It can be retained and reconciled without clearing the account; explicit UUID deletions can locate legacy UUID-keyed rows. A separate conflicting operator dataset is **not** automatically removed. Legacy real daily step totals without UUID contributions are explicitly unsupported for baseline cutover. Readiness reports that limitation; ingestion rejects an unsafe baseline. Do not reset the account or erase the 1,282 existing helper records to unblock collection. A safe legacy-total migration, multi-device handover and cursor-loss recovery remain separate reviewed policies.
+
+#### Durable device journal and background admission
+
+The existing protected account snapshot now atomically saves each advanced anchor, terminal-page obligation, stream/sequence and exact typed pending request **in one file write**. The observer completion follows durable admission, not guessed delivery. If saving fails, neither anchor nor in-memory queue advances. A repeated page after checkpoint failure reuses its prior admission; an empty terminal page discharges an already admitted `has_more` obligation with its own stable request/sequence. Empty initial reads neither advance the anchor nor establish read permission.
+
+Health queue entries are not discarded by the general discard action or its 90-day age cutoff. They remain replayable until acknowledged or actual account reset/deletion. A server-expired addition returns an `expired` count without rebuilding old raw rows, while current additions/deletions in the same page still commit. Minimal server acknowledgment bindings last for the account epoch independently of generic receipt retention. Foreground source-revocation requests precede pending Health uploads; after revocation those uploads remain saved without being sent. A persistent device pause requires explicit reconnect to resume even if an offline preference request is later discarded. Pending Health entries alone do not masquerade as unsaved general UI edits.
+
+The native background transport has a separate lease fenced to the captured SDK identity/session and only sends Health status/delta requests. It cannot restore the foreground fence or send bank/model/report actions. Foreground backgrounding hides UI and cancels general work without destroying the Health journal/observer lease. Sign-out, account switching, reset and consent stop Health observers first. Protected-data unavailability prevents reads/writes; unlock retries saved obligations. The existing SDK's actual background token availability and OS scheduling remain prerequisites, not promises. Fresh backend consent/epoch readiness is checked before every delta admission.
+
+#### Retention and capability limits
+
+A bounded independent monolith maintenance pass runs whenever the Health schema exists, **even with collection disabled**, and removes incremental raw/normalized material older than the 190-day UTC boundary. It scans unloaded accounts in pages of 100; minimal acknowledgment/sequence proofs are not aged out. It does not change assessment history or expiry rules. Runtime performs no migration and prints no account IDs, Health samples, device IDs or anchors.
+
+Native serialization sends HK UUIDs, raw quantities with units, category/workout semantics, bounded source revision and a locally hashed source/device stream—not raw device identifiers. Synthetic helper metadata is preserved exactly and cannot be relabeled as real. No Health payload or background credential is added to model input.
+
+Default/simulator builds deliberately leave background collection unavailable. For a reviewed physical-device capability build, use:
+
+```text
+HEALTH_BACKGROUND_CAPABILITY = YES
+REPORT_NOTIFICATIONS_ENTITLEMENTS = App/HealthBackground.entitlements
+```
+
+If separately approved APNs capability is also needed, select `App/HealthBackgroundNotifications.entitlements` and retain the matching APNs settings from the notification integration. These use the existing entitlement selector; setting a flag is not provisioning. The default original HealthKit entitlement file remains selected and no background/APNs entitlement is forced onto simulator/free-team signing. Observer delivery is opportunistic, not a midnight timer. Incremental mode never falls back to a complete-window snapshot after activation or after detecting a prior journal/stream.
+
+Offline validation covers actual authenticated restricted-PostgreSQL routes, forced RLS, replay/pruning/reset, non-destructive helper cutover, unsupported legacy baselines, atomic native write failure, expiry/discard, terminal replay, source revocation and separate background admission. Signed simulator-target compilation is not device acceptance. No live migration, flag change, data operation, provider/model call, device/simulator operation or runtime restart is performed by these checks.

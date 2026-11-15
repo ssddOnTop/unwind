@@ -60,6 +60,7 @@ struct SettingsView: View {
                 } else if let issue = model.reportNotifications.issue {
                     Section("Report-ready notifications") { Text(verbatim: issue).font(.caption) }
                 }
+                if let message = model.incrementalHealthMessage { Section("Incremental Apple Health") { Text(verbatim: message).font(.caption) } }
                 CloudConsentSection(isEnabled: model.state?.preferences.cloud_consent ?? false, isBusy: model.busy || model.hasPending || model.state == nil,
                     label: model.workflowOverview?.consent_label ?? "Cloud review", notice: model.workflowOverview?.consent_notice ?? "Refresh to read the server’s cloud review policy.",
                     onChange: { value in if value { cloudConsent = true } else { Task { await model.setCloudConsent(false) } } })

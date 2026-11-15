@@ -3480,6 +3480,366 @@ public struct NotificationStatusRequest: Codable, Equatable, Sendable {
     }
 }
 
+public struct IncrementalSample: Codable, Equatable, Sendable {
+    public var hk_uuid: String
+    public var hk_type: String
+    public var start_at: String
+    public var end_at: String
+    public var timezone: String
+    public var value: Double?
+    public var unit: String?
+    public var category: String?
+    public var workout_activity: String?
+    public var duration_seconds: Double?
+    public var energy_kcal: Double?
+    public var distance_m: Double?
+    public var source_name: String
+    public var source_bundle: String
+    public var source_revision: String
+    public var source_stream: String?
+    public var synthetic: Bool
+    public var dataset_id: String?
+    public var recipe: String?
+    public var metadata_timezone: String?
+    public var excluded_reason: String?
+    public init(hk_uuid: String, hk_type: String, start_at: String, end_at: String, timezone: String, value: Double?, unit: String?, category: String?, workout_activity: String?, duration_seconds: Double?, energy_kcal: Double?, distance_m: Double?, source_name: String, source_bundle: String, source_revision: String, source_stream: String?, synthetic: Bool, dataset_id: String?, recipe: String?, metadata_timezone: String?, excluded_reason: String?) {
+        self.hk_uuid = hk_uuid
+        self.hk_type = hk_type
+        self.start_at = start_at
+        self.end_at = end_at
+        self.timezone = timezone
+        self.value = value
+        self.unit = unit
+        self.category = category
+        self.workout_activity = workout_activity
+        self.duration_seconds = duration_seconds
+        self.energy_kcal = energy_kcal
+        self.distance_m = distance_m
+        self.source_name = source_name
+        self.source_bundle = source_bundle
+        self.source_revision = source_revision
+        self.source_stream = source_stream
+        self.synthetic = synthetic
+        self.dataset_id = dataset_id
+        self.recipe = recipe
+        self.metadata_timezone = metadata_timezone
+        self.excluded_reason = excluded_reason
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case hk_uuid, hk_type, start_at, end_at, timezone, value, unit, category, workout_activity, duration_seconds, energy_kcal, distance_m, source_name, source_bundle, source_revision, source_stream, synthetic, dataset_id, recipe, metadata_timezone, excluded_reason
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        hk_uuid = try c.decode(String.self, forKey: .hk_uuid)
+        hk_type = try c.decode(String.self, forKey: .hk_type)
+        do { let value = hk_type;
+            guard ["stepCount", "sleepAnalysis", "heartRate", "restingHeartRate", "workout"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .hk_type, in: c, debugDescription: "Invalid contract value") }
+        }
+        start_at = try c.decode(String.self, forKey: .start_at)
+        end_at = try c.decode(String.self, forKey: .end_at)
+        timezone = try c.decode(String.self, forKey: .timezone)
+        value = try c.decodeIfPresent(Double.self, forKey: .value)
+        unit = try c.decodeIfPresent(String.self, forKey: .unit)
+        if let value = unit {
+            guard ["count", "bpm"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .unit, in: c, debugDescription: "Invalid contract value") }
+        }
+        category = try c.decodeIfPresent(String.self, forKey: .category)
+        if let value = category {
+            guard ["inBed", "asleepCore", "asleepDeep", "asleepREM", "awake", "asleepUnspecified"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .category, in: c, debugDescription: "Invalid contract value") }
+        }
+        workout_activity = try c.decodeIfPresent(String.self, forKey: .workout_activity)
+        if let value = workout_activity {
+            guard ["walking", "running", "cycling"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .workout_activity, in: c, debugDescription: "Invalid contract value") }
+        }
+        duration_seconds = try c.decodeIfPresent(Double.self, forKey: .duration_seconds)
+        energy_kcal = try c.decodeIfPresent(Double.self, forKey: .energy_kcal)
+        distance_m = try c.decodeIfPresent(Double.self, forKey: .distance_m)
+        source_name = try c.decode(String.self, forKey: .source_name)
+        source_bundle = try c.decode(String.self, forKey: .source_bundle)
+        source_revision = try c.decode(String.self, forKey: .source_revision)
+        source_stream = try c.decodeIfPresent(String.self, forKey: .source_stream)
+        synthetic = try c.decode(Bool.self, forKey: .synthetic)
+        dataset_id = try c.decodeIfPresent(String.self, forKey: .dataset_id)
+        recipe = try c.decodeIfPresent(String.self, forKey: .recipe)
+        metadata_timezone = try c.decodeIfPresent(String.self, forKey: .metadata_timezone)
+        excluded_reason = try c.decodeIfPresent(String.self, forKey: .excluded_reason)
+        if let value = excluded_reason {
+            guard ["unsupported_workout_activity", "unsupported_sleep_category", "unsupported_step_source"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .excluded_reason, in: c, debugDescription: "Invalid contract value") }
+        }
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(hk_uuid, forKey: .hk_uuid)
+        try c.encode(hk_type, forKey: .hk_type)
+        try c.encode(start_at, forKey: .start_at)
+        try c.encode(end_at, forKey: .end_at)
+        try c.encode(timezone, forKey: .timezone)
+        try c.encode(value, forKey: .value)
+        try c.encode(unit, forKey: .unit)
+        try c.encode(category, forKey: .category)
+        try c.encode(workout_activity, forKey: .workout_activity)
+        try c.encode(duration_seconds, forKey: .duration_seconds)
+        try c.encode(energy_kcal, forKey: .energy_kcal)
+        try c.encode(distance_m, forKey: .distance_m)
+        try c.encode(source_name, forKey: .source_name)
+        try c.encode(source_bundle, forKey: .source_bundle)
+        try c.encode(source_revision, forKey: .source_revision)
+        try c.encode(source_stream, forKey: .source_stream)
+        try c.encode(synthetic, forKey: .synthetic)
+        try c.encode(dataset_id, forKey: .dataset_id)
+        try c.encode(recipe, forKey: .recipe)
+        try c.encode(metadata_timezone, forKey: .metadata_timezone)
+        try c.encode(excluded_reason, forKey: .excluded_reason)
+    }
+}
+
+public struct HealthIncrementalRequest: Codable, Equatable, Sendable {
+    public var schema_version: String
+    public var request_id: String
+    public var data_epoch: String
+    public var hk_type: String
+    public var stream_id: String
+    public var sequence: Int
+    public var has_more: Bool
+    public var samples: [IncrementalSample]
+    public var deleted_uuids: [String]
+    public init(schema_version: String, request_id: String, data_epoch: String, hk_type: String, stream_id: String, sequence: Int, has_more: Bool, samples: [IncrementalSample], deleted_uuids: [String]) {
+        self.schema_version = schema_version
+        self.request_id = request_id
+        self.data_epoch = data_epoch
+        self.hk_type = hk_type
+        self.stream_id = stream_id
+        self.sequence = sequence
+        self.has_more = has_more
+        self.samples = samples
+        self.deleted_uuids = deleted_uuids
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schema_version, request_id, data_epoch, hk_type, stream_id, sequence, has_more, samples, deleted_uuids
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema_version = try c.decode(String.self, forKey: .schema_version)
+        do { let value = schema_version;
+            guard value == "1" else { throw DecodingError.dataCorruptedError(forKey: .schema_version, in: c, debugDescription: "Invalid contract value") }
+        }
+        request_id = try c.decode(String.self, forKey: .request_id)
+        data_epoch = try c.decode(String.self, forKey: .data_epoch)
+        hk_type = try c.decode(String.self, forKey: .hk_type)
+        do { let value = hk_type;
+            guard ["stepCount", "sleepAnalysis", "heartRate", "restingHeartRate", "workout"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .hk_type, in: c, debugDescription: "Invalid contract value") }
+        }
+        stream_id = try c.decode(String.self, forKey: .stream_id)
+        sequence = try c.decode(Int.self, forKey: .sequence)
+        has_more = try c.decode(Bool.self, forKey: .has_more)
+        samples = try c.decode([IncrementalSample].self, forKey: .samples)
+        deleted_uuids = try c.decode([String].self, forKey: .deleted_uuids)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schema_version, forKey: .schema_version)
+        try c.encode(request_id, forKey: .request_id)
+        try c.encode(data_epoch, forKey: .data_epoch)
+        try c.encode(hk_type, forKey: .hk_type)
+        try c.encode(stream_id, forKey: .stream_id)
+        try c.encode(sequence, forKey: .sequence)
+        try c.encode(has_more, forKey: .has_more)
+        try c.encode(samples, forKey: .samples)
+        try c.encode(deleted_uuids, forKey: .deleted_uuids)
+    }
+}
+
+public struct HealthIncrementalReceipt: Codable, Equatable, Sendable {
+    public var schema_version: String
+    public var request_id: String
+    public var data_epoch: String
+    public var stream_id: String
+    public var sequence: Int
+    public var hk_type: String
+    public var upserted: Int
+    public var deleted: Int
+    public var excluded: Int
+    public var expired: Int
+    public var superseded: Int
+    public var unknown_deletions: Int
+    public var bootstrapped: Bool
+    public init(schema_version: String, request_id: String, data_epoch: String, stream_id: String, sequence: Int, hk_type: String, upserted: Int, deleted: Int, excluded: Int, expired: Int, superseded: Int, unknown_deletions: Int, bootstrapped: Bool) {
+        self.schema_version = schema_version
+        self.request_id = request_id
+        self.data_epoch = data_epoch
+        self.stream_id = stream_id
+        self.sequence = sequence
+        self.hk_type = hk_type
+        self.upserted = upserted
+        self.deleted = deleted
+        self.excluded = excluded
+        self.expired = expired
+        self.superseded = superseded
+        self.unknown_deletions = unknown_deletions
+        self.bootstrapped = bootstrapped
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schema_version, request_id, data_epoch, stream_id, sequence, hk_type, upserted, deleted, excluded, expired, superseded, unknown_deletions, bootstrapped
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema_version = try c.decode(String.self, forKey: .schema_version)
+        do { let value = schema_version;
+            guard value == "1" else { throw DecodingError.dataCorruptedError(forKey: .schema_version, in: c, debugDescription: "Invalid contract value") }
+        }
+        request_id = try c.decode(String.self, forKey: .request_id)
+        data_epoch = try c.decode(String.self, forKey: .data_epoch)
+        stream_id = try c.decode(String.self, forKey: .stream_id)
+        sequence = try c.decode(Int.self, forKey: .sequence)
+        hk_type = try c.decode(String.self, forKey: .hk_type)
+        do { let value = hk_type;
+            guard ["stepCount", "sleepAnalysis", "heartRate", "restingHeartRate", "workout"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .hk_type, in: c, debugDescription: "Invalid contract value") }
+        }
+        upserted = try c.decode(Int.self, forKey: .upserted)
+        deleted = try c.decode(Int.self, forKey: .deleted)
+        excluded = try c.decode(Int.self, forKey: .excluded)
+        expired = try c.decode(Int.self, forKey: .expired)
+        superseded = try c.decode(Int.self, forKey: .superseded)
+        unknown_deletions = try c.decode(Int.self, forKey: .unknown_deletions)
+        bootstrapped = try c.decode(Bool.self, forKey: .bootstrapped)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schema_version, forKey: .schema_version)
+        try c.encode(request_id, forKey: .request_id)
+        try c.encode(data_epoch, forKey: .data_epoch)
+        try c.encode(stream_id, forKey: .stream_id)
+        try c.encode(sequence, forKey: .sequence)
+        try c.encode(hk_type, forKey: .hk_type)
+        try c.encode(upserted, forKey: .upserted)
+        try c.encode(deleted, forKey: .deleted)
+        try c.encode(excluded, forKey: .excluded)
+        try c.encode(expired, forKey: .expired)
+        try c.encode(superseded, forKey: .superseded)
+        try c.encode(unknown_deletions, forKey: .unknown_deletions)
+        try c.encode(bootstrapped, forKey: .bootstrapped)
+    }
+}
+
+public struct HealthStreamStatus: Codable, Equatable, Sendable {
+    public var hk_type: String
+    public var stream_id: String?
+    public var next_sequence: Int
+    public var bootstrapped: Bool
+    public init(hk_type: String, stream_id: String?, next_sequence: Int, bootstrapped: Bool) {
+        self.hk_type = hk_type
+        self.stream_id = stream_id
+        self.next_sequence = next_sequence
+        self.bootstrapped = bootstrapped
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case hk_type, stream_id, next_sequence, bootstrapped
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        hk_type = try c.decode(String.self, forKey: .hk_type)
+        do { let value = hk_type;
+            guard ["stepCount", "sleepAnalysis", "heartRate", "restingHeartRate", "workout"].contains(value) else { throw DecodingError.dataCorruptedError(forKey: .hk_type, in: c, debugDescription: "Invalid contract value") }
+        }
+        stream_id = try c.decodeIfPresent(String.self, forKey: .stream_id)
+        next_sequence = try c.decode(Int.self, forKey: .next_sequence)
+        bootstrapped = try c.decode(Bool.self, forKey: .bootstrapped)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(hk_type, forKey: .hk_type)
+        try c.encode(stream_id, forKey: .stream_id)
+        try c.encode(next_sequence, forKey: .next_sequence)
+        try c.encode(bootstrapped, forKey: .bootstrapped)
+    }
+}
+
+public struct HealthIncrementalStatus: Codable, Equatable, Sendable {
+    public var schema_version: String
+    public var data_epoch: String
+    public var enabled: Bool
+    public var schema_ready: Bool
+    public var source_allowed: Bool
+    public var authorization_requested: Bool
+    public var snapshot_allowed: Bool
+    public var baseline_supported: Bool
+    public var baseline_start: String
+    public var message: String
+    public var streams: [HealthStreamStatus]
+    public init(schema_version: String, data_epoch: String, enabled: Bool, schema_ready: Bool, source_allowed: Bool, authorization_requested: Bool, snapshot_allowed: Bool, baseline_supported: Bool, baseline_start: String, message: String, streams: [HealthStreamStatus]) {
+        self.schema_version = schema_version
+        self.data_epoch = data_epoch
+        self.enabled = enabled
+        self.schema_ready = schema_ready
+        self.source_allowed = source_allowed
+        self.authorization_requested = authorization_requested
+        self.snapshot_allowed = snapshot_allowed
+        self.baseline_supported = baseline_supported
+        self.baseline_start = baseline_start
+        self.message = message
+        self.streams = streams
+    }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schema_version, data_epoch, enabled, schema_ready, source_allowed, authorization_requested, snapshot_allowed, baseline_supported, baseline_start, message, streams
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: AnyKey.self)
+        let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(keys.allKeys.map(\.stringValue)) == allowed else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected or missing contract keys"))
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema_version = try c.decode(String.self, forKey: .schema_version)
+        do { let value = schema_version;
+            guard value == "1" else { throw DecodingError.dataCorruptedError(forKey: .schema_version, in: c, debugDescription: "Invalid contract value") }
+        }
+        data_epoch = try c.decode(String.self, forKey: .data_epoch)
+        enabled = try c.decode(Bool.self, forKey: .enabled)
+        schema_ready = try c.decode(Bool.self, forKey: .schema_ready)
+        source_allowed = try c.decode(Bool.self, forKey: .source_allowed)
+        authorization_requested = try c.decode(Bool.self, forKey: .authorization_requested)
+        snapshot_allowed = try c.decode(Bool.self, forKey: .snapshot_allowed)
+        baseline_supported = try c.decode(Bool.self, forKey: .baseline_supported)
+        baseline_start = try c.decode(String.self, forKey: .baseline_start)
+        message = try c.decode(String.self, forKey: .message)
+        streams = try c.decode([HealthStreamStatus].self, forKey: .streams)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schema_version, forKey: .schema_version)
+        try c.encode(data_epoch, forKey: .data_epoch)
+        try c.encode(enabled, forKey: .enabled)
+        try c.encode(schema_ready, forKey: .schema_ready)
+        try c.encode(source_allowed, forKey: .source_allowed)
+        try c.encode(authorization_requested, forKey: .authorization_requested)
+        try c.encode(snapshot_allowed, forKey: .snapshot_allowed)
+        try c.encode(baseline_supported, forKey: .baseline_supported)
+        try c.encode(baseline_start, forKey: .baseline_start)
+        try c.encode(message, forKey: .message)
+        try c.encode(streams, forKey: .streams)
+    }
+}
+
 public struct PreferencesNotifications: Codable, Equatable, Sendable {
     public var enabled: Bool
     public var local_time: String

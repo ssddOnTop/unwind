@@ -57,3 +57,14 @@ struct ExperienceConnection {
     var error: String? = nil
 }
 #endif
+
+@MainActor final class HealthIncrementalRuntime {
+    var message = "Incremental Health unavailable in this test adapter."
+    var blocksSnapshot = false
+    init(client: CompanionClient, account: String) {}
+    func configure(_ lease: HealthBackgroundLease) {}
+    func stop() {}
+    func close() {}
+    func refresh() async {}
+    func connect() async throws { throw ClientFailure.invalidResponse }
+}

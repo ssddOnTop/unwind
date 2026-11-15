@@ -34,6 +34,12 @@ def notification_refs(value):
     if isinstance(value, list): return [notification_refs(v) for v in value]
     return value
 for key,value in notifications.items(): defs['notification_'+key]=notification_refs(value)
+health_incremental = json.loads((root / 'contracts/health_incremental.schema.json').read_text())['$defs']
+def incremental_refs(value):
+    if isinstance(value, dict): return {k: ('#/$defs/incremental_' + v.split('/')[-1] if k == '$ref' else incremental_refs(v)) for k,v in value.items()}
+    if isinstance(value, list): return [incremental_refs(v) for v in value]
+    return value
+for key,value in health_incremental.items(): defs['incremental_'+key]=incremental_refs(value)
 # Explicit additive deployment errors; frozen base artifacts are not rewritten.
 for code in ['stale_experience', 'obsolete_pattern', 'unauthorized', 'session_pending', 'auth_unavailable']:
     defs['error']['properties']['error']['properties']['code']['enum'].append(code)
@@ -52,6 +58,7 @@ names['pattern_BriefRequest'] = 'PatternBriefRequest'
 for name in ['WorkflowOverview','WorkflowAction','WorkflowPage','WorkflowChoice','WorkflowQuestion','WorkflowJob','EnqueueRequest']:
     names['pattern_'+name]=name
 for name in notifications: names['notification_'+name]=name
+for name in health_incremental: names['incremental_'+name]=name
 objects = []
 def typ(p, name):
     if 'anyOf' in p:

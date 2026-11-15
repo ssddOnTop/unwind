@@ -99,6 +99,10 @@ async def ingest_health(service,body):
         receipt=service.receipt('/health/v1/samples',body)
         replay=await service.replay(receipt)
         if replay is not None:return replay
+        async with service.pattern_coordinator.transaction() as conn:
+            exists=await (await conn.execute("SELECT to_regclass('companion_private.health_incremental_streams') IS NOT NULL")).fetchone()
+            if exists[0] and await (await conn.execute('SELECT 1 FROM companion_private.health_incremental_streams WHERE account_id=%s AND epoch=%s LIMIT 1',(service.pattern_coordinator.store.account_id,page.data_epoch))).fetchone():
+                raise DomainError('invalid_request',409,'Complete-window Health imports are disabled after incremental cutover.')
         if page.data_epoch!=service.document['state']['data_epoch']:raise DomainError('epoch_mismatch',409)
         now=service.clock()
         if page.window_end>now+timedelta(minutes=5) or page.window_start<now-timedelta(days=191):raise DomainError('invalid_request',422)
